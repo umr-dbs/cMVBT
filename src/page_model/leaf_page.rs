@@ -1,0 +1,119 @@
+use std::hash::Hash;
+use std::marker::PhantomData;
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::sync::atomic::AtomicU16;
+use std::sync::atomic::Ordering::{Acquire, Release};
+use crate::record_model::record_point::RecordPoint;
+use crate::record_model::version_info::{Version, VersionInfo};
+
+type Len = AtomicU16;
+
+pub struct LeafPage<
+    const NUM_RECORDS: usize,
+    Key: Hash + Ord + Copy + Default
+> {
+    pub(crate) len: Len,
+    pub(crate) record_data: [MaybeUninit<RecordPoint<Key>>; NUM_RECORDS],
+    _marker: PhantomData<[RecordPoint<Key>]>,
+}
+
+impl<const NUM_RECORDS: usize,
+    Key: Hash + Ord + Copy + Default
+> Default for LeafPage<NUM_RECORDS, Key> {
+    fn default() -> Self {
+        LeafPage::new()
+    }
+}
+
+impl<const NUM_RECORDS: usize,
+    Key: Hash + Ord + Copy + Default
+> Drop for LeafPage<NUM_RECORDS, Key> {
+    fn drop(&mut self) {
+
+    }
+}
+
+impl<const NUM_RECORDS: usize,
+    Key: Hash + Ord + Copy + Default
+> LeafPage<NUM_RECORDS, Key> {
+    #[inline(always)]
+    pub const fn new() -> Self {
+        Self {
+            len: Len::new(0),
+            record_data: unsafe { MaybeUninit::uninit().assume_init() }, // <[MaybeUninit<Entry>; NUM_RECORDS]>::
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_records(&self) -> &[RecordPoint<Key>] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self.record_data.as_ptr() as *const RecordPoint<Key>,
+                self.len())
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_records_mut(&mut self) -> &mut [RecordPoint<Key>] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.record_data.as_mut_ptr() as *mut _,
+                self.len())
+        }
+    }
+
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len.load(Acquire) as _
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[inline(always)]
+    pub fn is_full(&self) -> bool {
+        self.len() == NUM_RECORDS
+    }
+
+    #[inline(always)]
+    pub fn push(&mut self, record: RecordPoint<Key>) {
+        unsafe {
+            let n_len
+                = self.len();
+
+            self.record_data
+                .as_mut_ptr()
+                .add(n_len)
+                .write(MaybeUninit::new(record));
+
+            self.len.store(n_len as u16 + 1, Release)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn delete(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
+        let record_data
+            = self.as_records_mut();
+
+        match record_data.binary_search_by_key(
+            &key, |record| record.key)
+        {
+            Ok(index) => unsafe {
+                let ver_info = record_data
+                    .get_unchecked_mut(index)
+                    .version_mut();
+
+                if ver_info.delete(del) {
+                    Some(ver_info.clone())
+                }
+                else {
+                    None
+                }
+            }
+            _ => None
+        }
+    }
+}
