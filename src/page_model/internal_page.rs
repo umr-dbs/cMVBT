@@ -4,9 +4,10 @@ use std::mem;
 use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use crate::page_model::BlockRef;
 use crate::record_model::version_info::Version;
+use crate::utils::interval::Interval;
 
-pub type Pointer = *mut usize;
 type Len = AtomicU16;
 
 pub struct IndexEntry<
@@ -16,7 +17,7 @@ pub struct IndexEntry<
 {
     key: Key,
     version: Version,
-    next: Pointer
+    next: BlockRef<FAN_OUT, NUM_RECORDS, Key>
 }
 
 pub struct InternalPage<
@@ -25,10 +26,10 @@ pub struct InternalPage<
     Key: Default + Ord + Copy + Hash
 > {
     len: Len,
-    key_region: [MaybeUninit<Key>; FAN_OUT],
+    key_interval_region: [MaybeUninit<Interval<Key>>; FAN_OUT],
     version_region: [MaybeUninit<Version>; FAN_OUT],
-    pointers_region: [MaybeUninit<Pointer>; FAN_OUT],
-    _marker: PhantomData<[(Key, Version, Pointer)]>,
+    pointer_region: [MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key>>; FAN_OUT],
+    _marker: PhantomData<[(Key, BlockRef<FAN_OUT, NUM_RECORDS, Key>)]>,
 }
 
 impl<const FAN_OUT: usize,
@@ -37,7 +38,12 @@ impl<const FAN_OUT: usize,
 > Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key>
 {
     fn drop(&mut self) {
-
+        unsafe {
+            self.children().iter().for_each(|ptr|
+                (ptr as *const BlockRef<FAN_OUT, NUM_RECORDS, Key>
+                    as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+                    .drop_in_place())
+        }
     }
 }
 
@@ -52,33 +58,33 @@ impl<const FAN_OUT: usize,
         unsafe {
             InternalPage {
                 len: Len::new(0),
-                key_region: MaybeUninit::uninit().assume_init(),
+                key_interval_region: MaybeUninit::uninit().assume_init(),
                 version_region: MaybeUninit::uninit().assume_init(),
-                pointers_region: MaybeUninit::uninit().assume_init(),
+                pointer_region: MaybeUninit::uninit().assume_init(),
                 _marker: PhantomData,
             }
         }
     }
 
     #[inline(always)]
-    pub fn push(&mut self, key: Key, version: Version, ptr: Pointer) {
+    pub fn push(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key>) {
         let n_len
             = self.len();
 
         unsafe {
-            self.key_region
+            self.key_interval_region
                 .as_mut_ptr()
-                .add(n_len * mem::size_of::<Key>())
-                .write(MaybeUninit::new(key));
+                .add(n_len * mem::size_of::<Interval<Key>>())
+                .write(MaybeUninit::new(key_interval));
 
             self.version_region
                 .as_mut_ptr()
                 .add(n_len * mem::size_of::<Version>())
                 .write(MaybeUninit::new(version));
 
-            self.pointers_region
+            self.pointer_region
                 .as_mut_ptr()
-                .add(n_len * mem::size_of::<Pointer>())
+                .add(n_len * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
                 .write(MaybeUninit::new(ptr));
         }
 
@@ -101,23 +107,38 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn keys(&self) -> &[Key] {
+    pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
+        let len
+            = self.len();
+
         unsafe {
-            std::slice::from_raw_parts(self.key_region.as_ptr() as _, self.len())
+            (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
+             std::slice::from_raw_parts(self.version_region.as_ptr() as _, len))
         }
     }
 
     #[inline(always)]
-    pub fn versions(&self) -> &[Version] {
+    pub unsafe fn  keys(&self) -> &[Interval<Key>] {
+        std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.len())
+    }
+
+    #[inline(always)]
+    pub unsafe fn versions(&self) -> &[Version] {
+        std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len())
+    }
+
+    #[inline(always)]
+    fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
         unsafe {
-            std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len())
+            std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, self.len())
         }
     }
 
     #[inline(always)]
-    pub fn children(&self) -> &[Pointer] {
+    pub fn get_pointer(&self, index: usize) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key> {
         unsafe {
-            std::slice::from_raw_parts(self.pointers_region.as_ptr() as _, self.len())
+            &*(self.pointer_region.as_ptr() as *const BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+                .add(index)
         }
     }
 }

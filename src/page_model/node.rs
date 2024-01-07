@@ -10,7 +10,7 @@ use crate::page_model::leaf_page::LeafPage;
 // use crate::record_model::record::Record;
 // use crate::record_model::record_like::RecordLike;
 // use crate::record_model::record_list::{PayloadVersioned, RecordList};
-use crate::record_model::record_point::RecordPoint;
+use crate::record_model::record_point::{Payload, RecordPoint};
 use crate::record_model::version_info::{Version, VersionInfo};
 // use crate::record_model::Version;
 // use crate::record_model::version_info::VersionInfo;
@@ -127,14 +127,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub fn push(&mut self, key: Key, version: Version, payload: Box<u8>) {
+    pub fn push(&mut self, key: Key, version: Version, payload: Payload) {
         match self {
             Node::Leaf(records_page) => records_page
                 .push(RecordPoint::new(key, VersionInfo::new(version), payload)),
             _ => {}
         }
     }
-
 
     #[inline(always)]
     pub fn len(&self) -> usize {

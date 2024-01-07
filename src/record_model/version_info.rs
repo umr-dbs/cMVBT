@@ -5,6 +5,17 @@ use std::sync::atomic::AtomicU64;
 /// Declares the version type.
 pub type Version = u64;
 
+pub trait TimeMatcher {
+    fn match_version(self, other: Version) -> bool;
+}
+
+impl TimeMatcher for Version {
+    fn match_version(self, other: Version) -> bool {
+        self <= other
+    }
+}
+
+
 /// Declares the atomic version type.
 pub type AtomicVersion = AtomicU64;
 

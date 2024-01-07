@@ -1,4 +1,5 @@
 use std::hash::Hash;
+use std::ops::Deref;
 use std::sync::Arc;
 use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
@@ -21,16 +22,33 @@ pub(crate) struct RootItem<
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > {
-    root: Root<FAN_OUT, NUM_RECORDS, Key>,
-    prev: Option<SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>>,
+    pub(crate) root: Root<FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) prev: Option<SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>>,
 }
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash
+> Deref for RootItem<FAN_OUT, NUM_RECORDS, Key> {
+    type Target = Root<FAN_OUT, NUM_RECORDS, Key>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.root
+    }
+}
+
+pub(crate) type SmartRoot<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key
+> = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>;
 
 pub struct BPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > {
-    pub(crate) root: SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>,
+    pub(crate) root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key>,
     pub(crate) version_manager: VersionManager,
@@ -61,8 +79,7 @@ impl<const FAN_OUT: usize,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn make(locking_strategy: LockingStrategy) -> Self
-    {
+    fn make(locking_strategy: LockingStrategy) -> Self {
         let block_manager
             = BlockManager::new();
 

@@ -46,7 +46,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls);
 
 #[inline(always)]
-pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64, NodeVisits) {
+pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -70,31 +70,27 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
         let index = tree.clone();
         handles.push(spawn(move || {
             let mut counter_errs = 0;
-            let mut node_visits = 0;
             current_chunk
                 .into_iter()
-                .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
-                    (visits, CRUDOperationResult::Error) => {
-                        counter_errs += 1;
-                        node_visits += visits;
-                    }
-                    (visits, ..) => node_visits += visits
+                .for_each(|next_query| match index.dispatch(&next_query) { // tree.execute(operation),
+                    CRUDOperationResult::Error => counter_errs += 1,
+                    _ => {}
                 });
-            (counter_errs, node_visits)
+            counter_errs
         }));
     }
 
-    let (dups, node_visits) = handles
+    let errs = handles
         .into_iter()
         .map(|handle| handle
             .join()
             .unwrap()
-        ).fold((0, 0), |(errors, visits), (n_e, n_v)| (errors + n_e, visits + n_v));
+        ).fold(0, |errors, n_e| errors + n_e);
 
     let time_elapsed
         = SystemTime::now().duration_since(start).unwrap();
 
-    (time_elapsed.as_millis(), dups, node_visits)
+    (time_elapsed.as_millis(), errs)
 }
 
 pub fn format_insertions(i: usize) -> String {

@@ -1,20 +1,43 @@
 use std::hash::Hash;
 use std::fmt::Display;
+use std::ops::Deref;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::page_model::node::Node;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::bplus_tree::{BPlusTree, RootItem};
+use crate::utils::smart_cell::SmartCell;
+
+const WRITE: bool = true;
+const READ: bool = !WRITE;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Sync + Display,
+    Key: Default + Ord + Copy + Hash,
 > CRUDDispatcher<Key> for BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn dispatch(&self, crud_operation: CRUDOperation<Key>)
-                -> (NodeVisits, CRUDOperationResult<Key>) {
+    fn dispatch(&self, crud: &CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+        match crud.is_write() {
+            WRITE => {
+                let lookup_root
+                    = self.retrieve_root_latest();
 
-        unimplemented!()
+                unimplemented!()
+            }
+            READ => match crud {
+                CRUDOperation::Range(range, version) =>
+                    Self::key_range_read_from_root(
+                        self.retrieve_root_for(*version),
+                        range,
+                        *version),
+                CRUDOperation::Point(key, version) =>
+                    Self::key_point_read_from_root(
+                        self.retrieve_root_for(*version),
+                        *key,
+                        *version),
+                _ => CRUDOperationResult::Error
+            }
+        }
     }
 }

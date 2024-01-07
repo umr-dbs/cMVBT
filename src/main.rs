@@ -17,6 +17,7 @@ mod record_model;
 mod tree;
 mod utils;
 mod test;
+mod tx_model;
 
 pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
     Arc::new(if let LockingStrategy::MonoWriter = crud {
@@ -44,7 +45,7 @@ fn make_splash() {
     println!(" |                                                                       |");
     println!(" |               ------------------------------                          |");
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
-    println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
+    println!(" |               # Current version: {}                                |", env!("CARGO_PKG_VERSION"));
     println!(" |               -------------------------                               |");
     println!(" |               # OLC-HLE:   {}                                     |", hle());
     println!(" |               # RW-HLE:    AUTO                                       |");
@@ -76,7 +77,7 @@ pub enum TreeDispatcher {
 
 impl CRUDDispatcher<Key> for TreeDispatcher {
     #[inline(always)]
-    fn dispatch(&self, crud: CRUDOperation<Key>) -> (NodeVisits, CRUDOperationResult<Key>) {
+    fn dispatch(&self, crud: &CRUDOperation<Key>) -> CRUDOperationResult<Key> {
         match self {
             TreeDispatcher::Ref(inner) => inner.dispatch(crud),
             TreeDispatcher::Wrapper(sync) => if crud.is_read() {

@@ -5,14 +5,24 @@ use std::ptr::{addr_of, addr_of_mut};
 use crate::record_model::unsafe_clone::UnsafeClone;
 use crate::record_model::version_info::VersionInfo;
 
-pub type Payload = Box<u8>;
+pub type Payload = Box<[u8]>;
 
 #[derive(Default)]
 #[repr(packed)]
 pub struct RecordPoint<Key: Ord + Copy + Hash + Default> {
     pub key: Key,
     pub version: VersionInfo,
-    pub payload: Box<u8>
+    pub payload: Payload
+}
+
+impl<Key: Ord + Copy + Hash + Default> Clone for RecordPoint<Key> {
+    fn clone(&self) -> Self {
+        Self {
+            key: self.key(),
+            version: self.version().clone(),
+            payload: self.payload().clone(),
+        }
+    }
 }
 
 impl<Key: Ord + Copy + Hash + Default> RecordPoint<Key> {

@@ -3,6 +3,7 @@ use std::hash::Hash;
 use crate::utils::interval::Interval;
 use crate::crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Insert, Range, Update};
 use crate::record_model::record_point::Payload;
+use crate::record_model::version_info::Version;
 
 /// Transactions definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
@@ -11,11 +12,15 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash> {
     #[default]
     Empty,
 
+    // Writers
     Insert(Key, Payload),
     Update(Key, Payload),
     Delete(Key),
-    Point(Key),
-    Range(Interval<Key>),
+
+    // Readers
+    Point(Key, Version),
+    Range(Interval<Key>, Version),
+    // TimeTravel(Interval<Version>, Interval<Key>)
 }
 
 /// Explicitly support move-semantics for Transaction.
@@ -26,15 +31,15 @@ impl<Key: Display + Ord + Copy + Hash> Display for CRUDOperation<Key> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Insert(key, payload) =>
-                write!(f, "Insert(Key: {}, Payload: {})", key, payload),
+                write!(f, "Insert(Key: {}, Payload: {:?})", key, payload),
             Update(key, payload) =>
-                write!(f, "Update(key: {}, payload: {})", key, payload),
+                write!(f, "Update(key: {}, payload: {:?})", key, payload),
             Delete(key) =>
                 write!(f, "Delete(Key: {})", key),
-            Point(key) =>
-                write!(f, "Point(Key: {})", key),
-            Range(key) =>
-                write!(f, "Range(Keys: [{}, {}])", key.lower(), key.upper()),
+            Point(key, version) =>
+                write!(f, "Point(Key: {}, version: {})", key, version),
+            Range(key, version) =>
+                write!(f, "Range(Keys: [{}, {}], version: {})", key.lower(), key.upper(), version),
             Empty => write!(f, "Empty"),
         }
     }

@@ -7,6 +7,6 @@ pub trait CRUDDispatcher<
     Key: Default + Ord + Copy + Hash
 > {
     fn dispatch(&self,
-                operation: CRUDOperation<Key>
-    ) -> (NodeVisits, CRUDOperationResult<Key>);
+                operation: &CRUDOperation<Key>
+    ) -> CRUDOperationResult<Key>;
 }
