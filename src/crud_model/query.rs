@@ -6,7 +6,7 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot};
+use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, SmartRoot};
 use crate::utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
@@ -185,55 +185,126 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    fn retrieve_root_write(&self, root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>)
+                           -> (SmartRoot<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+    {
+        let root_ptr
+            = root.unsafe_borrow();
+
+        let root_latch = self.apply_for_ref(
+            &root_ptr.block,
+            INIT_TREE_HEIGHT,
+            INIT_TREE_HEIGHT,
+            Attempts::MAX,
+            Height::MIN);
+
+        debug_assert!(root_latch.is_write_lock());
+
+        let root_deref
+            = root_latch.deref().unwrap();
+
+        match self.unsafe_degree_of(root_deref.as_ref()) {
+            NodeUnsafeDegree::Ok => (root, root_latch),
+            NodeUnsafeDegree::Overflow => unimplemented!(),
+            NodeUnsafeDegree::Underflow => unimplemented!()
+        }
+    }
+
     #[inline]
     fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
-        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
+                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
     {
-        // TODO: Apply special rules for root unsafe condition
-        let root
-            = self.root.clone();
+        let (root, mut curr_guard)
+            = self.retrieve_root_write(self.root.clone());
+
+        let mut curr_level
+            = 1 as Height;
+
+        let height
+            = root.unsafe_borrow().height();
 
         let mut curr_block
             = root.unsafe_borrow().block();
 
-        let mut curr_level = 1 as Height;
-        let height = root.unsafe_borrow().height();
+        loop {
+            match curr_guard.deref().unwrap().as_ref() {
+                Node::Index(internal_page) => {
+                    let (keys_page, versions_page) = internal_page
+                        .keys_versions();
 
-        let mut curr_latch
-            = self.apply_for_ref(&curr_block, height, curr_level, attempts, max_level);
+                    let index = versions_page
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .zip(keys_page
+                            .iter()
+                            .rev())
+                        .find(|(.., range)| range.contains(key))
+                        .map(|((pos, ..), ..)| pos)
+                        .unwrap();
 
-        // TODO: Apply fix for node_next unsafe condition
-        while let Node::Index(internal_page) = curr_latch
-            .deref().unwrap().as_ref()
-        {
-            let (keys_page, versions_page) = internal_page
-                .keys_versions();
+                    let next_curr_block = internal_page
+                        .get_pointer(index)
+                        .clone();
 
-            let index = versions_page
-                .iter()
-                .enumerate()
-                .rev()
-                .zip(keys_page
-                    .iter()
-                    .rev())
-                .find(|(.., range)| range.contains(key))
-                .map(|((pos, ..), ..)| pos)
-                .unwrap();
+                    curr_level += 1;
 
-            curr_block = internal_page
-                .get_pointer(index)
-                .clone();
+                    let mut next_curr_guard = self.apply_for_ref(
+                        &curr_block,
+                        height,
+                        curr_level,
+                        attempts,
+                        max_level);
 
-            curr_level += 1;
+                    match self.unsafe_degree_of(curr_guard.deref().unwrap().as_ref()) {
+                        NodeUnsafeDegree::Overflow
+                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() => {
+                            let (c_curr_block, c_curr_guard)
+                                = self.on_overflow_node(curr_guard, next_curr_guard);
 
-            curr_latch = self.apply_for_ref(
-                &curr_block,
-                height,
-                curr_level,
-                attempts,
-                max_level);
+                            curr_guard = c_curr_guard;
+                            curr_block = c_curr_block;
+                        }
+                        NodeUnsafeDegree::Underflow
+                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() => {
+                            let (c_curr_block, c_curr_guard)
+                                = self.on_underflow_node(curr_guard, next_curr_guard);
+
+                            curr_guard = c_curr_guard;
+                            curr_block = c_curr_block;
+                        }
+                        NodeUnsafeDegree::Ok => {
+                            curr_guard = next_curr_guard;
+                            curr_block = next_curr_block;
+                        }
+                        _ => { // On loose latch and failed upgrade
+                            return Err((curr_level, attempts));
+                        }
+                    }
+                }
+                _ => return Ok(curr_guard) // cant have it both ways in non optimistic latching protocol
+            }
         }
+    }
 
-        Ok(curr_latch)
+    fn on_overflow_node(
+        &self,
+        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+        -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+    {
+        let mufasa_deref_mut
+            = mufasa.deref_mut().unwrap();
+
+        unimplemented!()
+    }
+
+    fn on_underflow_node(
+        &self,
+        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+        -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+    {
+        unimplemented!()
     }
 }
