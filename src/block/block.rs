@@ -2,13 +2,14 @@ use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
 
-use crate::page_model::{BlockID, BlockRef};
+use crate::page_model::BlockRef;
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
 
 // #[repr(align(4096))]
-#[repr(packed)]
+// #[repr(packed)]
+#[repr(align(4096))]
 pub struct Block<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

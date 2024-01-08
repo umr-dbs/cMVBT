@@ -1,34 +1,20 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use itertools::Itertools;
+use crate::block::block::BlockGuard;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::page_model::BlockRef;
+use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, SmartRoot};
+use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot};
 use crate::utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + 'static
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    #[inline(always)]
-    pub(crate) fn has_overflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> bool {
-        match node.is_leaf() {
-            true => node.is_overflow(self.block_manager.allocation_leaf()),
-            false => node.is_overflow(self.block_manager.allocation_directory())
-        }
-    }
-
-    fn has_underflow(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> bool {
-        match node.is_leaf() {
-            true => node.is_underflow(self.block_manager.allocation_leaf()),
-            false => node.is_underflow(self.block_manager.allocation_directory())
-        }
-    }
-
-    fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> NodeUnsafeDegree {
+    pub(crate) fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> NodeUnsafeDegree {
         match node.is_leaf() {
             true => node.unsafe_degree(self.block_manager.allocation_leaf()),
             false => node.unsafe_degree(self.block_manager.allocation_directory()),
@@ -81,7 +67,6 @@ impl<const FAN_OUT: usize,
                     .iter()
                     .rev())
                 .skip_while(|((.., v), ..)| !v.match_version(version))
-                // .take_while(|((.., v), ..)| v.match_version(version))
                 .find(|(.., range)| range.contains(key))
                 .map(|((pos, ..), ..)| internal_page.get_pointer(pos))
                 .unwrap()
@@ -114,8 +99,6 @@ impl<const FAN_OUT: usize,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    assert_eq!(versions_page.len(), keys_page.len());
-
                     blocks.extend(versions_page
                         .iter()
                         .enumerate()
@@ -124,9 +107,8 @@ impl<const FAN_OUT: usize,
                             .iter()
                             .rev())
                         .skip_while(|((.., v), ..)| !v.match_version(version))
-                        // .take_while(|((.., v), ..)| v.match_version(version))
                         .filter(|(.., range)| lookup_range.overlap(range))
-                        .map(|((pos, ..), range)| internal_page
+                        .map(|((pos, ..), ..)| internal_page
                             .get_pointer(pos)
                             .clone())
                     );
@@ -155,7 +137,6 @@ impl<const FAN_OUT: usize,
             .iter()
             .rev()
             .skip_while(|r| !r.version().matches(version))
-            .take_while(|r| r.version().matches(version))
             .find(|r| r.key() == key)
         {
             None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
@@ -182,7 +163,6 @@ impl<const FAN_OUT: usize,
                 .iter()
                 .rev()
                 .skip_while(|r| !r.version().matches(version))
-                .take_while(|r| r.version().matches(version))
                 .filter(|r| range.contains(r.key()))
                 .cloned()
                 .collect::<Vec<_>>())
@@ -190,36 +170,70 @@ impl<const FAN_OUT: usize,
             .collect())
     }
 
-    #[inline]
-    fn traverse_write(&self, key: Key) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
-        let mut curr
-            = self.retrieve_root_latest().unsafe_borrow().block();
+    fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {
+        let mut attempt = 0;
+        let mut lock_level = MAX_TREE_HEIGHT;
 
-        // TODO: Consider latch type
-        while let Node::Index(internal_page) = curr
-            .unsafe_borrow()
-            .as_ref()
+        loop {
+            match self.traversal_write_internal(key, attempt, lock_level) {
+                Err((n_lock_level, n_attempt)) => {
+                    attempt = n_attempt;
+                    lock_level = n_lock_level;
+                }
+                Ok(guard) => break guard,
+            }
+        }
+    }
+
+    #[inline]
+    fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
+        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
+    {
+        // TODO: Apply special rules for root unsafe condition
+        let root
+            = self.root.clone();
+
+        let mut curr_block
+            = root.unsafe_borrow().block();
+
+        let mut curr_level = 1 as Height;
+        let height = root.unsafe_borrow().height();
+
+        let mut curr_latch
+            = self.apply_for_ref(&curr_block, height, curr_level, attempts, max_level);
+
+        // TODO: Apply fix for node_next unsafe condition
+        while let Node::Index(internal_page) = curr_latch
+            .deref().unwrap().as_ref()
         {
             let (keys_page, versions_page) = internal_page
                 .keys_versions();
 
-            assert_eq!(versions_page.len(), keys_page.len());
-
             let index = versions_page
                 .iter()
+                .enumerate()
                 .rev()
                 .zip(keys_page
                     .iter()
                     .rev())
-                .find_position(|(.., range)| range.contains(key))
-                .map(|(pos, ..)| versions_page.len() - pos - 1)
+                .find(|(.., range)| range.contains(key))
+                .map(|((pos, ..), ..)| pos)
                 .unwrap();
 
-            curr = internal_page
+            curr_block = internal_page
                 .get_pointer(index)
                 .clone();
+
+            curr_level += 1;
+
+            curr_latch = self.apply_for_ref(
+                &curr_block,
+                height,
+                curr_level,
+                attempts,
+                max_level);
         }
 
-        curr
+        Ok(curr_latch)
     }
 }

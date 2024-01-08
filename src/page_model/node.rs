@@ -1,21 +1,10 @@
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::mem;
-use itertools::Itertools;
-use crate::utils::shadow_vec::ShadowVec;
-use serde::{Serialize, Deserialize};
-use crate::page_model::BlockRef;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
-// use crate::record_model::record::Record;
-// use crate::record_model::record_like::RecordLike;
-// use crate::record_model::record_list::{PayloadVersioned, RecordList};
 use crate::record_model::record_point::{Payload, RecordPoint};
 use crate::record_model::version_info::{Version, VersionInfo};
-// use crate::record_model::Version;
-// use crate::record_model::version_info::VersionInfo;
 
-// #[repr(u8)]
 pub enum Node<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -60,20 +49,6 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash
 > Node<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
-    pub fn is_overflow(&self, allocation: usize) -> bool {
-        debug_assert!(allocation >= self.len());
-
-        self.len() >= allocation
-    }
-
-    #[inline(always)]
-    pub fn is_underflow(&self, allocation: usize) -> bool {
-        debug_assert!(allocation > 0 && allocation >= self.len());
-
-        self.len() < allocation / 2
-    }
-
-    #[inline(always)]
     pub fn unsafe_degree(&self, allocation: usize) -> NodeUnsafeDegree {
         let len = self.len();
 
@@ -101,20 +76,6 @@ impl<const FAN_OUT: usize,
                 records_page.as_records(),
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .records_mut")
         }
-    }
-
-    #[inline(always)]
-    pub fn push_record(&mut self, record: RecordPoint<Key>) {
-        match self {
-            Node::Leaf(records_page) =>
-                records_page.push(record),
-            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .push_record")
-        }
-    }
-
-    #[inline(always)]
-    pub const fn is_directory(&self) -> bool {
-        !self.is_leaf()
     }
 
     #[inline]

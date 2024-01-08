@@ -140,11 +140,6 @@ impl Display for LockingStrategy {
 
 impl LockingStrategy {
     #[inline(always)]
-    pub const fn version_commit_lock_required(&self) -> bool {
-        !self.is_mono_writer()
-    }
-
-    #[inline(always)]
     pub const fn latch_type(&self) -> LatchType {
         match self {
             LockingStrategy::MonoWriter => LatchType::None,

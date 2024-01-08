@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::mem::{ManuallyDrop, MaybeUninit};
+use std::mem;
+use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::record_model::record_point::RecordPoint;
@@ -29,7 +30,10 @@ impl<const NUM_RECORDS: usize,
     Key: Hash + Ord + Copy + Default
 > Drop for LeafPage<NUM_RECORDS, Key> {
     fn drop(&mut self) {
-
+        self.as_records_mut().iter_mut().for_each(|record| unsafe {
+            (record as *mut RecordPoint<Key>)
+                .drop_in_place()
+        })
     }
 }
 
@@ -38,6 +42,9 @@ impl<const NUM_RECORDS: usize,
 > LeafPage<NUM_RECORDS, Key> {
     #[inline(always)]
     pub const fn new() -> Self {
+        debug_assert!(mem::size_of::<Len>() +
+                          mem::size_of::<[RecordPoint<Key>; NUM_RECORDS]>()
+                          <= 4096, "FAN_OUT Invalid!");
         Self {
             len: Len::new(0),
             record_data: unsafe { MaybeUninit::uninit().assume_init() }, // <[MaybeUninit<Entry>; NUM_RECORDS]>::
@@ -108,8 +115,7 @@ impl<const NUM_RECORDS: usize,
 
                 if ver_info.delete(del) {
                     Some(ver_info.clone())
-                }
-                else {
+                } else {
                     None
                 }
             }

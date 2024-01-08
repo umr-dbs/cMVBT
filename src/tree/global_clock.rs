@@ -1,18 +1,27 @@
 use parking_lot::lock_api::MutexGuard;
-use parking_lot::RawMutex;
+use parking_lot::{Mutex, RawMutex};
 use std::ops::{Deref, DerefMut};
-use crate::record_model::version_info::Version;
+use std::sync::atomic::Ordering::Relaxed;
+use crate::record_model::version_info::{AtomicVersion, Version};
+use crate::utils::safe_cell::SafeCell;
+
+pub(crate) enum GlobalClock {
+    Locked(Mutex<Version>),
+    Atomic(AtomicVersion),
+    Free(SafeCell<Version>)
+}
 
 /// Holds Version Commit Clock atomic strategy, either locked in multi-threaded or
 /// single writer mode.
 // #[repr(u8)]
-pub(crate) enum GlobalClock<'a> {
+pub enum ClockHandle<'a> {
     Locked(MutexGuard<'a, RawMutex, Version>),
     Free(&'a mut Version),
+    Optimistic(&'a AtomicVersion, Version)
 }
 
 /// Implements variant checkers for VCClock.
-impl GlobalClock<'_> {
+impl ClockHandle<'_> {
     /// Returns true, if this clock is not locked.
     /// /// Returns false, otherwise.
     pub(crate) const fn is_free(&self) -> bool {
@@ -22,33 +31,18 @@ impl GlobalClock<'_> {
         }
     }
 
-    /// Returns true, if this cliock is locked.
+    /// Returns true, if this clock is optimistic.
+    /// /// Returns false, otherwise.
+    pub(crate) const fn is_optimistic(&self) -> bool {
+        match self {
+            Self::Optimistic(..) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true, if this clock is locked.
     /// Returns false, otherwise.
     pub(crate) const fn is_locked(&self) -> bool {
         !self.is_free()
-    }
-}
-
-/// Implements sugar for auto deref, i.e. access the VC Clock.
-impl Deref for GlobalClock<'_> {
-    type Target = Version;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        match self {
-            GlobalClock::Locked(vc) => vc.deref(),
-            GlobalClock::Free(vc) => vc,
-        }
-    }
-}
-
-/// Implements sugar, used for automatic commit, regardless of underlying mode.
-impl DerefMut for GlobalClock<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            GlobalClock::Locked(vc) => vc.deref_mut(),
-            GlobalClock::Free(vc) => vc,
-        }
     }
 }

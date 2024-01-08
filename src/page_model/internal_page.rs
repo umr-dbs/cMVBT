@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicU16, AtomicUsize, fence};
 use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::page_model::BlockRef;
 use crate::record_model::version_info::Version;
@@ -10,16 +10,7 @@ use crate::utils::interval::Interval;
 
 type Len = AtomicU16;
 
-pub struct IndexEntry<
-    const FAN_OUT: usize,
-    const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash>
-{
-    key: Key,
-    version: Version,
-    next: BlockRef<FAN_OUT, NUM_RECORDS, Key>
-}
-
+// #[repr(align(16))]
 pub struct InternalPage<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -53,8 +44,12 @@ impl<const FAN_OUT: usize,
 > InternalPage<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     pub const fn new() -> Self {
-        debug_assert!(FAN_OUT % 3 >= mem::size_of::<Len>(), "FAN_OUT invalid!");
-
+        debug_assert!(mem::size_of::<[Key; FAN_OUT]>() +
+            mem::size_of::<[Version; FAN_OUT]>() +
+            mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key>; FAN_OUT]>() +
+            mem::size_of::<Len>()
+            <= 4096, "FAN_OUT Invalid!"
+        );
         unsafe {
             InternalPage {
                 len: Len::new(0),
@@ -118,7 +113,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub unsafe fn  keys(&self) -> &[Interval<Key>] {
+    pub unsafe fn keys(&self) -> &[Interval<Key>] {
         std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.len())
     }
 

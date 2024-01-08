@@ -1,19 +1,16 @@
 use std::hash::Hash;
 use std::fmt::Display;
-use std::ops::Deref;
-use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::page_model::node::Node;
+use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::tree::bplus_tree::{BPlusTree, RootItem};
-use crate::utils::smart_cell::SmartCell;
+use crate::tree::bplus_tree::BPlusTree;
 
 const WRITE: bool = true;
 const READ: bool = !WRITE;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + 'static,
 > CRUDDispatcher<Key> for BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
