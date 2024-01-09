@@ -50,6 +50,14 @@ pub(crate) type SmartRoot<
     Key
 > = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>;
 
+
+pub(crate) type SmartRootGuard<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key
+> = SmartGuard<'a, RootItem<FAN_OUT, NUM_RECORDS, Key>>;
+
 pub struct BPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

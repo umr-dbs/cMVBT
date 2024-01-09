@@ -6,8 +6,9 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, SmartRoot};
+use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, RootItem, SmartRoot, SmartRootGuard};
 use crate::utils::interval::Interval;
+use crate::utils::smart_cell::SmartGuard;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -185,27 +186,34 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn retrieve_root_write(&self, root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>)
-                           -> (SmartRoot<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+    fn retrieve_root_write(&self, roots_guard: SmartRootGuard<FAN_OUT, NUM_RECORDS, Key>)
+    -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>, Height)
     {
-        let root_ptr
-            = root.unsafe_borrow();
+        debug_assert!(roots_guard.is_write_lock());
 
-        let root_latch = self.apply_for_ref(
-            &root_ptr.block,
-            INIT_TREE_HEIGHT,
-            INIT_TREE_HEIGHT,
-            Attempts::MAX,
-            Height::MIN);
+        let curr_root_item
+            = roots_guard.deref_mut().unwrap();
 
-        debug_assert!(root_latch.is_write_lock());
+        let curr_root_block
+            = curr_root_item.block();
+
+        let height
+            = curr_root_item.height();
+
+        let curr_root_guard
+            = curr_root_item.block.borrow_mut();
+
+        debug_assert!(curr_root_guard.is_write_lock());
 
         let root_deref
-            = root_latch.deref().unwrap();
+            = roots_guard.deref().unwrap();
 
-        match self.unsafe_degree_of(root_deref.as_ref()) {
-            NodeUnsafeDegree::Ok => (root, root_latch),
-            NodeUnsafeDegree::Overflow => unimplemented!(),
+        match self.unsafe_degree_of(root_deref.block.unsafe_borrow().as_ref()) {
+            NodeUnsafeDegree::Ok => (curr_root_block, curr_root_guard, height),
+            NodeUnsafeDegree::Overflow => {
+
+                unimplemented!()
+            },
             NodeUnsafeDegree::Underflow => unimplemented!()
         }
     }
@@ -214,17 +222,11 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
                                 -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
     {
-        let (root, mut curr_guard)
-            = self.retrieve_root_write(self.root.clone());
+        let (mut curr_block, mut curr_guard, height)
+            = self.retrieve_root_write(self.root.borrow_mut());
 
         let mut curr_level
             = 1 as Height;
-
-        let height
-            = root.unsafe_borrow().height();
-
-        let mut curr_block
-            = root.unsafe_borrow().block();
 
         loop {
             match curr_guard.deref().unwrap().as_ref() {
@@ -256,7 +258,7 @@ impl<const FAN_OUT: usize,
                         attempts,
                         max_level);
 
-                    match self.unsafe_degree_of(curr_guard.deref().unwrap().as_ref()) {
+                    match self.unsafe_degree_of(next_curr_guard.deref().unwrap().as_ref()) {
                         NodeUnsafeDegree::Overflow
                         if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() => {
                             let (c_curr_block, c_curr_guard)

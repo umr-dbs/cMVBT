@@ -2,13 +2,15 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU16, AtomicUsize, fence};
+use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::page_model::BlockRef;
 use crate::record_model::version_info::Version;
 use crate::utils::interval::Interval;
 
 type Len = AtomicU16;
+
+const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
 
 // #[repr(align(16))]
 pub struct InternalPage<
@@ -45,10 +47,10 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn new() -> Self {
         debug_assert!(mem::size_of::<[Key; FAN_OUT]>() +
-            mem::size_of::<[Version; FAN_OUT]>() +
-            mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key>; FAN_OUT]>() +
-            mem::size_of::<Len>()
-            <= 4096, "FAN_OUT Invalid!"
+                          mem::size_of::<[Version; FAN_OUT]>() +
+                          mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key>; FAN_OUT]>() +
+                          mem::size_of::<Len>()
+                          <= 4096, "FAN_OUT Invalid!"
         );
         unsafe {
             InternalPage {
@@ -134,6 +136,34 @@ impl<const FAN_OUT: usize,
         unsafe {
             &*(self.pointer_region.as_ptr() as *const BlockRef<FAN_OUT, NUM_RECORDS, Key>)
                 .add(index)
+        }
+    }
+
+    #[inline(always)]
+    pub fn active_count(&self) -> usize {
+        unsafe {
+            self.versions().iter().fold(0, |c, next|
+                if *next & OBSOLETE_VERSION_MARK == 0 { c } else { c + 1 })
+        }
+    }
+
+    #[inline(always)]
+    pub fn obsolete_count(&self) -> usize {
+        unsafe {
+            self.versions().iter().fold(0, |c, next|
+                if *next & OBSOLETE_VERSION_MARK != 0 { c } else { c + 1 })
+        }
+    }
+
+    #[inline(always)]
+    pub fn mark_version_obsolete(&mut self, index: usize) {
+        unsafe {
+            let ptr
+                = self.version_region.as_mut_ptr().add(index) as *mut Version;
+
+            debug_assert_eq!(*ptr & OBSOLETE_VERSION_MARK, 0);
+
+            ptr.write(*ptr | OBSOLETE_VERSION_MARK);
         }
     }
 }
