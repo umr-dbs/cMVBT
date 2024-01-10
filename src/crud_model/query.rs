@@ -208,7 +208,10 @@ impl<const FAN_OUT: usize,
         let root_deref
             = roots_guard.deref().unwrap();
 
-        match self.unsafe_degree_of(root_deref.block.unsafe_borrow().as_ref()) {
+        let root_deref
+            = root_deref.block.unsafe_borrow();
+
+        match self.unsafe_degree_of(root_deref.as_ref()) {
             NodeUnsafeDegree::Ok => (curr_root_block, curr_root_guard, height),
             NodeUnsafeDegree::Overflow => {
 

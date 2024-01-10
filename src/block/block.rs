@@ -7,6 +7,25 @@ use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
 
+
+pub(crate) enum BlockSplit<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash>
+{
+    LeafByKey(BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    LeafByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    InternalByKey(BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    InternalByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
+{
+
+}
+
 // #[repr(align(4096))]
 // #[repr(packed)]
 #[repr(align(4096))]
@@ -36,11 +55,30 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > Block<FAN_OUT, NUM_RECORDS, Key>
-{
-    // #[inline(always)]
+{ // #[inline(always)]
     // pub const fn block_id(&self) -> BlockID {
     //     0
     // }
+
+    #[inline(always)]
+    pub fn max_active() -> usize { // 80%
+        (NUM_RECORDS as f64 / 1.25) as _
+    }
+
+    #[inline(always)]
+    pub const fn min_active() -> usize { // 20%
+        NUM_RECORDS / 5
+    }
+
+    #[inline(always)]
+    pub(crate) fn active_count(&self) -> usize {
+        match self.as_ref() {
+            Node::Index(internal_page) =>
+                internal_page.active_count(),
+            Node::Leaf(leaf_page) =>
+                leaf_page.active_count()
+        }
+    }
 
     #[inline(always)]
     pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
@@ -119,4 +157,5 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash,
 > BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key> {
+
 }

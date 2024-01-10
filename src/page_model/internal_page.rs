@@ -156,6 +156,16 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub const fn is_obsolete(version: Version) -> bool {
+        version & OBSOLETE_VERSION_MARK != 0
+    }
+
+    #[inline(always)]
+    pub const fn is_active(version: Version) -> bool {
+        version & OBSOLETE_VERSION_MARK == 0
+    }
+
+    #[inline(always)]
     pub fn mark_version_obsolete(&mut self, index: usize) {
         unsafe {
             let ptr
@@ -165,5 +175,12 @@ impl<const FAN_OUT: usize,
 
             ptr.write(*ptr | OBSOLETE_VERSION_MARK);
         }
+    }
+
+    pub fn split(&mut self) -> (Box<Self>, Box<Self>) {
+
+
+
+        unimplemented!()
     }
 }

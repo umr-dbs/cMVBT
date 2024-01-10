@@ -1,12 +1,14 @@
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
+use itertools::Itertools;
 use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
-use crate::block::block::Block;
+use crate::block::block::{Block, BlockGuard, BlockSplit};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
+use crate::page_model::node::Node;
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::version_manager::VersionManager;
 use crate::utils::safe_cell::SafeCell;
@@ -93,6 +95,63 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
+    pub(crate) fn split(&self, block: &Block<FAN_OUT, NUM_RECORDS, Key>)
+                        -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
+    {
+        let active_count
+            = block.active_count();
+
+        if active_count >= Block::<FAN_OUT, NUM_RECORDS, Key>::min_active() {
+            // KEY_SPLIT
+            match block.is_leaf() {
+                true => { // LeafPage
+                    let (mut left, mut right) = (self.block_manager
+                         .new_empty_leaf()
+                         .into_cell(self.locking_strategy.latch_type()),
+                     self.block_manager
+                         .new_empty_leaf()
+                         .into_cell(self.locking_strategy.latch_type()));
+
+                    let sorted_block = block
+                        .as_records()
+                        .iter()
+                        .sorted_by_key(|r| r.key())
+                        .cloned()
+                        .collect_vec();
+
+                    let (first, second) = sorted_block
+                        .as_slice()
+                        .split_at(block.len() / 2);
+
+                    if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
+                        leaf_page.bulk_push(first, 0);
+                    }
+
+                    if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
+                        leaf_page.bulk_push(second, 0);
+                    }
+                },
+                false => {
+
+
+                    let (left, right) = (self.block_manager
+                         .new_empty_index_block()
+                         .into_cell(self.locking_strategy.latch_type()),
+                     self.block_manager
+                         .new_empty_index_block()
+                         .into_cell(self.locking_strategy.latch_type()));
+                }
+            };
+
+
+        } else {
+            // VERSION SPLIT
+        }
+
+
+        unimplemented!()
+    }
+
     #[inline]
     fn make(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
         let block_manager
@@ -149,7 +208,7 @@ impl<const FAN_OUT: usize,
         height: Height,
         curr_level: Level,
         attempts: Attempts,
-        max_level: Level
+        max_level: Level,
     ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
     {
         match self.locking_strategy() {

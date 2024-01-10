@@ -1,9 +1,10 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::mem;
+use std::{mem, ptr, slice};
 use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use crate::block::block_manager::BlockManager;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::version_info::{Version, VersionInfo};
 
@@ -86,6 +87,22 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
+    pub fn active_count(&self) -> usize {
+        self.as_records()
+            .iter()
+            .filter(|r| !r.version().is_deleted())
+            .count()
+    }
+
+    #[inline(always)]
+    pub fn dead_count(&self) -> usize {
+        self.as_records()
+            .iter()
+            .filter(|r| r.version().is_deleted())
+            .count()
+    }
+
+    #[inline]
     pub fn push(&mut self, record: RecordPoint<Key>) {
         unsafe {
             let n_len
@@ -97,6 +114,16 @@ impl<const NUM_RECORDS: usize,
                 .write(MaybeUninit::new(record));
 
             self.len.store(n_len as u16 + 1, Release)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn bulk_push(&mut self, records: &[RecordPoint<Key>], offset: usize) {
+        unsafe {
+           slice::from_raw_parts_mut(self.record_data.as_mut_ptr().add(offset) as _, records.len())
+               .clone_from_slice(records);
+
+            self.len.store(records.len() as _, Release)
         }
     }
 
