@@ -1,9 +1,11 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
+use crate::page_model::BlockRef;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
 use crate::record_model::record_point::{Payload, RecordPoint};
 use crate::record_model::version_info::{Version, VersionInfo};
+use crate::utils::interval::Interval;
 
 pub enum Node<
     const FAN_OUT: usize,
@@ -74,7 +76,25 @@ impl<const FAN_OUT: usize,
         match self {
             Node::Leaf(records_page) =>
                 records_page.as_records(),
-            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .records_mut")
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .as_records")
+        }
+    }
+
+    #[inline(always)]
+    pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
+        match self {
+            Node::Index(internal_page) =>
+                internal_page.keys_versions(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions")
+        }
+    }
+
+    #[inline(always)]
+    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
+        match self {
+            Node::Index(internal_page) =>
+                internal_page.keys_versions_pointers(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions_pointers")
         }
     }
 

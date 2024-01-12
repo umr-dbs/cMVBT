@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use crate::block::block::{Block, BlockGuard, BlockSplit};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
+use crate::page_model::internal_page::InternalPage;
 use crate::page_model::node::Node;
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::version_manager::VersionManager;
@@ -101,55 +103,108 @@ impl<const FAN_OUT: usize,
         let active_count
             = block.active_count();
 
+        let is_leaf
+            = block.is_leaf();
+
         if active_count >= Block::<FAN_OUT, NUM_RECORDS, Key>::min_active() {
             // KEY_SPLIT
-            match block.is_leaf() {
+            match is_leaf {
                 true => { // LeafPage
-                    let (mut left, mut right) = (self.block_manager
-                         .new_empty_leaf()
-                         .into_cell(self.locking_strategy.latch_type()),
-                     self.block_manager
-                         .new_empty_leaf()
-                         .into_cell(self.locking_strategy.latch_type()));
+                    let (left, right) =
+                        (self.block_manager
+                             .new_empty_leaf()
+                             .into_cell(self.locking_strategy.latch_type()),
+                         self.block_manager
+                             .new_empty_leaf()
+                             .into_cell(self.locking_strategy.latch_type()));
 
                     let sorted_block = block
                         .as_records()
                         .iter()
                         .sorted_by_key(|r| r.key())
-                        .cloned()
                         .collect_vec();
 
                     let (first, second) = sorted_block
-                        .as_slice()
                         .split_at(block.len() / 2);
 
                     if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
-                        leaf_page.bulk_push(first, 0);
+                        leaf_page.bulk_push(first);
                     }
 
                     if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
-                        leaf_page.bulk_push(second, 0);
+                        leaf_page.bulk_push(second);
                     }
-                },
-                false => {
 
-
-                    let (left, right) = (self.block_manager
-                         .new_empty_index_block()
-                         .into_cell(self.locking_strategy.latch_type()),
-                     self.block_manager
-                         .new_empty_index_block()
-                         .into_cell(self.locking_strategy.latch_type()));
+                    BlockSplit::LeafByKey(left, right)
                 }
-            };
+                false => { // KEY_SPLIT InternalPage
+                    let (left, right) =
+                        (self.block_manager
+                            .new_empty_index_block()
+                            .into_cell(self.locking_strategy.latch_type()),
+                        self.block_manager
+                            .new_empty_index_block()
+                            .into_cell(self.locking_strategy.latch_type()));
 
+                    let (key_intervals, versions) = block
+                        .keys_versions();
 
+                    let active_entries = key_intervals
+                        .iter()
+                        .rev()
+                        .zip(versions
+                            .iter()
+                            .rev())
+                        .take_while(|(.., v)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .collect::<VecDeque<_>>();
+
+                    unimplemented!()
+                }
+            }
         } else {
             // VERSION SPLIT
+            match is_leaf {
+                true => { // LeafPage
+                    let new_leaf = self.block_manager
+                        .new_empty_leaf()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    let active_records = block
+                        .as_records()
+                        .iter()
+                        .filter(|record| !record.version().is_deleted())
+                        .collect_vec();
+
+                    if let Node::Leaf(leaf_page) = new_leaf.unsafe_borrow_mut().as_mut() {
+                        leaf_page.bulk_push(active_records.as_slice());
+                    }
+
+                    BlockSplit::LeafByVersion(new_leaf)
+                }
+                false => { // VERSION SPLIT InternalPage
+                    let new_internal_page = self.block_manager
+                        .new_empty_index_block()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    let (key_intervals, versions, pointers) = block
+                        .keys_versions_pointers();
+
+                    let mut active_entries = key_intervals
+                        .iter()
+                        .zip(versions
+                            .iter())
+                        .zip(pointers.iter())
+                        .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .collect_vec();
+
+                    if let Node::Index(internal_page) = new_internal_page.unsafe_borrow_mut().as_mut() {
+                        internal_page.bulk_push(active_entries.as_slice())
+                    }
+
+                    BlockSplit::InternalByVersion(new_internal_page)
+                }
+            }
         }
-
-
-        unimplemented!()
     }
 
     #[inline]

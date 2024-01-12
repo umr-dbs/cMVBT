@@ -118,9 +118,9 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn bulk_push(&mut self, records: &[RecordPoint<Key>], offset: usize) {
+    pub(crate) fn bulk_push(&mut self, records: &[&RecordPoint<Key>]) {
         unsafe {
-           slice::from_raw_parts_mut(self.record_data.as_mut_ptr().add(offset) as _, records.len())
+           slice::from_raw_parts_mut(self.record_data.as_mut_ptr() as _, records.len())
                .clone_from_slice(records);
 
             self.len.store(records.len() as _, Release)

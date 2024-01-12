@@ -1,3 +1,4 @@
+use std::fmt::Pointer;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
@@ -88,6 +89,30 @@ impl<const FAN_OUT: usize,
         self.len.store(n_len as u16 + 1, Release)
     }
 
+    #[inline]
+    pub fn bulk_push(&mut self, entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)]) {
+        let mut len = 0;
+
+        entries.iter().for_each(|((key, version), pointer)| unsafe {
+            self.key_interval_region
+                .as_mut_ptr()
+                .add(len * mem::size_of::<Interval<Key>>())
+                .write(MaybeUninit::new((*key).clone()));
+
+            self.version_region
+                .as_mut_ptr()
+                .add(len * mem::size_of::<Version>())
+                .write(MaybeUninit::new(**version));
+
+            self.pointer_region
+                .as_mut_ptr()
+                .add(len * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
+                .write(MaybeUninit::new((*pointer).clone()));
+        });
+
+        self.len.store(len as _, Release)
+    }
+
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.len.load(Acquire) as _
@@ -111,6 +136,18 @@ impl<const FAN_OUT: usize,
         unsafe {
             (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
              std::slice::from_raw_parts(self.version_region.as_ptr() as _, len))
+        }
+    }
+
+    #[inline(always)]
+    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
+        let len
+            = self.len();
+
+        unsafe {
+            (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
+             std::slice::from_raw_parts(self.version_region.as_ptr() as _, len),
+             std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, len))
         }
     }
 
@@ -175,12 +212,5 @@ impl<const FAN_OUT: usize,
 
             ptr.write(*ptr | OBSOLETE_VERSION_MARK);
         }
-    }
-
-    pub fn split(&mut self) -> (Box<Self>, Box<Self>) {
-
-
-
-        unimplemented!()
     }
 }
