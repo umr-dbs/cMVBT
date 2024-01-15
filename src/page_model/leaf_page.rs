@@ -5,8 +5,10 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::AtomicU16;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::block::block_manager::BlockManager;
+use crate::page_model::BlockRef;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::version_info::{Version, VersionInfo};
+use crate::utils::interval::Interval;
 
 type Len = AtomicU16;
 
@@ -103,19 +105,45 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline]
-    pub fn push(&mut self, record: RecordPoint<Key>) {
+    pub fn push_uncommitted(&mut self, record: RecordPoint<Key>, index: usize) {
         unsafe {
-            let n_len
-                = self.len();
-
             self.record_data
                 .as_mut_ptr()
-                .add(n_len)
-                .write(MaybeUninit::new(record));
-
-            self.len.store(n_len as u16 + 1, Release)
+                .add(index)
+                .write(MaybeUninit::new(record))
         }
     }
+
+    #[inline(always)]
+    pub fn commit_until(&self, index: usize) {
+        self.len.store(1 + index as u16, Release)
+    }
+
+    #[inline]
+    pub fn undo_uncommitted(&mut self, index: usize) {
+        unsafe {
+            self.record_data
+                .as_mut_ptr()
+                .add(index * mem::size_of::<RecordPoint<Key>>())
+                .read()
+                .assume_init();
+        }
+    }
+
+    // #[inline]
+    // pub fn push(&mut self, record: RecordPoint<Key>) {
+    //     unsafe {
+    //         let n_len
+    //             = self.len();
+    //
+    //         self.record_data
+    //             .as_mut_ptr()
+    //             .add(n_len)
+    //             .write(MaybeUninit::new(record));
+    //
+    //         self.len.store(n_len as u16 + 1, Release)
+    //     }
+    // }
 
     #[inline(always)]
     pub(crate) fn bulk_push(&mut self, records: &[&RecordPoint<Key>]) {

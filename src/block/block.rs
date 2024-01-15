@@ -5,6 +5,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use crate::page_model::BlockRef;
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
+use crate::utils::interval::Interval;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
 
 
@@ -13,10 +14,10 @@ pub(crate) enum BlockSplit<
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash>
 {
-    LeafByKey(BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    LeafByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    InternalByKey(BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    InternalByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    ByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    // InternalByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    // InternalByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
 }
 
 impl<const FAN_OUT: usize,

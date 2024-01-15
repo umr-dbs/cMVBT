@@ -3,10 +3,10 @@ use std::fmt::Display;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::record_model::record_point::RecordPoint;
+use crate::record_model::version_info::VersionInfo;
 use crate::tree::bplus_tree::BPlusTree;
-
-const WRITE: bool = true;
-const READ: bool = !WRITE;
+use crate::utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -14,27 +14,163 @@ impl<const FAN_OUT: usize,
 > CRUDDispatcher<Key> for BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn dispatch(&self, crud: &CRUDOperation<Key>) -> CRUDOperationResult<Key> {
-        match crud.is_write() {
-            WRITE => {
-                let lookup_root
-                    = self.retrieve_root_latest();
+    fn dispatch(&self, crud: CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+        match crud {
+            CRUDOperation::Insert(key, payload) => {
+                let leaf_guard
+                    = self.traversal_write(key);
 
-                unimplemented!()
+                let leaf_deref_mut = leaf_guard
+                    .deref_mut()
+                    .unwrap();
+
+                let leaf_page
+                    = leaf_deref_mut.as_leaf_page();
+
+                let current_len
+                    = leaf_page.len();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let version
+                    = commit_handle.read_handle_version();
+
+                leaf_page.push_uncommitted(
+                    RecordPoint::new(key, VersionInfo::new(version), payload),
+                    current_len);
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed_version = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let records
+                                = leaf_page.as_records_mut();
+
+                            records.get_unchecked_mut(current_len)
+                                .version_mut()
+                                .insert_version = commit;
+
+                            break commit;
+                        }
+                        Ok(commit) => break commit,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                leaf_page.commit_until(current_len);
+                CRUDOperationResult::Inserted(committed_version)
             }
-            READ => match crud {
-                CRUDOperation::Range(range, version) =>
-                    Self::key_range_read_from_root(
-                        self.retrieve_root_for(*version),
-                        range,
-                        *version),
-                CRUDOperation::Point(key, version) =>
-                    Self::key_point_read_from_root(
-                        self.retrieve_root_for(*version),
-                        *key,
-                        *version),
-                _ => CRUDOperationResult::Error
+            CRUDOperation::Update(key, payload) => {
+                let leaf_guard
+                    = self.traversal_write(key);
+
+                let leaf_deref_mut = leaf_guard
+                    .deref_mut()
+                    .unwrap();
+
+                let leaf_page
+                    = leaf_deref_mut.as_leaf_page();
+
+                let current_len
+                    = leaf_page.len();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let version
+                    = commit_handle.read_handle_version();
+
+                leaf_page.push_uncommitted(
+                    RecordPoint::new(key, VersionInfo::new(version), payload),
+                    current_len);
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed_version = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let records
+                                = leaf_page.as_records_mut();
+
+                            records.get_unchecked_mut(current_len)
+                                .version_mut()
+                                .insert_version = commit;
+
+                            break commit;
+                        }
+                        Ok(commit) => break commit,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                match leaf_page.delete(key, version) {
+                    None => {
+                        leaf_page.undo_uncommitted(current_len);
+                        CRUDOperationResult::Error
+                    }
+                    Some(..) => {
+                        leaf_page.commit_until(current_len);
+                        CRUDOperationResult::Updated(committed_version)
+                    }
+                }
             }
+            CRUDOperation::Delete(key) => {
+                let leaf_guard
+                    = self.traversal_write(key);
+
+                let leaf_deref_mut = leaf_guard
+                    .deref_mut()
+                    .unwrap();
+
+                let leaf_page
+                    = leaf_deref_mut.as_leaf_page();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let del_version
+                    = commit_handle.read_handle_version();
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed_version = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) => break commit,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                match leaf_page.delete(key, del_version) {
+                    None => CRUDOperationResult::Error,
+                    Some(..) => CRUDOperationResult::Deleted(committed_version)
+                }
+            },
+            CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
+                self.retrieve_root_for(version),
+                &range,
+                version),
+            CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
+                self.retrieve_root_for(version),
+                key,
+                version),
+            _ => CRUDOperationResult::Error
         }
     }
 }

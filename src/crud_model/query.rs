@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use itertools::Itertools;
-use crate::block::block::BlockGuard;
+use crate::block::block::{BlockGuard, BlockSplit};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::record_model::version_info::{TimeMatcher, Version};
 use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, RootItem, SmartRoot, SmartRootGuard};
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::SmartGuard;
+use crate::utils::smart_cell::{sched_yield, SmartGuard};
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -58,7 +58,7 @@ impl<const FAN_OUT: usize,
             let (keys_page, versions_page) = internal_page
                 .keys_versions();
 
-            assert_eq!(versions_page.len(), keys_page.len());
+            // assert_eq!(versions_page.len(), keys_page.len());
 
             curr = versions_page
                 .iter()
@@ -132,6 +132,10 @@ impl<const FAN_OUT: usize,
             key,
             version);
 
+        let t = leaf
+            .unsafe_borrow()
+            .as_records();
+
         match leaf
             .unsafe_borrow()
             .as_records()
@@ -171,7 +175,7 @@ impl<const FAN_OUT: usize,
             .collect())
     }
 
-    fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
 
@@ -186,10 +190,11 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    // TODO: make root retrieval optimistic via _internal methods
     fn retrieve_root_write(&self, roots_guard: SmartRootGuard<FAN_OUT, NUM_RECORDS, Key>)
-    -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>, Height)
+                           -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>, Height)
     {
-        debug_assert!(roots_guard.is_write_lock());
+        debug_assert!(roots_guard.is_write_lock() || self.locking_strategy.is_mono_writer());
 
         let curr_root_item
             = roots_guard.deref_mut().unwrap();
@@ -203,7 +208,7 @@ impl<const FAN_OUT: usize,
         let curr_root_guard
             = curr_root_item.block.borrow_mut();
 
-        debug_assert!(curr_root_guard.is_write_lock());
+        debug_assert!(curr_root_guard.is_write_lock() || self.locking_strategy.is_mono_writer());
 
         let root_deref
             = roots_guard.deref().unwrap();
@@ -212,12 +217,10 @@ impl<const FAN_OUT: usize,
             = root_deref.block.unsafe_borrow();
 
         match self.unsafe_degree_of(root_deref.as_ref()) {
-            NodeUnsafeDegree::Ok => (curr_root_block, curr_root_guard, height),
-            NodeUnsafeDegree::Overflow => {
-
+            NodeUnsafeDegree::Ok | NodeUnsafeDegree::Underflow =>
+                (curr_root_block, curr_root_guard, height),
+            NodeUnsafeDegree::Overflow =>
                 unimplemented!()
-            },
-            NodeUnsafeDegree::Underflow => unimplemented!()
         }
     }
 
@@ -263,28 +266,17 @@ impl<const FAN_OUT: usize,
 
                     match self.unsafe_degree_of(next_curr_guard.deref().unwrap().as_ref()) {
                         NodeUnsafeDegree::Overflow
-                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() => {
-                            let (c_curr_block, c_curr_guard)
-                                = self.on_overflow_node(curr_guard, next_curr_guard);
-
-                            curr_guard = c_curr_guard;
-                            curr_block = c_curr_block;
-                        }
+                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
+                            curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         NodeUnsafeDegree::Underflow
-                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() => {
-                            let (c_curr_block, c_curr_guard)
-                                = self.on_underflow_node(curr_guard, next_curr_guard);
-
-                            curr_guard = c_curr_guard;
-                            curr_block = c_curr_block;
-                        }
+                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
+                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
                         NodeUnsafeDegree::Ok => {
                             curr_guard = next_curr_guard;
                             curr_block = next_curr_block;
                         }
-                        _ => { // On loose latch and failed upgrade
-                            return Err((curr_level, attempts));
-                        }
+                        _ =>  // On loose latch and failed upgrade
+                            return Err((curr_level, attempts))
                     }
                 }
                 _ => return Ok(curr_guard) // cant have it both ways in non optimistic latching protocol
@@ -292,23 +284,119 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn on_overflow_node(
+    fn on_overflow_node<'a>(
         &self,
-        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
-        -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        child_index: usize) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
 
-        unimplemented!()
+        match self.split(simba.deref().unwrap()) {
+            BlockSplit::ByKey(left_fence, left, right_fence, right) => {
+                let internal_page
+                    = mufasa_deref_mut.as_internal_page();
+
+                let current_len
+                    = internal_page.len();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                internal_page.push_uncommitted(
+                    left_fence,
+                    commit_handle.read_handle_version(),
+                    left,
+                    current_len);
+
+                internal_page.push_uncommitted(
+                    right_fence,
+                    commit_handle.read_handle_version(),
+                    right.clone(),
+                    current_len + 1);
+
+                let mut commit_attempts
+                    = 0;
+
+                loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let versions
+                                = internal_page.versions_mut();
+
+                            *versions.get_unchecked_mut(current_len) = commit;
+                            *versions.get_unchecked_mut(current_len + 1) = commit;
+
+                            break;
+                        }
+                        Ok(..) => break,
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                }
+
+                internal_page.commit_until(current_len + 1)
+            }
+            BlockSplit::ByVersion(fresh) => {
+                let internal_page
+                    = mufasa_deref_mut.as_internal_page();
+
+                let fence = unsafe {
+                    internal_page
+                        .keys()
+                        .get_unchecked(child_index)
+                        .clone()
+                };
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let current_len
+                    = internal_page.len();
+
+                internal_page.push_uncommitted(
+                    fence,
+                    commit_handle.read_handle_version(),
+                    fresh.clone(),
+                    current_len);
+
+                let mut commit_attempts
+                    = 0;
+
+                loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let versions
+                                = internal_page.versions_mut();
+
+                            *versions.get_unchecked_mut(current_len) = commit;
+
+                            break;
+                        }
+                        Ok(..) => break,
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                }
+
+                internal_page.commit_until(current_len)
+            }
+        }
+
+        mufasa
     }
 
     fn on_underflow_node(
         &self,
         mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
-        -> (BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>)
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        child_index: usize)
+        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key>
     {
         unimplemented!()
     }

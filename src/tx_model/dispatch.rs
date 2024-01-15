@@ -14,7 +14,7 @@ impl<Key: Ord + Copy + Hash + Default + 'static> Transaction<Key> {
         if let TXState::Waiting = self.state {
             self.state = TXState::Running;
 
-            for crud in self.crud.iter() {
+            while let Some(crud) = self.crud.pop_front() {
                 match index.dispatch(crud) {
                     CRUDOperationResult::Error => {
                         self.result.push(CRUDOperationResult::Error);
@@ -24,6 +24,7 @@ impl<Key: Ord + Copy + Hash + Default + 'static> Transaction<Key> {
                     res => self.result.push(res),
                 }
             }
+
 
             self.state = TXState::Completed
         }

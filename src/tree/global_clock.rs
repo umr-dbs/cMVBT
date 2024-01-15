@@ -31,6 +31,15 @@ impl ClockHandle<'_> {
         }
     }
 
+    #[inline]
+    pub(crate) fn read_handle_version(&self) -> Version {
+        match self {
+            ClockHandle::Locked(guard) => *guard.deref(),
+            ClockHandle::Free(v) => **v,
+            ClockHandle::Optimistic(.., seen) => *seen
+        }
+    }
+
     /// Returns true, if this clock is optimistic.
     /// /// Returns false, otherwise.
     pub(crate) const fn is_optimistic(&self) -> bool {

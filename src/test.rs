@@ -71,7 +71,7 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
         handles.push(spawn(move || {
             let mut counter_errs = 0;
             current_chunk
-                .iter()
+                .into_iter()
                 .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
                     CRUDOperationResult::Error => counter_errs += 1,
                     _ => {}

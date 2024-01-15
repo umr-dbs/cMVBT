@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -29,6 +29,6 @@ serde = { version ="1.0.195", features = ["derive", "rc"] }
 serde_json = { version = "1.0.111" }
 #log = "0.4.20"
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.151"
-sysinfo = "0.30.3"
+libc = "0.2.152"
+sysinfo = "0.30.5"
 raw-cpuid = "11.0.1"

@@ -11,7 +11,7 @@ use crate::record_model::version_info::VersionInfo;
 pub type Payload = Box<u8>;
 
 #[derive(Default)]
-#[repr(packed)]
+// #[repr(packed)]
 pub struct RecordPoint<Key: Ord + Copy + Hash + Default> {
     pub key: Key,
     pub version: VersionInfo,
@@ -119,10 +119,8 @@ impl<Key: Display + Ord + Copy + Hash + Default> Display
 for RecordPoint<Key> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let payload_str = read_payload(self.payload());
-        write!(f, "RecordPoint(Key: {}, Version: {}, payload-bytes(len={}): [{}])",
+        write!(f, "RecordPoint(Key: {}, Version: {})",
                self.key(),
-               self.version(),
-               payload_str.len(),
-               payload_str)
+               self.version())
     }
 }

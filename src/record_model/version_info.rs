@@ -93,7 +93,7 @@ impl Into<DeletedVersion> for Version {
 /// Defines the version information structure, i.e. insert and delete version.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct VersionInfo {
-    insert_version: Version,
+    pub insert_version: Version,
     delete_version: DeletedVersion,
 }
 

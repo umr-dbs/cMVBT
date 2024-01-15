@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::hash::Hash;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -15,14 +16,14 @@ pub enum TXState {
 pub struct Transaction<Key: Ord + Copy + Hash + Default> {
     pub(crate) state: TXState,
     pub(crate) snapshot: Version,
-    pub(crate) crud: Vec<CRUDOperation<Key>>,
+    pub(crate) crud: VecDeque<CRUDOperation<Key>>,
     pub(crate) result: Vec<CRUDOperationResult<Key>>,
 }
 
 impl<Key: Ord + Copy + Hash + Default> Transaction<Key> {
     pub fn new(
         snapshot: Version,
-        crud: Vec<CRUDOperation<Key>>)
+        crud: VecDeque<CRUDOperation<Key>>)
         -> Self
     {
         Self {
@@ -45,7 +46,7 @@ impl<Key: Ord + Copy + Hash + Default> Transaction<Key> {
         self.result.as_slice()
     }
 
-    pub fn crud(&self) -> &[CRUDOperation<Key>] {
-        self.crud.as_ref()
+    pub fn crud(&self) -> &VecDeque<CRUDOperation<Key>> {
+        &self.crud
     }
 }

@@ -80,19 +80,19 @@ pub enum LatchType {
     LightWeightHybrid,
     None,
 }
-pub static mut COUNTERS: (AtomicUsize, AtomicUsize) =
-    (AtomicUsize::new(0), AtomicUsize::new(0));
+// pub static mut COUNTERS: (AtomicUsize, AtomicUsize) =
+//     (AtomicUsize::new(0), AtomicUsize::new(0));
 
 #[inline(always)]
 #[cfg(target_os = "linux")]
 pub fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
         unsafe {
-            COUNTERS.1.fetch_add(1, Relaxed);
+            // COUNTERS.1.fetch_add(1, Relaxed);
             libc::sched_yield();
         }
     } else {
-        unsafe { COUNTERS.0.fetch_add(1, Relaxed); }
+        // unsafe { COUNTERS.0.fetch_add(1, Relaxed); }
         hint::spin_loop();
     }
 }

@@ -64,30 +64,48 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub fn push(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key>) {
-        let n_len
-            = self.len();
+    // #[inline(always)]
+    // pub fn push_committed(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key>) {
+    //     let len = self.len();
+    //     self.push_uncommitted(key_interval, version, ptr, len);
+    //     self.commit_until(len);
+    // }
 
+    #[inline]
+    pub fn push_uncommitted(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key>, index: usize) {
         unsafe {
             self.key_interval_region
                 .as_mut_ptr()
-                .add(n_len * mem::size_of::<Interval<Key>>())
+                .add(index * mem::size_of::<Interval<Key>>())
                 .write(MaybeUninit::new(key_interval));
 
             self.version_region
                 .as_mut_ptr()
-                .add(n_len * mem::size_of::<Version>())
+                .add(index * mem::size_of::<Version>())
                 .write(MaybeUninit::new(version));
 
             self.pointer_region
                 .as_mut_ptr()
-                .add(n_len * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
+                .add(index * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
                 .write(MaybeUninit::new(ptr));
         }
-
-        self.len.store(n_len as u16 + 1, Release)
     }
+
+    #[inline(always)]
+    pub fn commit_until(&self, index: usize) {
+        self.len.store(1 + index as u16, Release)
+    }
+
+    // #[inline]
+    // pub fn undo_uncommitted(&self, commit: Version) {
+    //     unsafe {
+    //         self.pointer_region
+    //             .as_ptr()
+    //             .add(commit as usize * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
+    //             .read()
+    //             .assume_init();
+    //     }
+    // }
 
     #[inline]
     pub fn bulk_push(&mut self, entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)]) {
@@ -159,6 +177,11 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub unsafe fn versions(&self) -> &[Version] {
         std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len())
+    }
+
+    #[inline(always)]
+    pub unsafe fn versions_mut(&mut self) -> &mut [Version] {
+        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.len())
     }
 
     #[inline(always)]

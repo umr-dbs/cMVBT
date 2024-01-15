@@ -17,7 +17,7 @@ pub enum CRUDOperationResult<Key: Ord + Hash + Copy + Default> {
     MatchedRecords(Vec<RecordPoint<Key>>),
     Inserted(Version),
     Updated(Version),
-    Deleted(VersionInfo),
+    Deleted(Version),
 
     #[default]
     Error, // flatten no good

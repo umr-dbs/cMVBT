@@ -90,6 +90,15 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub unsafe fn keys(&self) -> &[Interval<Key>] {
+        match self {
+            Node::Index(internal_page) =>
+                internal_page.keys(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys")
+        }
+    }
+
+    #[inline(always)]
     pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
         match self {
             Node::Index(internal_page) =>
@@ -107,12 +116,19 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
-    pub fn push(&mut self, key: Key, version: Version, payload: Payload) {
+    #[inline(always)]
+    pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key> {
         match self {
-            Node::Leaf(records_page) => records_page
-                .push(RecordPoint::new(key, VersionInfo::new(version), payload)),
-            _ => {}
+            Node::Leaf(records_page) => records_page,
+            _ => unreachable!()
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key>{
+        match self {
+            Node::Index(internal_page) => internal_page,
+            _ => unreachable!()
         }
     }
 

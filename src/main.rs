@@ -1,7 +1,11 @@
 use std::{env, fs, mem};
+use std::cmp::Ordering;
+use std::collections::VecDeque;
+use std::io::Read;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use chrono::{DateTime, Local};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use crate::block::block::Block;
 use crate::tree::bplus_tree;
@@ -11,12 +15,13 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
-use crate::record_model::version_info::VersionInfo;
+use crate::record_model::version_info::{Version, VersionInfo};
 use crate::test::{INDEX, Key, MAKE_INDEX};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::ENABLE_YIELD;
+use crate::utils::safe_cell::SafeCell;
+use crate::utils::smart_cell::{ENABLE_YIELD, OBSOLETE_FLAG_VERSION};
 
 mod block;
 mod crud_model;
@@ -30,15 +35,31 @@ mod tx_model;
 pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
     Arc::new(if let LockingStrategy::MonoWriter = crud {
         TreeDispatcher::Wrapper(RwLock::new(MAKE_INDEX(crud)))
-    }
-    else {
+    } else {
         TreeDispatcher::Ref(MAKE_INDEX(crud))
     })
 };
 
 fn main() {
     make_splash();
+
+    let tree = BPlusTree::<127, 127, u64>::new();
+
+    for key in 0u64..127 {
+        match tree.dispatch(CRUDOperation::Insert(key, Box::new(0))) {
+            CRUDOperationResult::Inserted(ver) =>
+                println!("Inserted at version {}", ver),
+            err => println!("Err at insertion {}", err),
+        }
+
+        match tree.dispatch(CRUDOperation::Point(key, Version::MAX)) {
+            CRUDOperationResult::MatchedRecords(found) =>
+                println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+            err => println!("Err at insertion {}", err),
+        }
+    }
 }
+
 
 /// Essential function.
 fn make_splash() {
@@ -79,18 +100,17 @@ pub type Tree = Arc<TreeDispatcher>;
 
 pub enum TreeDispatcher {
     Wrapper(RwLock<INDEX>),
-    Ref(INDEX)
+    Ref(INDEX),
 }
 
 impl CRUDDispatcher<Key> for TreeDispatcher {
     #[inline(always)]
-    fn dispatch(&self, crud: &CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+    fn dispatch(&self, crud: CRUDOperation<Key>) -> CRUDOperationResult<Key> {
         match self {
             TreeDispatcher::Ref(inner) => inner.dispatch(crud),
             TreeDispatcher::Wrapper(sync) => if crud.is_read() {
                 sync.read().dispatch(crud)
-            }
-            else {
+            } else {
                 sync.write().dispatch(crud)
             }
         }
@@ -108,6 +128,7 @@ impl TreeDispatcher {
         }
     }
 }
+
 pub fn hle() -> &'static str {
     if cfg!(feature = "hardware-lock-elision") {
         if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {

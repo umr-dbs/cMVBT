@@ -13,6 +13,7 @@ use crate::page_model::internal_page::InternalPage;
 use crate::page_model::node::Node;
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::version_manager::VersionManager;
+use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
 
@@ -97,8 +98,10 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    pub(crate) fn split(&self, block: &Block<FAN_OUT, NUM_RECORDS, Key>)
-                        -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
+    pub(crate) fn split(
+        &self,
+        block: &Block<FAN_OUT, NUM_RECORDS, Key>,
+    ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
     {
         let active_count
             = block.active_count();
@@ -118,24 +121,35 @@ impl<const FAN_OUT: usize,
                              .new_empty_leaf()
                              .into_cell(self.locking_strategy.latch_type()));
 
-                    let sorted_block = block
+                    let mut sorted_block = block
                         .as_records()
                         .iter()
                         .sorted_by_key(|r| r.key())
                         .collect_vec();
 
+                    let middle = block.len() / 2;
                     let (first, second) = sorted_block
-                        .split_at(block.len() / 2);
+                        .split_at_mut(middle);
 
+                    let fence_left = unsafe {
+                        Interval::new(first.get_unchecked(0).key,
+                                      first.get_unchecked(first.len() - 1).key)
+                    };
                     if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
+                        first.sort_by_key(|r| r.version().insertion_version());
                         leaf_page.bulk_push(first);
                     }
 
+                    let fence_right = unsafe {
+                        Interval::new(second.get_unchecked(0).key,
+                                      second.get_unchecked(second.len() - 1).key)
+                    };
                     if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
-                        leaf_page.bulk_push(second);
+                        second.sort_by_key(|r| r.version().insertion_version());
+                        leaf_page.bulk_push(second)
                     }
 
-                    BlockSplit::LeafByKey(left, right)
+                    BlockSplit::ByKey(fence_left, left, fence_right, right)
                 }
                 false => { // KEY_SPLIT InternalPage
                     let (left, right) =
@@ -146,19 +160,40 @@ impl<const FAN_OUT: usize,
                             .new_empty_index_block()
                             .into_cell(self.locking_strategy.latch_type()));
 
-                    let (key_intervals, versions) = block
-                        .keys_versions();
+                    let (key_intervals, versions, pointers) = block
+                        .keys_versions_pointers();
 
-                    let active_entries = key_intervals
+                    let mut filtered = key_intervals
                         .iter()
-                        .rev()
-                        .zip(versions
-                            .iter()
-                            .rev())
-                        .take_while(|(.., v)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
-                        .collect::<VecDeque<_>>();
+                        .zip(versions.iter())
+                        .zip(pointers.iter())
+                        .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .collect_vec();
 
-                    unimplemented!()
+                    let middle = filtered.len() / 2;
+                    let (first, second)
+                        = filtered.split_at_mut(middle);
+
+                    let fence_left = unsafe {
+                        Interval::new(first.get_unchecked(0).0.0.lower,
+                                      first.get_unchecked(first.len() - 1).0.0.upper)
+                    };
+                    if let Node::Index(internal_page) = right.unsafe_borrow_mut().as_mut() {
+                        first.sort_by_key(|((.., v), ..)| **v);
+                        internal_page.bulk_push(first)
+                    }
+
+                    let fence_right = unsafe {
+                        Interval::new(second.get_unchecked(0).0.0.lower,
+                                      second.get_unchecked(second.len() - 1).0.0.upper)
+                    };
+
+                    if let Node::Index(internal_page) = left.unsafe_borrow_mut().as_mut() {
+                        second.sort_by_key(|((.., v), ..)| **v);
+                        internal_page.bulk_push(second)
+                    }
+
+                    BlockSplit::ByKey(fence_left, left, fence_right, right)
                 }
             }
         } else {
@@ -179,7 +214,7 @@ impl<const FAN_OUT: usize,
                         leaf_page.bulk_push(active_records.as_slice());
                     }
 
-                    BlockSplit::LeafByVersion(new_leaf)
+                    BlockSplit::ByVersion(new_leaf)
                 }
                 false => { // VERSION SPLIT InternalPage
                     let new_internal_page = self.block_manager
@@ -189,10 +224,9 @@ impl<const FAN_OUT: usize,
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
 
-                    let mut active_entries = key_intervals
+                    let active_entries = key_intervals
                         .iter()
-                        .zip(versions
-                            .iter())
+                        .zip(versions.iter())
                         .zip(pointers.iter())
                         .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
                         .collect_vec();
@@ -201,7 +235,7 @@ impl<const FAN_OUT: usize,
                         internal_page.bulk_push(active_entries.as_slice())
                     }
 
-                    BlockSplit::InternalByVersion(new_internal_page)
+                    BlockSplit::ByVersion(new_internal_page)
                 }
             }
         }
@@ -297,7 +331,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn new() -> Self {
-        Self::make(LockingStrategy::default(), ClockType::SYNCED)
+        Self::make(LockingStrategy::default(), ClockType::FREE)
     }
 
     #[inline(always)]
