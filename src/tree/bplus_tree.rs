@@ -1,21 +1,24 @@
-use std::collections::VecDeque;
+use std::cmp::Ordering;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
 use itertools::Itertools;
 use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
-use crate::block::block::{Block, BlockGuard, BlockSplit};
+use crate::block::block::{Block, BlockSplit};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::node::Node;
+use crate::record_model::version_info::Version;
+use crate::test::{dec_key, inc_key, Key};
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::version_manager::VersionManager;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
+use crate::utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
 
@@ -56,7 +59,7 @@ pub(crate) type SmartRoot<
 > = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>;
 
 
-pub(crate) type SmartRootGuard<
+pub(crate) type RootItemGuard<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -68,10 +71,14 @@ pub struct BPlusTree<
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > {
-    pub(crate) root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key>,
     pub(crate) version_manager: VersionManager,
+    pub(crate) inc_key: fn(Key) -> Key,
+    pub(crate) dec_key: fn(Key) -> Key,
+    pub(crate) min_key: Key,
+    pub(crate) max_key: Key,
 }
 
 unsafe impl<const FAN_OUT: usize,
@@ -89,7 +96,23 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize
 > Default for BPlusTree<FAN_OUT, NUM_RECORDS, u64> {
     fn default() -> Self {
-        BPlusTree::new()
+        fn inc_key(k: Key) -> Key {
+            k.checked_add(1).unwrap_or(Key::MAX)
+        }
+        fn dec_key(k: Key) -> Key {
+            k.checked_sub(1).unwrap_or(Key::MIN)
+        }
+
+        BPlusTree::new(inc_key, dec_key, u64::MIN, u64::MAX)
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+> BPlusTree<FAN_OUT, NUM_RECORDS, u64>
+{
+    pub fn standard() -> Self {
+        Self::make(LockingStrategy::MonoWriter, ClockType::FREE, inc_key, dec_key, u64::MIN, u64::MAX)
     }
 }
 
@@ -101,6 +124,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn split(
         &self,
         block: &Block<FAN_OUT, NUM_RECORDS, Key>,
+        fence: &Interval<Key>,
     ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
     {
         let active_count
@@ -112,7 +136,7 @@ impl<const FAN_OUT: usize,
         if active_count >= Block::<FAN_OUT, NUM_RECORDS, Key>::min_active() {
             // KEY_SPLIT
             match is_leaf {
-                true => { // LeafPage
+                true => unsafe { // LeafPage
                     let (left, right) =
                         (self.block_manager
                              .new_empty_leaf()
@@ -131,34 +155,34 @@ impl<const FAN_OUT: usize,
                     let (first, second) = sorted_block
                         .split_at_mut(middle);
 
-                    let fence_left = unsafe {
-                        Interval::new(first.get_unchecked(0).key,
-                                      first.get_unchecked(first.len() - 1).key)
-                    };
+                    let fence_left = Interval::new(
+                        fence.lower,
+                        (self.dec_key)(second.get_unchecked(0).key));
+
                     if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
                         first.sort_by_key(|r| r.version().insertion_version());
-                        leaf_page.bulk_push(first);
+                        leaf_page.bulk_push_from_slice(first);
                     }
 
-                    let fence_right = unsafe {
-                        Interval::new(second.get_unchecked(0).key,
-                                      second.get_unchecked(second.len() - 1).key)
-                    };
+                    let fence_right = Interval::new(
+                        second.get_unchecked(0).key,
+                        fence.upper);
+
                     if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
                         second.sort_by_key(|r| r.version().insertion_version());
-                        leaf_page.bulk_push(second)
+                        leaf_page.bulk_push_from_slice(second)
                     }
 
                     BlockSplit::ByKey(fence_left, left, fence_right, right)
                 }
-                false => { // KEY_SPLIT InternalPage
+                false => unsafe { // KEY_SPLIT InternalPage
                     let (left, right) =
                         (self.block_manager
-                            .new_empty_index_block()
-                            .into_cell(self.locking_strategy.latch_type()),
-                        self.block_manager
-                            .new_empty_index_block()
-                            .into_cell(self.locking_strategy.latch_type()));
+                             .new_empty_index_block()
+                             .into_cell(self.locking_strategy.latch_type()),
+                         self.block_manager
+                             .new_empty_index_block()
+                             .into_cell(self.locking_strategy.latch_type()));
 
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
@@ -167,28 +191,45 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions.iter())
                         .zip(pointers.iter())
-                        .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        // .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .sorted_by(|((k0, ..), ..), ((k1, ..), ..)|
+                            match k0.lower.cmp(&k1.lower) {
+                                Ordering::Equal => k0.upper.cmp(&k1.upper),
+                                order => order
+                            })
                         .collect_vec();
 
-                    let middle = filtered.len() / 2;
-                    let (first, second)
-                        = filtered.split_at_mut(middle);
+                    let mut first = vec![];
+                    let mut second = vec![];
+                    filtered.into_iter().for_each(|((i, v), p)| {
+                        if first.is_empty() {
+                            first.push(((i, v), p));
+                        } else if first.get_unchecked(first.len() - 1).0.0.is_disjoint(i) {
+                            first.push(((i, v), p));
+                        } else {
+                            second.push(((i, v), p));
+                        }
+                    });
 
-                    let fence_left = unsafe {
-                        Interval::new(first.get_unchecked(0).0.0.lower,
-                                      first.get_unchecked(first.len() - 1).0.0.upper)
-                    };
-                    if let Node::Index(internal_page) = right.unsafe_borrow_mut().as_mut() {
+                    debug_assert!(!first.is_empty() && !second.is_empty());
+                    // let middle = filtered.len() / 2;
+                    // let (first, second)
+                    //     = filtered.split_at_mut(middle);
+
+                    let fence_left = Interval::new(
+                        fence.lower,
+                        (self.dec_key)(second.get_unchecked(0).0.0.lower));
+
+                    if let Node::Index(internal_page) = left.unsafe_borrow_mut().as_mut() {
                         first.sort_by_key(|((.., v), ..)| **v);
                         internal_page.bulk_push(first)
                     }
 
-                    let fence_right = unsafe {
-                        Interval::new(second.get_unchecked(0).0.0.lower,
-                                      second.get_unchecked(second.len() - 1).0.0.upper)
-                    };
+                    let fence_right = Interval::new(
+                        second.get_unchecked(0).0.0.lower,
+                        fence.upper);
 
-                    if let Node::Index(internal_page) = left.unsafe_borrow_mut().as_mut() {
+                    if let Node::Index(internal_page) = right.unsafe_borrow_mut().as_mut() {
                         second.sort_by_key(|((.., v), ..)| **v);
                         internal_page.bulk_push(second)
                     }
@@ -211,7 +252,7 @@ impl<const FAN_OUT: usize,
                         .collect_vec();
 
                     if let Node::Leaf(leaf_page) = new_leaf.unsafe_borrow_mut().as_mut() {
-                        leaf_page.bulk_push(active_records.as_slice());
+                        leaf_page.bulk_push(active_records);
                     }
 
                     BlockSplit::ByVersion(new_leaf)
@@ -232,7 +273,7 @@ impl<const FAN_OUT: usize,
                         .collect_vec();
 
                     if let Node::Index(internal_page) = new_internal_page.unsafe_borrow_mut().as_mut() {
-                        internal_page.bulk_push(active_entries.as_slice())
+                        internal_page.bulk_push(active_entries)
                     }
 
                     BlockSplit::ByVersion(new_internal_page)
@@ -241,30 +282,23 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
-    fn make(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
-        let block_manager
-            = BlockManager::new();
-
-        let version_manager = match clock_type {
-            ClockType::FREE => VersionManager::new_free(),
-            ClockType::OPTIMISTIC => VersionManager::new_optimistic(),
-            ClockType::SYNCED => VersionManager::new_locked()
-        };
-
-        let empty_node
-            = block_manager.new_empty_leaf();
-
+    pub(crate) fn from(locking_strategy: &LockingStrategy,
+                       block: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+                       version: Version,
+                       height: Height,
+                       prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
+    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key>
+    {
         let root_item = RootItem {
             root: Root::new(
-                empty_node.into_cell(locking_strategy.latch_type()),
-                VersionManager::START_VERSION,
-                INIT_TREE_HEIGHT,
+                block,
+                version,
+                height,
             ),
-            prev: None,
+            prev,
         };
 
-        let root = SmartCell(Arc::new(match locking_strategy.latch_type() {
+        SmartCell(Arc::new(match locking_strategy.latch_type() {
             LatchType::Exclusive => SmartFlavor::ExclusiveCell(
                 Mutex::new(()),
                 SafeCell::new(root_item), ),
@@ -280,13 +314,113 @@ impl<const FAN_OUT: usize,
                 OptCell::new(root_item)),
             LatchType::None => SmartFlavor::FreeCell(
                 SafeCell::new(root_item))
-        }));
+        }))
+    }
+
+    pub(crate) fn make_root_item(locking_strategy: &LockingStrategy,
+                                 block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key>,
+                                 version: Version,
+                                 prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
+    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key>
+    {
+        let root_item = RootItem {
+            root: Root::new(
+                block_manager.new_empty_leaf().into_cell(locking_strategy.latch_type()),
+                version,
+                INIT_TREE_HEIGHT,
+            ),
+            prev,
+        };
+
+        SmartCell(Arc::new(match locking_strategy.latch_type() {
+            LatchType::Exclusive => SmartFlavor::ExclusiveCell(
+                Mutex::new(()),
+                SafeCell::new(root_item), ),
+            LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
+                RwLock::new(()),
+                SafeCell::new(root_item)),
+            LatchType::Optimistic => SmartFlavor::OLCCell(
+                OptCell::new(root_item)),
+            LatchType::Hybrid => SmartFlavor::HybridCell(
+                OptCell::new(root_item),
+                RwLock::new(())),
+            LatchType::LightWeightHybrid => SmartFlavor::LightWeightHybridCell(
+                OptCell::new(root_item)),
+            LatchType::None => SmartFlavor::FreeCell(
+                SafeCell::new(root_item))
+        }))
+    }
+
+    #[inline]
+    fn make(locking_strategy: LockingStrategy,
+            clock_type: ClockType,
+            inc_key: fn(Key) -> Key,
+            dec_key: fn(Key) -> Key,
+            min_key: Key,
+            max_key: Key,
+    ) -> Self {
+        let block_manager
+            = BlockManager::new();
+
+        let version_manager = match clock_type {
+            ClockType::FREE => VersionManager::new_free(),
+            ClockType::OPTIMISTIC => VersionManager::new_optimistic(),
+            ClockType::SYNCED => VersionManager::new_locked()
+        };
+
 
         Self {
-            root,
+            root: UnCell::new(
+                Self::make_root_item(&locking_strategy, &block_manager, VersionManager::START_VERSION, None)),
             locking_strategy,
             block_manager,
             version_manager,
+            inc_key,
+            dec_key,
+            min_key,
+            max_key,
+        }
+    }
+
+
+    #[inline]
+    pub(crate) fn apply_for_root(
+        &self,
+        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+        attempts: Attempts,
+        height: Height,
+    ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
+    {
+        self.apply_for_ref(
+            curr,
+            height,
+            INIT_TREE_HEIGHT,
+            attempts,
+            Level::MAX)
+    }
+
+    #[inline]
+    pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
+        match self.locking_strategy() {
+            LockingStrategy::ORWC {
+                write_level,
+                write_attempt
+            } if *write_level <= 1f32 &&
+                (height <= INIT_TREE_HEIGHT || INIT_TREE_HEIGHT as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
+                true,
+            LockingStrategy::LightweightHybridLock {
+                write_level,
+                write_attempt,
+                ..
+            } if *write_level <= 1f32 &&
+                (height <= INIT_TREE_HEIGHT || INIT_TREE_HEIGHT as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
+                true,
+            LockingStrategy::MonoWriter => false,
+            LockingStrategy::LockCoupling => true,
+            LockingStrategy::OLC => false,
+            LockingStrategy::ORWC { .. } => false,
+            LockingStrategy::LightweightHybridLock { .. } => false,
+            LockingStrategy::HybridLocking { .. } => false
         }
     }
 
@@ -304,14 +438,14 @@ impl<const FAN_OUT: usize,
             LockingStrategy::ORWC {
                 write_level,
                 write_attempt
-            } if *write_level <= 1f32 &&
+            } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
                 (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
                 curr.borrow_mut(),
             LockingStrategy::LightweightHybridLock {
                 write_level,
                 write_attempt,
                 ..
-            } if *write_level <= 1f32 &&
+            } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
                 (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
                 curr.borrow_pin(),
             LockingStrategy::MonoWriter =>
@@ -325,13 +459,21 @@ impl<const FAN_OUT: usize,
         }
     }
     #[inline(always)]
-    pub fn new_with(locking_strategy: LockingStrategy) -> Self {
-        Self::make(locking_strategy, ClockType::SYNCED)
+    pub fn new_with(locking_strategy: LockingStrategy,
+                    inc_key: fn(Key) -> Key,
+                    dec_key: fn(Key) -> Key,
+                    min_key: Key,
+                    max_key: Key,
+    ) -> Self {
+        Self::make(locking_strategy, ClockType::SYNCED, inc_key, dec_key, min_key, max_key)
     }
 
     #[inline(always)]
-    pub fn new() -> Self {
-        Self::make(LockingStrategy::default(), ClockType::FREE)
+    pub fn new(inc_key: fn(Key) -> Key,
+               dec_key: fn(Key) -> Key,
+               min_key: Key,
+               max_key: Key) -> Self {
+        Self::make(LockingStrategy::default(), ClockType::FREE, inc_key, dec_key, min_key, max_key)
     }
 
     #[inline(always)]

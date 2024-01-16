@@ -12,8 +12,8 @@ pub(crate) struct Root<
     Key: Default + Ord + Copy + Hash
 > {
     pub(crate) block: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-    version: Version,
-    height: Height
+    pub(crate) version: Version,
+    pub(crate) height: Height
 }
 
 unsafe impl<

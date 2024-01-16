@@ -43,7 +43,7 @@ pub fn dec_key(k: Key) -> Key {
 pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
-= |ls| INDEX::new_with(ls);
+= |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
 
 #[inline(always)]
 pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {

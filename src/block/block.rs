@@ -15,9 +15,7 @@ pub(crate) enum BlockSplit<
     Key: Default + Ord + Copy + Hash>
 {
     ByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    // InternalByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    // InternalByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>),
+    ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>)
 }
 
 impl<const FAN_OUT: usize,

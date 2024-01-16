@@ -16,7 +16,7 @@ use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::version_info::{Version, VersionInfo};
-use crate::test::{INDEX, Key, MAKE_INDEX};
+use crate::test::{dec_key, inc_key, INDEX, Key, MAKE_INDEX};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
 use crate::utils::interval::Interval;
@@ -43,18 +43,28 @@ pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
 fn main() {
     make_splash();
 
-    let tree = BPlusTree::<127, 127, u64>::new();
+    type MVTree<const FAN_OUT: usize, const NUMBER_RECORDS: usize>
+    = BPlusTree::<FAN_OUT, NUMBER_RECORDS, u64>;
 
-    for key in 0u64..127 {
-        match tree.dispatch(CRUDOperation::Insert(key, Box::new(0))) {
-            CRUDOperationResult::Inserted(ver) =>
-                println!("Inserted at version {}", ver),
-            err => println!("Err at insertion {}", err),
+    const FAN_OUT: usize = 7; // const FAN_OUT: usize = 70;
+    const NUMBER_RECORDS: usize = 5;
+
+    let tree
+        = MVTree::<FAN_OUT, NUMBER_RECORDS>::standard();
+
+    for key in 0u64..NUMBER_RECORDS as u64 + 1000 {
+        if key == 190 {
+            println!("")
         }
-
-        match tree.dispatch(CRUDOperation::Point(key, Version::MAX)) {
-            CRUDOperationResult::MatchedRecords(found) =>
-                println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+        match tree.dispatch(CRUDOperation::Insert(key, Box::new(0))) {
+            CRUDOperationResult::Inserted(ver) => {
+                println!("Inserted at version {}", ver);
+                match tree.dispatch(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found) =>
+                        println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
             err => println!("Err at insertion {}", err),
         }
     }

@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicU16;
+use std::sync::atomic::{AtomicU16, fence};
 use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::page_model::BlockRef;
 use crate::record_model::version_info::Version;
@@ -76,17 +76,17 @@ impl<const FAN_OUT: usize,
         unsafe {
             self.key_interval_region
                 .as_mut_ptr()
-                .add(index * mem::size_of::<Interval<Key>>())
+                .add(index)
                 .write(MaybeUninit::new(key_interval));
 
             self.version_region
                 .as_mut_ptr()
-                .add(index * mem::size_of::<Version>())
+                .add(index)
                 .write(MaybeUninit::new(version));
 
             self.pointer_region
                 .as_mut_ptr()
-                .add(index * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
+                .add(index)
                 .write(MaybeUninit::new(ptr));
         }
     }
@@ -108,27 +108,33 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline]
-    pub fn bulk_push(&mut self, entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)]) {
-        let mut len = 0;
+    pub fn bulk_push(&mut self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
+        let len
+            = self.len();
 
-        entries.iter().for_each(|((key, version), pointer)| unsafe {
-            self.key_interval_region
-                .as_mut_ptr()
-                .add(len * mem::size_of::<Interval<Key>>())
-                .write(MaybeUninit::new((*key).clone()));
+        let add
+            = entries.len();
 
-            self.version_region
-                .as_mut_ptr()
-                .add(len * mem::size_of::<Version>())
-                .write(MaybeUninit::new(**version));
+        entries.into_iter()
+            .enumerate()
+            .for_each(|(index, ((key, version), pointer))| unsafe {
+                self.key_interval_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(key.clone()));
 
-            self.pointer_region
-                .as_mut_ptr()
-                .add(len * mem::size_of::<BlockRef<FAN_OUT, NUM_RECORDS, Key>>())
-                .write(MaybeUninit::new((*pointer).clone()));
-        });
+                self.version_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(*version));
 
-        self.len.store(len as _, Release)
+                self.pointer_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(pointer.clone()));
+            });
+
+        self.len.store(len as u16 + add as u16, Release)
     }
 
     #[inline(always)]
@@ -203,7 +209,7 @@ impl<const FAN_OUT: usize,
     pub fn active_count(&self) -> usize {
         unsafe {
             self.versions().iter().fold(0, |c, next|
-                if *next & OBSOLETE_VERSION_MARK == 0 { c } else { c + 1 })
+                if Self::is_active(*next) { c + 1 } else { c })
         }
     }
 
@@ -211,7 +217,7 @@ impl<const FAN_OUT: usize,
     pub fn obsolete_count(&self) -> usize {
         unsafe {
             self.versions().iter().fold(0, |c, next|
-                if *next & OBSOLETE_VERSION_MARK != 0 { c } else { c + 1 })
+                if Self::is_obsolete(*next) { c + 1 } else { c })
         }
     }
 

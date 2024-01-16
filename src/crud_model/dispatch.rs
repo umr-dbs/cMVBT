@@ -55,7 +55,7 @@ impl<const FAN_OUT: usize,
 
                             break commit;
                         }
-                        Ok(commit) => break commit,
+                        Ok(..) => break version,
                         Err(opt) => {
                             commit_attempts += 1;
                             sched_yield(commit_attempts);
@@ -106,7 +106,7 @@ impl<const FAN_OUT: usize,
 
                             break commit;
                         }
-                        Ok(commit) => break commit,
+                        Ok(..) => break version,
                         Err(opt) => {
                             commit_attempts += 1;
                             sched_yield(commit_attempts);
@@ -140,12 +140,10 @@ impl<const FAN_OUT: usize,
                 let mut commit_handle
                     = self.begin_commit();
 
-                let del_version
-                    = commit_handle.read_handle_version();
-
                 let mut commit_attempts
                     = 0;
 
+                // maybe just fetch_add the atomic underneath, because? same for attempts overloads for any crud
                 let committed_version = loop {
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) => break commit,
@@ -157,7 +155,7 @@ impl<const FAN_OUT: usize,
                     }
                 };
 
-                match leaf_page.delete(key, del_version) {
+                match leaf_page.delete(key, committed_version) {
                     None => CRUDOperationResult::Error,
                     Some(..) => CRUDOperationResult::Deleted(committed_version)
                 }

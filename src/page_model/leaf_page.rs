@@ -124,7 +124,7 @@ impl<const NUM_RECORDS: usize,
         unsafe {
             self.record_data
                 .as_mut_ptr()
-                .add(index * mem::size_of::<RecordPoint<Key>>())
+                .add(index)
                 .read()
                 .assume_init();
         }
@@ -146,13 +146,40 @@ impl<const NUM_RECORDS: usize,
     // }
 
     #[inline(always)]
-    pub(crate) fn bulk_push(&mut self, records: &[&RecordPoint<Key>]) {
-        unsafe {
-           slice::from_raw_parts_mut(self.record_data.as_mut_ptr() as _, records.len())
-               .clone_from_slice(records);
+    pub(crate) fn bulk_push(&mut self, records: Vec<&RecordPoint<Key>>) {
+        let len
+            = self.len();
 
-            self.len.store(records.len() as _, Release)
+        let add
+            = records.len();
+
+        unsafe {
+            records.into_iter().enumerate().for_each(|(index, record)| {
+                self.record_data
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(record.clone()));
+            });
         }
+
+        self.len.store(len as u16 + add as u16, Release)
+    }
+
+    #[inline(always)]
+    pub(crate) fn bulk_push_from_slice(&mut self, records: &[&RecordPoint<Key>]) {
+        let len
+            = self.len();
+
+        unsafe {
+            records.into_iter().enumerate().for_each(|(index, record)| {
+                self.record_data
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new((*record).clone()));
+            });
+        }
+
+        self.len.store(len as u16 + records.len() as u16, Release)
     }
 
     #[inline]
