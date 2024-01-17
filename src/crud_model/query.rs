@@ -18,7 +18,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> NodeUnsafeDegree {
         match node.is_leaf() {
             true => node.unsafe_degree(self.block_manager.allocation_leaf()),
-            false => node.unsafe_degree(self.block_manager.allocation_directory() - 1),
+            false => node.unsafe_degree(self.block_manager.allocation_directory() - 2),
         }
     }
 
@@ -455,9 +455,6 @@ impl<const FAN_OUT: usize,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    if keys_page.len() == 0 {
-                        println!("NO")
-                    }
                     let index = versions_page
                         .iter()
                         .enumerate()

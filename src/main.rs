@@ -43,16 +43,18 @@ pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
 fn main() {
     make_splash();
 
+    println!("Record {}", mem::size_of::<RecordPoint<u64>>());
+
     type MVTree<const FAN_OUT: usize, const NUMBER_RECORDS: usize>
     = BPlusTree::<FAN_OUT, NUMBER_RECORDS, u64>;
 
-    const FAN_OUT: usize = 7; // const FAN_OUT: usize = 70;
-    const NUMBER_RECORDS: usize = 5;
+    const FAN_OUT: usize = 127; // const FAN_OUT: usize = 70;
+    const NUMBER_RECORDS: usize = 127;
 
     let tree
         = MVTree::<FAN_OUT, NUMBER_RECORDS>::standard();
 
-    for key in 0u64..NUMBER_RECORDS as u64 + 1000 {
+    for key in 0u64..NUMBER_RECORDS as u64 + 100000 {
         if key == 190 {
             println!("")
         }

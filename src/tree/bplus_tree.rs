@@ -191,7 +191,8 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions.iter())
                         .zip(pointers.iter())
-                        // .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        // .filter(|((.., v), ..)|
+                        //     InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
                         .sorted_by(|((k0, ..), ..), ((k1, ..), ..)|
                             match k0.lower.cmp(&k1.lower) {
                                 Ordering::Equal => k0.upper.cmp(&k1.upper),
@@ -251,6 +252,7 @@ impl<const FAN_OUT: usize,
                         .filter(|record| !record.version().is_deleted())
                         .collect_vec();
 
+                    debug_assert!(!active_records.is_empty());
                     if let Node::Leaf(leaf_page) = new_leaf.unsafe_borrow_mut().as_mut() {
                         leaf_page.bulk_push(active_records);
                     }
@@ -272,6 +274,7 @@ impl<const FAN_OUT: usize,
                         .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
                         .collect_vec();
 
+                    debug_assert!(!active_entries.is_empty());
                     if let Node::Index(internal_page) = new_internal_page.unsafe_borrow_mut().as_mut() {
                         internal_page.bulk_push(active_entries)
                     }
