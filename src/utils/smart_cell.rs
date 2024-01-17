@@ -348,9 +348,8 @@ pub enum SmartFlavor<E: Default> {
 
 impl<E: Default> Default for SmartFlavor<E> {
     fn default() -> Self {
-        FreeCell(SafeCell::new(unsafe {
-            mem::MaybeUninit::uninit().assume_init()
-        }))
+        FreeCell(SafeCell::new(
+            E::default()))
     }
 }
 

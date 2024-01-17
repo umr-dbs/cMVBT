@@ -29,6 +29,15 @@ pub struct InternalPage<
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
+> Clone for InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    fn clone(&self) -> Self {
+        Self::from(self)
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash
 > Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key>
 {
     fn drop(&mut self) {
@@ -45,6 +54,40 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    #[inline]
+    pub fn from(from: &Self) -> Self {
+        let mut new_page
+            = Self::new();
+
+        let (keys, versions, pointers)
+            = from.keys_versions_pointers();
+
+        keys.iter()
+            .zip(versions.iter())
+            .zip(pointers.iter())
+            .enumerate()
+            .for_each(|(index, ((key, version), pointer))| unsafe {
+                new_page.key_interval_region
+                    .as_mut_ptr()
+                    .add(index)
+                    .write(MaybeUninit::new(key.clone()));
+
+                new_page.version_region
+                    .as_mut_ptr()
+                    .add(index)
+                    .write(MaybeUninit::new(*version));
+
+                new_page.pointer_region
+                    .as_mut_ptr()
+                    .add(index)
+                    .write(MaybeUninit::new(pointer.clone()));
+            });
+
+        new_page.len.store(keys.len() as u16, Release);
+
+        new_page
+    }
+
     #[inline(always)]
     pub const fn new() -> Self {
         debug_assert!(mem::size_of::<[Key; FAN_OUT]>() +
@@ -132,6 +175,39 @@ impl<const FAN_OUT: usize,
                     .as_mut_ptr()
                     .add(index + len)
                     .write(MaybeUninit::new(pointer.clone()));
+            });
+
+        self.len.store(len as u16 + add as u16, Release)
+    }
+
+    #[inline]
+    pub fn bulk_push_from_slice(
+        &mut self,
+        entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)])
+    {
+        let len
+            = self.len();
+
+        let add
+            = entries.len();
+
+        entries.into_iter()
+            .enumerate()
+            .for_each(|(index, ((key, version), pointer))| unsafe {
+                self.key_interval_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new((*key).clone()));
+
+                self.version_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(**version));
+
+                self.pointer_region
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new((*pointer).clone()));
             });
 
         self.len.store(len as u16 + add as u16, Release)

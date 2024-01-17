@@ -1,14 +1,17 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
+use std::mem;
+use std::mem::take;
 use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockSplit};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::{Node, NodeUnsafeDegree};
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard};
+use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem};
+use crate::tree::root::Root;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::sched_yield;
+use crate::utils::smart_cell::{sched_yield, SmartCell};
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -195,10 +198,10 @@ impl<const FAN_OUT: usize,
 
     fn retrieve_root_write(
         &self
-    ) ->  (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-           BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-           Height)
+    ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+          Height)
     {
         let mut attempts
             = 0;
@@ -216,7 +219,7 @@ impl<const FAN_OUT: usize,
         &self,
         master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
         root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        height: Height
+        height: Height,
     ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
@@ -229,11 +232,11 @@ impl<const FAN_OUT: usize,
         &self,
         mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        height: Height
+        height: Height,
     ) -> (RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-            BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-            BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-            Height)
+          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+          BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+          Height)
     {
         let root_guard_deref_mut
             = root_guard.deref_mut().unwrap();
@@ -244,15 +247,12 @@ impl<const FAN_OUT: usize,
                               right_fence,
                               right
             ) => {
-                let new_root = self
+                let new_root_block = self
                     .block_manager
                     .new_empty_index_block()
                     .into_cell(self.locking_strategy.latch_type());
 
-                let new_root_clone
-                    = new_root.clone();
-
-                let root_internal_page = new_root
+                let root_internal_page = new_root_block
                     .unsafe_borrow_mut()
                     .as_mut()
                     .as_internal_page();
@@ -281,73 +281,85 @@ impl<const FAN_OUT: usize,
                             *versions.get_unchecked_mut(0) = commit;
                             *versions.get_unchecked_mut(1) = commit;
 
-                            break commit
+                            break commit;
                         },
                         Ok(commit) => break commit,
                         Err(opt) => commit_handle = opt
                     }
                 };
 
-                let fresh_root = Self::from(
-                    &self.locking_strategy,
-                    new_root_clone,
-                    committed,
-                    height + 1,
-                    Some(self.root.clone())
-                );
+                let copy_root = Self::into_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(
+                            self.root
+                                .unsafe_borrow_mut()
+                                .block
+                                .unsafe_borrow()
+                                .clone()
+                                .into_cell(self.locking_strategy().latch_type()),
+                            0,
+                            0),
+                        prev: self.root.unsafe_borrow().prev.clone(),
+                    });
 
-                let m_master_guard
-                    = fresh_root.borrow_mut();
+                let old_root
+                    = self.root.unsafe_borrow_mut();
 
-                let _back_root = self.root.replace(fresh_root);
-                master_guard = m_master_guard;
+                old_root.root.height
+                    = height + 1;
 
-                root_guard = master_guard
-                    .deref_mut()
-                    .unwrap()
-                    .root
-                    .block
-                    .borrow_mut();
+                old_root.root.version
+                    = committed;
+                old_root.prev = Some(copy_root);
 
                 root_internal_page.commit_until(1);
+
+                *old_root.root.block.unsafe_borrow_mut()
+                    = mem::take(new_root_block.unsafe_borrow_mut());
 
                 (height + 1, master_guard.deref_mut().unwrap().block())
             }
             BlockSplit::ByVersion(new_root_block) => {
-                let fresh_root = Self::from(
-                    &self.locking_strategy,
-                    new_root_block,
-                    0,
-                    height,
-                    Some(self.root.clone()));
-
                 let mut commit_handle
                     = self.begin_commit();
 
-                loop {
+                let committed = loop {
                     match self.try_end_commit(commit_handle) {
-                        Ok(commit) => {
-                            fresh_root
-                                .unsafe_borrow_mut()
-                                .root
-                                .version = commit;
-
-                            break
-                        },
+                        Ok(commit) =>
+                            break commit,
                         Err(opt) => commit_handle = opt
                     }
-                }
+                };
 
-                let m_master_guard
-                    = fresh_root.borrow_mut();
+                let copy_root = Self::into_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(
+                            self.root
+                                .unsafe_borrow_mut()
+                                .block
+                                .unsafe_borrow()
+                                .clone()
+                                .into_cell(self.locking_strategy().latch_type()),
+                            0,
+                            0),
+                        prev: self.root.unsafe_borrow().prev.clone(),
+                    });
 
-                let _back_root = self.root.replace(fresh_root);
-                master_guard = m_master_guard;
-                root_guard = master_guard
-                    .deref_mut()
-                    .unwrap()
-                    .block
-                    .borrow_mut();
+                let old_root
+                    = self.root.unsafe_borrow_mut();
+
+                old_root.root.height
+                    = height + 1;
+
+                *old_root.root.block.unsafe_borrow_mut()
+                    = mem::take(new_root_block.unsafe_borrow_mut());
+
+                old_root.prev = Some(copy_root);
+
+                old_root.root.version
+                    = committed;
 
                 (height, master_guard.deref_mut().unwrap().block())
             }

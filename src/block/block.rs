@@ -28,6 +28,7 @@ impl<const FAN_OUT: usize,
 // #[repr(align(4096))]
 // #[repr(packed)]
 #[repr(align(4096))]
+#[derive(Clone)]
 pub struct Block<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

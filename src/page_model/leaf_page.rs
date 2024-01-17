@@ -23,6 +23,14 @@ pub struct LeafPage<
 
 impl<const NUM_RECORDS: usize,
     Key: Hash + Ord + Copy + Default
+> Clone for LeafPage<NUM_RECORDS, Key> {
+    fn clone(&self) -> Self {
+        Self::from(self)
+    }
+}
+
+impl<const NUM_RECORDS: usize,
+    Key: Hash + Ord + Copy + Default
 > Default for LeafPage<NUM_RECORDS, Key> {
     fn default() -> Self {
         LeafPage::new()
@@ -43,6 +51,29 @@ impl<const NUM_RECORDS: usize,
 impl<const NUM_RECORDS: usize,
     Key: Hash + Ord + Copy + Default
 > LeafPage<NUM_RECORDS, Key> {
+    #[inline]
+    pub(crate) fn from(leaf_page: &Self) -> Self {
+        let mut new_page
+            = Self::new();
+
+        unsafe {
+            leaf_page
+                .as_records()
+                .iter()
+                .enumerate()
+                .for_each(|(index, record)| new_page
+                    .record_data
+                    .as_mut_ptr()
+                    .add(index)
+                    .write(MaybeUninit::new((*record).clone()))
+                );
+        }
+
+        new_page.len.store(leaf_page.len() as u16, Release);
+
+        new_page
+    }
+
     #[inline(always)]
     pub const fn new() -> Self {
         debug_assert!(mem::size_of::<Len>() +

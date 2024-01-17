@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -31,7 +30,7 @@ pub enum ClockType {
     SYNCED,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct RootItem<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -57,7 +56,6 @@ pub(crate) type SmartRoot<
     const NUM_RECORDS: usize,
     Key
 > = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>;
-
 
 pub(crate) type RootItemGuard<
     'a,
@@ -148,6 +146,7 @@ impl<const FAN_OUT: usize,
                     let mut sorted_block = block
                         .as_records()
                         .iter()
+                        .filter(|r| !r.version().is_deleted())
                         .sorted_by_key(|r| r.key())
                         .collect_vec();
 
@@ -191,31 +190,33 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions.iter())
                         .zip(pointers.iter())
-                        // .filter(|((.., v), ..)|
-                        //     InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
-                        .sorted_by(|((k0, ..), ..), ((k1, ..), ..)|
+                        .filter(|((.., v), ..)|
+                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        /*.sorted_by(|((k0, ..), ..), ((k1, ..), ..)|
                             match k0.lower.cmp(&k1.lower) {
                                 Ordering::Equal => k0.upper.cmp(&k1.upper),
                                 order => order
-                            })
+                            })*/
+                        .sorted_by_key(|((i, ..), ..)| *i)
                         .collect_vec();
 
-                    let mut first = vec![];
-                    let mut second = vec![];
-                    filtered.into_iter().for_each(|((i, v), p)| {
-                        if first.is_empty() {
-                            first.push(((i, v), p));
-                        } else if first.get_unchecked(first.len() - 1).0.0.is_disjoint(i) {
-                            first.push(((i, v), p));
-                        } else {
-                            second.push(((i, v), p));
-                        }
-                    });
+                    // let mut first = vec![];
+                    // let mut second = vec![];
+                    // filtered.into_iter().for_each(|((i, v), p)| {
+                    //     if first.is_empty() {
+                    //         first.push(((i, v), p));
+                    //     } else if first.get_unchecked(first.len() - 1).0.0.is_disjoint(i) {
+                    //         first.push(((i, v), p));
+                    //     } else {
+                    //         second.push(((i, v), p));
+                    //     }
+                    // });
+
+                    let middle = filtered.len() / 2;
+                    let (first, second)
+                        = filtered.split_at_mut(middle);
 
                     debug_assert!(!first.is_empty() && !second.is_empty());
-                    // let middle = filtered.len() / 2;
-                    // let (first, second)
-                    //     = filtered.split_at_mut(middle);
 
                     let fence_left = Interval::new(
                         fence.lower,
@@ -223,7 +224,7 @@ impl<const FAN_OUT: usize,
 
                     if let Node::Index(internal_page) = left.unsafe_borrow_mut().as_mut() {
                         first.sort_by_key(|((.., v), ..)| **v);
-                        internal_page.bulk_push(first)
+                        internal_page.bulk_push_from_slice(first)
                     }
 
                     let fence_right = Interval::new(
@@ -232,7 +233,7 @@ impl<const FAN_OUT: usize,
 
                     if let Node::Index(internal_page) = right.unsafe_borrow_mut().as_mut() {
                         second.sort_by_key(|((.., v), ..)| **v);
-                        internal_page.bulk_push(second)
+                        internal_page.bulk_push_from_slice(second)
                     }
 
                     BlockSplit::ByKey(fence_left, left, fence_right, right)
@@ -301,7 +302,11 @@ impl<const FAN_OUT: usize,
             prev,
         };
 
-        SmartCell(Arc::new(match locking_strategy.latch_type() {
+        Self::into_smart_root(locking_strategy.latch_type(), root_item)
+    }
+
+    pub(crate) fn into_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
+        SmartCell(Arc::new(match latch_type {
             LatchType::Exclusive => SmartFlavor::ExclusiveCell(
                 Mutex::new(()),
                 SafeCell::new(root_item), ),
@@ -323,6 +328,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn make_root_item(locking_strategy: &LockingStrategy,
                                  block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key>,
                                  version: Version,
+                                 height: Height,
                                  prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
     ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key>
     {
@@ -330,7 +336,7 @@ impl<const FAN_OUT: usize,
             root: Root::new(
                 block_manager.new_empty_leaf().into_cell(locking_strategy.latch_type()),
                 version,
-                INIT_TREE_HEIGHT,
+                height,
             ),
             prev,
         };
@@ -373,8 +379,12 @@ impl<const FAN_OUT: usize,
 
 
         Self {
-            root: UnCell::new(
-                Self::make_root_item(&locking_strategy, &block_manager, VersionManager::START_VERSION, None)),
+            root: UnCell::new(Self::make_root_item(
+                &locking_strategy,
+                &block_manager,
+                VersionManager::START_VERSION,
+                INIT_TREE_HEIGHT,
+                None)),
             locking_strategy,
             block_manager,
             version_manager,

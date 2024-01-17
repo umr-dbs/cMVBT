@@ -7,6 +7,7 @@ use crate::record_model::record_point::{Payload, RecordPoint};
 use crate::record_model::version_info::{Version, VersionInfo};
 use crate::utils::interval::Interval;
 
+#[derive(Clone)]
 pub enum Node<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
