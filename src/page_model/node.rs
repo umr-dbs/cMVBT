@@ -100,6 +100,15 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
+        match self {
+            Node::Index(internal_page) =>
+                internal_page.children(),
+            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .children")
+        }
+    }
+
+    #[inline(always)]
     pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
         match self {
             Node::Index(internal_page) =>
@@ -127,6 +136,14 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key>{
+        match self {
+            Node::Index(internal_page) => internal_page,
+            _ => unreachable!()
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_internal_page_ref(&self) -> & InternalPage<FAN_OUT, NUM_RECORDS, Key>{
         match self {
             Node::Index(internal_page) => internal_page,
             _ => unreachable!()

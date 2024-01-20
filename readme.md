@@ -1,8 +1,8 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-    Build:             - 17.01.2023
-    Version:           - 0.0.3 (Beta)
+    Build:             - 20.01.2023
+    Version:           - 0.0.4 (Beta)
 ---------------------------------------
-# MVCC B+Tree Build
+# MV B+Tree Build
     Requirements:
     - OS:          OS independet
     - Rustc:       >= 1.60.0 (2021 Edition)

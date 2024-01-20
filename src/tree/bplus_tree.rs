@@ -4,7 +4,7 @@ use std::sync::Arc;
 use itertools::Itertools;
 use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
-use crate::block::block::{Block, BlockSplit};
+use crate::block::block::{Block, BlockGuard, BlockSplit};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
@@ -116,9 +116,105 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + 'static,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
+    pub(crate) fn merge<'a>(
+        &self,
+        mufasa: &mut Block<FAN_OUT, NUM_RECORDS, Key>,
+        simba: &Block<FAN_OUT, NUM_RECORDS, Key>,
+        simba_index: usize,
+    ) -> Result<(usize, BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>), ()>
+    {
+        let mufasa_internal_page
+            = mufasa.as_internal_page();
+
+        let is_simba_leaf
+            = simba.is_leaf();
+
+        let simba_len_active
+            = simba.active_count();
+
+        let mut merge_candidates = mufasa_internal_page
+            .children()
+            .iter()
+            .enumerate()
+            .zip(mufasa_internal_page.versions())
+            .filter(|((index, ..), ..)|
+                *index != simba_index)
+            .filter(|(.., version)|
+                InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+            .map(|((index, bro), ..)|
+                (index, bro))
+            .sorted_by_key(|(.., bro)| bro
+                .unsafe_borrow()
+                .len())
+            .collect_vec();
+
+        let mut candidates_index
+            = merge_candidates.len() - 1;
+
+        // Start simple one block merge attempt
+        while let Some((merge_index, merge_candidate))
+            = merge_candidates.get(candidates_index)
+        {
+            let merge_block = merge_candidate
+                .unsafe_borrow();
+
+            let sibling_len = merge_block
+                .len();
+
+            let can_accommodate = match is_simba_leaf {
+                true => sibling_len + simba_len_active < self.block_manager.allocation_leaf() - 1,
+                false => sibling_len + simba_len_active < self.block_manager.allocation_directory() - 2
+            };
+
+            if can_accommodate {
+                let _merge_block_latch
+                    = merge_candidate.borrow_mut();
+
+                let mut combined_block = merge_block
+                    .clone()
+                    .into_cell(self.locking_strategy.latch_type());
+
+                match is_simba_leaf {
+                    false => {
+                        let (keys, versions, pointers)
+                            = simba.as_internal_page_ref().keys_versions_pointers();
+
+                        let shadow_copy = keys
+                            .iter()
+                            .zip(versions.iter())
+                            .zip(pointers.iter())
+                            .filter(|((.., version), ..)|
+                                InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+                            .collect_vec();
+
+                        combined_block
+                            .unsafe_borrow_mut()
+                            .as_internal_page()
+                            .bulk_push(shadow_copy)
+                    }
+                    true => combined_block
+                        .unsafe_borrow_mut()
+                        .as_leaf_page()
+                        .bulk_push_from_slice(simba.as_records())
+                }
+
+                return Ok((*merge_index, combined_block, _merge_block_latch))
+            }
+
+            if candidates_index <= 0 {
+                break;
+            }
+
+            candidates_index -= 1;
+        }
+
+        // failed attempt one block merge
+        Err(())
+    }
+
     pub(crate) fn split(
         &self,
         block: &Block<FAN_OUT, NUM_RECORDS, Key>,
@@ -160,7 +256,7 @@ impl<const FAN_OUT: usize,
 
                     if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
                         first.sort_by_key(|r| r.version().insertion_version());
-                        leaf_page.bulk_push_from_slice(first);
+                        leaf_page.bulk_push_from_slice_ref(first);
                     }
 
                     let fence_right = Interval::new(
@@ -169,7 +265,7 @@ impl<const FAN_OUT: usize,
 
                     if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
                         second.sort_by_key(|r| r.version().insertion_version());
-                        leaf_page.bulk_push_from_slice(second)
+                        leaf_page.bulk_push_from_slice_ref(second)
                     }
 
                     BlockSplit::ByKey(fence_left, left, fence_right, right)
@@ -192,25 +288,8 @@ impl<const FAN_OUT: usize,
                         .zip(pointers.iter())
                         .filter(|((.., v), ..)|
                             InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
-                        /*.sorted_by(|((k0, ..), ..), ((k1, ..), ..)|
-                            match k0.lower.cmp(&k1.lower) {
-                                Ordering::Equal => k0.upper.cmp(&k1.upper),
-                                order => order
-                            })*/
                         .sorted_by_key(|((i, ..), ..)| *i)
                         .collect_vec();
-
-                    // let mut first = vec![];
-                    // let mut second = vec![];
-                    // filtered.into_iter().for_each(|((i, v), p)| {
-                    //     if first.is_empty() {
-                    //         first.push(((i, v), p));
-                    //     } else if first.get_unchecked(first.len() - 1).0.0.is_disjoint(i) {
-                    //         first.push(((i, v), p));
-                    //     } else {
-                    //         second.push(((i, v), p));
-                    //     }
-                    // });
 
                     let middle = filtered.len() / 2;
                     let (first, second)

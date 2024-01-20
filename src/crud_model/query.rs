@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
-use std::mem::take;
 use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockSplit};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -136,10 +135,6 @@ impl<const FAN_OUT: usize,
             key,
             version);
 
-        let t = leaf
-            .unsafe_borrow()
-            .as_records();
-
         match leaf
             .unsafe_borrow()
             .as_records()
@@ -151,6 +146,14 @@ impl<const FAN_OUT: usize,
             None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
             Some(result) => CRUDOperationResult::MatchedRecords(vec![result.clone()])
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn snapshot(&self, version: Version) -> CRUDOperationResult<Key> {
+        Self::key_range_read_from_root(
+            self.retrieve_root_for(version),
+            &Interval::new(self.min_key, self.max_key),
+            version)
     }
 
     #[inline]
@@ -173,6 +176,7 @@ impl<const FAN_OUT: usize,
                 .iter()
                 .rev()
                 .skip_while(|r| !r.version().matches(version))
+                .take_while(|r| r.version().matches(version))
                 .filter(|r| range.contains(r.key()))
                 .cloned()
                 .collect::<Vec<_>>())
@@ -269,6 +273,29 @@ impl<const FAN_OUT: usize,
                 root_internal_page
                     .push_uncommitted(right_fence, commit_version, right, 1);
 
+                let copy_root = Self::into_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(
+                            self.root
+                                .unsafe_borrow_mut()
+                                .block
+                                .unsafe_borrow()
+                                .clone()
+                                .into_cell(self.locking_strategy().latch_type()),
+                            0,
+                            0),
+                        prev: self.root.unsafe_borrow().prev.clone(),
+                    });
+
+                let old_root
+                    = self.root.unsafe_borrow_mut();
+
+                old_root.root.height
+                    = height + 1;
+
+                old_root.prev = Some(copy_root);
+
                 let mut commit_attempts
                     = 0;
 
@@ -284,34 +311,16 @@ impl<const FAN_OUT: usize,
                             break commit;
                         },
                         Ok(commit) => break commit,
-                        Err(opt) => commit_handle = opt
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_attempts += 1;
+                            commit_handle = opt
+                        }
                     }
                 };
 
-                let copy_root = Self::into_smart_root(
-                    self.locking_strategy.latch_type(),
-                    RootItem {
-                        root: Root::new(
-                            self.root
-                                .unsafe_borrow_mut()
-                                .block
-                                .unsafe_borrow()
-                                .clone()
-                                .into_cell(self.locking_strategy().latch_type()),
-                            0,
-                            0),
-                        prev: self.root.unsafe_borrow().prev.clone(),
-                    });
-
-                let old_root
-                    = self.root.unsafe_borrow_mut();
-
-                old_root.root.height
-                    = height + 1;
-
                 old_root.root.version
                     = committed;
-                old_root.prev = Some(copy_root);
 
                 root_internal_page.commit_until(1);
 
@@ -321,17 +330,6 @@ impl<const FAN_OUT: usize,
                 (height + 1, master_guard.deref_mut().unwrap().block())
             }
             BlockSplit::ByVersion(new_root_block) => {
-                let mut commit_handle
-                    = self.begin_commit();
-
-                let committed = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) =>
-                            break commit,
-                        Err(opt) => commit_handle = opt
-                    }
-                };
-
                 let copy_root = Self::into_smart_root(
                     self.locking_strategy.latch_type(),
                     RootItem {
@@ -358,8 +356,31 @@ impl<const FAN_OUT: usize,
 
                 old_root.prev = Some(copy_root);
 
+                let mut commit_handle
+                    = self.begin_commit();
+
                 old_root.root.version
-                    = committed;
+                    = commit_handle.read_handle_version();
+
+                let mut commit_attempts
+                    = 0;
+
+                loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => {
+                            old_root.root.version
+                                = commit;
+
+                            break
+                        }
+                        Ok(..) => break,
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_attempts += 1;
+                            commit_handle = opt
+                        }
+                    }
+                }
 
                 (height, master_guard.deref_mut().unwrap().block())
             }
@@ -493,9 +514,9 @@ impl<const FAN_OUT: usize,
                         NodeUnsafeDegree::Overflow
                         if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
-                        // NodeUnsafeDegree::Underflow
-                        // if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
-                        //     curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
+                        NodeUnsafeDegree::Underflow
+                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
+                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
                         NodeUnsafeDegree::Ok | _ => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
@@ -592,11 +613,9 @@ impl<const FAN_OUT: usize,
 
                 loop {
                     match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let versions
-                                = internal_page.versions_mut();
-
-                            *versions.get_unchecked_mut(current_len) = commit;
+                        Ok(commit) if commit_attempts > 0 => {
+                            *internal_page
+                                .get_version_mut(current_len) = commit;
 
                             break;
                         }
@@ -617,11 +636,72 @@ impl<const FAN_OUT: usize,
 
     fn on_underflow_node<'a>(
         &self,
-        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        simba: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        child_index: usize)
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        index_simba: usize)
         -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>
     {
-        unimplemented!("Jesus.. Call a priest")
+        let mufasa_deref_mut
+            = mufasa.deref_mut().unwrap();
+
+        match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
+            Ok((index_sibling, merged_block, merged_guard)) => {
+                let mufasa_internal_page = mufasa_deref_mut
+                    .as_internal_page();
+
+                let mufasa_len
+                    = mufasa_internal_page.len();
+
+                let fence_sibling = mufasa_internal_page
+                    .get_key(index_sibling);
+
+                let mut merged_fence = mufasa_internal_page
+                    .get_key(index_simba)
+                    .clone();
+
+                merged_fence.merged(fence_sibling);
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                mufasa_internal_page.push_uncommitted(
+                    merged_fence,
+                    commit_handle.read_handle_version(),
+                    merged_block,
+                    mufasa_len);
+
+                let mut commit_attempts
+                    = 0;
+
+                loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => {
+                            *mufasa_internal_page
+                                .get_version_mut(mufasa_len) = commit;
+
+                            break
+                        }
+                        Ok(..) => break,
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_attempts += 1;
+                            commit_handle = opt
+                        }
+                    }
+                }
+
+                mufasa_internal_page
+                    .mark_version_obsolete(index_sibling);
+
+                mufasa_internal_page
+                    .mark_version_obsolete(index_simba);
+
+                mufasa_internal_page
+                    .commit_until(mufasa_len);
+
+                mufasa
+            }
+            Err(..) => unimplemented!("Jesus.. Call a priest")
+        }
     }
 }

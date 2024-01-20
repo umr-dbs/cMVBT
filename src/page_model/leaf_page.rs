@@ -197,7 +197,7 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn bulk_push_from_slice(&mut self, records: &[&RecordPoint<Key>]) {
+    pub(crate) fn bulk_push_from_slice_ref(&mut self, records: &[&RecordPoint<Key>]) {
         let len
             = self.len();
 
@@ -207,6 +207,23 @@ impl<const NUM_RECORDS: usize,
                     .as_mut_ptr()
                     .add(index + len)
                     .write(MaybeUninit::new((*record).clone()));
+            });
+        }
+
+        self.len.store(len as u16 + records.len() as u16, Release)
+    }
+
+    #[inline(always)]
+    pub(crate) fn bulk_push_from_slice(&mut self, records: &[RecordPoint<Key>]) {
+        let len
+            = self.len();
+
+        unsafe {
+            records.into_iter().enumerate().for_each(|(index, record)| {
+                self.record_data
+                    .as_mut_ptr()
+                    .add(index + len)
+                    .write(MaybeUninit::new(record.clone()));
             });
         }
 

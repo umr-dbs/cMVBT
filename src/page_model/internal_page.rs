@@ -252,13 +252,18 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub unsafe fn keys(&self) -> &[Interval<Key>] {
-        std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.len())
+    pub fn keys(&self) -> &[Interval<Key>] {
+        unsafe { std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.len()) }
     }
 
     #[inline(always)]
-    pub unsafe fn versions(&self) -> &[Version] {
-        std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len())
+    pub fn get_key(&self, index: usize) -> &Interval<Key> {
+        unsafe { &*(self.key_interval_region.as_ptr().add(index) as *const Interval<Key>) }
+    }
+
+    #[inline(always)]
+    pub fn versions(&self) -> &[Version] {
+        unsafe { std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len()) }
     }
 
     #[inline(always)]
@@ -267,7 +272,12 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
+    pub fn get_version_mut(&mut self, index: usize) -> &mut Version {
+        unsafe { &mut *(self.version_region.as_mut_ptr().add(index) as *mut Version) }
+    }
+
+    #[inline(always)]
+    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
         unsafe {
             std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, self.len())
         }
