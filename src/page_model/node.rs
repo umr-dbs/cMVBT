@@ -17,53 +17,10 @@ pub enum Node<
     Leaf(LeafPage<NUM_RECORDS, Key>),
 }
 
-#[repr(u8)]
-pub enum NodeUnsafeDegree {
-    Ok,
-    Overflow,
-    Underflow,
-}
-
-impl NodeUnsafeDegree {
-    pub const fn is_ok(&self) -> bool {
-        match self {
-            Self::Ok => true,
-            _ => false
-        }
-    }
-
-    pub const fn is_overflow(&self) -> bool {
-        match self {
-            Self::Overflow => true,
-            _ => false
-        }
-    }
-
-    pub const fn is_underflow(&self) -> bool {
-        match self {
-            Self::Underflow => true,
-            _ => false
-        }
-    }
-}
-
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash
 > Node<FAN_OUT, NUM_RECORDS, Key> {
-    #[inline(always)]
-    pub fn unsafe_degree(&self, allocation: usize) -> NodeUnsafeDegree {
-        let len = self.len();
-
-        if len >= allocation {
-            NodeUnsafeDegree::Overflow
-        } else if len < allocation / 2 {
-            NodeUnsafeDegree::Underflow
-        } else {
-            NodeUnsafeDegree::Ok
-        }
-    }
-
     #[inline(always)]
     pub const fn is_leaf(&self) -> bool {
         match self {

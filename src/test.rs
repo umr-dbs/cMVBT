@@ -21,11 +21,11 @@ pub const EXE_RANGE_LOOK_UPS: bool = false;
 
 pub const BSZ_BASE: usize = _4KB;
 pub const BSZ: usize = BSZ_BASE - 0; // bsz_alignment::<Key, Payload>();
-pub const FAN_OUT: usize = BSZ / 8 / 2;
-pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
+// pub const FAN_OUT: usize = BSZ / 8 / 2;
+// pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
-// pub const FAN_OUT: usize = 16;
-// pub const NUM_RECORDS: usize = 16;
+pub const FAN_OUT: usize = 127;
+pub const NUM_RECORDS: usize = 127;
 
 // pub const NUM_RECORDS: usize = 64;
 

@@ -300,6 +300,17 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn active_dead(&self) -> (usize, usize) {
+        self.versions()
+            .iter()
+            .fold((0, 0), |(active, dead), next_version|
+                match Self::is_obsolete(*next_version) {
+                    true => (active, dead + 1),
+                    false => (active + 1, dead)
+                })
+    }
+
+    #[inline(always)]
     pub fn obsolete_count(&self) -> usize {
         unsafe {
             self.versions().iter().fold(0, |c, next|

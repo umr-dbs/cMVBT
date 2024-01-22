@@ -7,7 +7,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::page_model::Attempts;
 use crate::record_model::AtomicVersion;
 use crate::record_model::version_info::Version;
@@ -115,18 +114,6 @@ type IsRead = bool;
 pub struct OptCell<E: Default> {
     pub(crate) cell: SafeCell<E>,
     pub(crate) cell_version: AtomicVersion,
-}
-
-impl<E: Default + Serialize> Serialize for OptCell<E> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        self.cell.serialize(serializer)
-    }
-}
-
-impl<'de, E: Default + Deserialize<'de>> Deserialize<'de> for OptCell<E> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        Ok(OptCell::new(E::deserialize(deserializer)?))
-    }
 }
 
 impl<E: Default + Display> Display for OptCell<E> {

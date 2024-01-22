@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -7,7 +6,7 @@ use std::ops::{Range, RangeInclusive};
 pub type U64interval = Interval<u64>;
 // pub type VersionInterval = Interval<Version>;
 
-#[derive(Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Default, Clone)]
 pub struct Interval<E: Ord + Copy + Hash> {
     pub lower: E,
     pub upper: E,

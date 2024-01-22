@@ -1,5 +1,4 @@
 use std::fmt::{Display, Formatter};
-use serde::{Deserialize, Serialize};
 use crate::page_model::{Attempts, Height, Level};
 use crate::utils::smart_cell::LatchType;
 
@@ -84,7 +83,7 @@ impl LevelExtras for Level {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Default, Clone)]
 pub enum LockingStrategy {
     #[default]
     MonoWriter,

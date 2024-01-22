@@ -8,6 +8,35 @@ use crate::page_model::node::Node;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
 
+#[repr(u8)]
+pub enum BlockUnsafeDegree {
+    Ok,
+    LengthOverflow,
+    ActiveUnderflow
+}
+
+impl BlockUnsafeDegree {
+    pub const fn is_ok(&self) -> bool {
+        match self {
+            Self::Ok => true,
+            _ => false
+        }
+    }
+
+    pub const fn is_length_overflow(&self) -> bool {
+        match self {
+            Self::LengthOverflow => true,
+            _ => false
+        }
+    }
+
+    pub const fn is_active_underflow(&self) -> bool {
+        match self {
+            Self::ActiveUnderflow => true,
+            _ => false
+        }
+    }
+}
 
 pub(crate) enum BlockSplit<
     const FAN_OUT: usize,
@@ -61,6 +90,17 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
+    pub fn unsafe_degree(&self, allocation: usize) -> BlockUnsafeDegree {
+        if self.len() >= allocation {
+            BlockUnsafeDegree::LengthOverflow
+        } else if self.active_count() < Self::min_active() {
+            BlockUnsafeDegree::ActiveUnderflow
+        } else {
+            BlockUnsafeDegree::Ok
+        }
+    }
+
+    #[inline(always)]
     pub fn max_active() -> usize { // 80%
         (NUM_RECORDS as f64 / 1.25) as _
     }
@@ -77,6 +117,16 @@ impl<const FAN_OUT: usize,
                 internal_page.active_count(),
             Node::Leaf(leaf_page) =>
                 leaf_page.active_count()
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn active_dead(&self) -> (usize, usize) {
+        match self.as_ref() {
+            Node::Index(internal_page) =>
+                internal_page.active_dead(),
+            Node::Leaf(leaf_page) =>
+                leaf_page.active_dead()
         }
     }
 

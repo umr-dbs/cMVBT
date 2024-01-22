@@ -128,6 +128,17 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
+    pub fn active_dead(&self) -> (usize, usize) {
+        self.as_records()
+            .iter()
+            .fold((0, 0), |(active, dead), next_record|
+                match next_record.version().is_deleted() {
+                    true => (active, dead + 1),
+                    false => (active + 1, dead)
+                })
+    }
+
+    #[inline(always)]
     pub fn dead_count(&self) -> usize {
         self.as_records()
             .iter()

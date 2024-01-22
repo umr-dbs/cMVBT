@@ -12,7 +12,7 @@ use crate::page_model::internal_page::InternalPage;
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
 use crate::test::{dec_key, inc_key, Key};
-use crate::tree::locking_strategy::LockingStrategy;
+use crate::tree::locking_strategy::{LockingStrategy, orwc};
 use crate::tree::version_manager::VersionManager;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
@@ -94,14 +94,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize
 > Default for BPlusTree<FAN_OUT, NUM_RECORDS, u64> {
     fn default() -> Self {
-        fn inc_key(k: Key) -> Key {
-            k.checked_add(1).unwrap_or(Key::MAX)
-        }
-        fn dec_key(k: Key) -> Key {
-            k.checked_sub(1).unwrap_or(Key::MIN)
-        }
-
-        BPlusTree::new(inc_key, dec_key, u64::MIN, u64::MAX)
+        Self::standard()
     }
 }
 
@@ -109,8 +102,37 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
 > BPlusTree<FAN_OUT, NUM_RECORDS, u64>
 {
+    #[inline]
+    fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
+        fn inc_key(k: u64) -> u64 {
+            k.checked_add(1).unwrap_or(u64::MAX)
+        }
+
+        fn dec_key(k: u64) -> u64 {
+            k.checked_sub(1).unwrap_or(u64::MIN)
+        }
+
+        Self::make(locking_strategy, clock_type, inc_key, dec_key, u64::MIN, u64::MAX)
+    }
+
     pub fn standard() -> Self {
-        Self::make(LockingStrategy::MonoWriter, ClockType::FREE, inc_key, dec_key, u64::MIN, u64::MAX)
+        Self::make_standard(LockingStrategy::MonoWriter, ClockType::FREE)
+    }
+
+    pub fn orwc() -> Self {
+        Self::make_standard(orwc(), ClockType::SYNCED)
+    }
+
+    pub fn orwc_optimistic_clock() -> Self {
+        Self::make_standard(orwc(), ClockType::OPTIMISTIC)
+    }
+
+    pub fn lc() -> Self {
+        Self::make_standard(LockingStrategy::LockCoupling, ClockType::SYNCED)
+    }
+
+    pub fn lc_optimistic_clock() -> Self {
+        Self::make_standard(LockingStrategy::LockCoupling, ClockType::OPTIMISTIC)
     }
 }
 
@@ -165,8 +187,8 @@ impl<const FAN_OUT: usize,
                 .len();
 
             let can_accommodate = match is_simba_leaf {
-                true => sibling_len + simba_len_active < self.block_manager.allocation_leaf() - 1,
-                false => sibling_len + simba_len_active < self.block_manager.allocation_directory() - 2
+                true => sibling_len + simba_len_active <= self.block_manager.allocation_leaf() - 1,
+                false => sibling_len + simba_len_active <= self.block_manager.allocation_directory() - 2
             };
 
             if can_accommodate {
@@ -381,10 +403,10 @@ impl<const FAN_OUT: usize,
             prev,
         };
 
-        Self::into_smart_root(locking_strategy.latch_type(), root_item)
+        Self::make_smart_root(locking_strategy.latch_type(), root_item)
     }
 
-    pub(crate) fn into_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
         SmartCell(Arc::new(match latch_type {
             LatchType::Exclusive => SmartFlavor::ExclusiveCell(
                 Mutex::new(()),

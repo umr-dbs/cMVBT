@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -18,17 +18,9 @@ hardware-lock-elision = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hashbrown = "0.14.3"
-crossbeam = "0.8.3"
 chrono = "0.4.31"
 rand = "0.8.5"
-num_cpus = "1.16.0"
 itertools = "0.12.0"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
-serde = { version ="1.0.195", features = ["derive", "rc"] }
-serde_json = { version = "1.0.111" }
-#log = "0.4.20"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.152"
-sysinfo = "0.30.5"
-raw-cpuid = "11.0.1"

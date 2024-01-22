@@ -1,4 +1,3 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::AtomicU64;
 
@@ -22,32 +21,6 @@ pub type AtomicVersion = AtomicU64;
 /// Defines a deleted version, wrapping with one leading marker bit.
 #[derive(Clone, Default)]
 struct DeletedVersion(Version);
-
-/// Remove unreadable coding of del version when serializing.
-impl Serialize for DeletedVersion {
-    fn serialize<S>(&self, serializer: S) -> Result<<S as Serializer>::Ok, <S as Serializer>::Error>
-    where
-        S: Serializer,
-    {
-        match self.get() {
-            None => Ok(serializer.serialize_none()?),
-            o => Ok(serializer.serialize_some(&o)?),
-        }
-    }
-}
-
-/// Decode readable del version to encoded variant.
-impl<'de> Deserialize<'de> for DeletedVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        match Option::<Version>::deserialize(deserializer)? {
-            Some(del) => Ok(DeletedVersion::new(del)),
-            None => Ok(DeletedVersion::new_null()),
-        }
-    }
-}
 
 /// Implements mapping for deletion versions.
 impl DeletedVersion {
@@ -91,7 +64,7 @@ impl Into<DeletedVersion> for Version {
 }
 
 /// Defines the version information structure, i.e. insert and delete version.
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default)]
 pub struct VersionInfo {
     pub insert_version: Version,
     delete_version: DeletedVersion,

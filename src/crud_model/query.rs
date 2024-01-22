@@ -2,25 +2,25 @@ use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
 use itertools::Itertools;
-use crate::block::block::{BlockGuard, BlockSplit};
+use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
-use crate::page_model::node::{Node, NodeUnsafeDegree};
+use crate::page_model::node::Node;
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem};
+use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem};
 use crate::tree::root::Root;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::{sched_yield, SmartCell};
+use crate::utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    pub(crate) fn unsafe_degree_of(&self, node: &Node<FAN_OUT, NUM_RECORDS, Key>) -> NodeUnsafeDegree {
-        match node.is_leaf() {
-            true => node.unsafe_degree(self.block_manager.allocation_leaf()),
-            false => node.unsafe_degree(self.block_manager.allocation_directory() - 2),
+    pub(crate) fn unsafe_degree_of(&self, block: &Block<FAN_OUT, NUM_RECORDS, Key>) -> BlockUnsafeDegree {
+        match block.is_leaf() {
+            true => block.unsafe_degree(self.block_manager.allocation_leaf()),
+            false => block.unsafe_degree(self.block_manager.allocation_directory() - 2),
         }
     }
 
@@ -219,19 +219,6 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn merge_root(
-        &self,
-        master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        height: Height,
-    ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-          Height)
-    {
-        unimplemented!("Jesus.. Call an Ambulance!")
-    }
-
     fn split_root<'a>(
         &self,
         mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
@@ -261,19 +248,7 @@ impl<const FAN_OUT: usize,
                     .as_mut()
                     .as_internal_page();
 
-                let mut commit_handle
-                    = self.begin_commit();
-
-                let commit_version = commit_handle
-                    .read_handle_version();
-
-                root_internal_page
-                    .push_uncommitted(left_fence, commit_version, left, 0);
-
-                root_internal_page
-                    .push_uncommitted(right_fence, commit_version, right, 1);
-
-                let copy_root = Self::into_smart_root(
+                let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
                     RootItem {
                         root: Root::new(
@@ -288,13 +263,17 @@ impl<const FAN_OUT: usize,
                         prev: self.root.unsafe_borrow().prev.clone(),
                     });
 
-                let old_root
-                    = self.root.unsafe_borrow_mut();
+                let mut commit_handle
+                    = self.begin_commit();
 
-                old_root.root.height
-                    = height + 1;
+                let commit_version = commit_handle
+                    .read_handle_version();
 
-                old_root.prev = Some(copy_root);
+                root_internal_page
+                    .push_uncommitted(left_fence, commit_version, left, 0);
+
+                root_internal_page
+                    .push_uncommitted(right_fence, commit_version, right, 1);
 
                 let mut commit_attempts
                     = 0;
@@ -319,6 +298,15 @@ impl<const FAN_OUT: usize,
                     }
                 };
 
+                let old_root
+                    = self.root.unsafe_borrow_mut();
+
+                old_root.root.height
+                    = height + 1;
+
+                old_root.prev
+                    = Some(copy_root);
+
                 old_root.root.version
                     = committed;
 
@@ -330,7 +318,7 @@ impl<const FAN_OUT: usize,
                 (height + 1, master_guard.deref_mut().unwrap().block())
             }
             BlockSplit::ByVersion(new_root_block) => {
-                let copy_root = Self::into_smart_root(
+                let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
                     RootItem {
                         root: Root::new(
@@ -410,15 +398,10 @@ impl<const FAN_OUT: usize,
                 let root_guard
                     = root_block.borrow_mut();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap().as_ref()) {
-                    NodeUnsafeDegree::Ok =>
-                        Ok((master_guard, root_block, root_guard, height)),
-                    NodeUnsafeDegree::Underflow if height <= INIT_TREE_HEIGHT =>
-                        Ok((master_guard, root_block, root_guard, height)),
-                    NodeUnsafeDegree::Overflow =>
+                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
+                    BlockUnsafeDegree::LengthOverflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
-                    NodeUnsafeDegree::Underflow =>
-                        Ok(self.merge_root(master_guard, root_guard, height)),
+                    _ => Ok((master_guard, root_block, root_guard, height))
                 }
             }
             false if !self.locking_strategy.is_mono_writer() => {
@@ -431,18 +414,11 @@ impl<const FAN_OUT: usize,
                 let mut root_guard
                     = root_block.borrow_read();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap().as_ref()) {
-                    NodeUnsafeDegree::Ok =>
-                        Ok((master_guard, root_block, root_guard, height)),
-                    NodeUnsafeDegree::Underflow if height <= INIT_TREE_HEIGHT =>
-                        Ok((master_guard, root_block, root_guard, height)),
-                    NodeUnsafeDegree::Overflow
+                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
+                    BlockUnsafeDegree::LengthOverflow
                     if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
                         Ok(self.split_root(master_guard, root_guard, height)),
-                    NodeUnsafeDegree::Underflow
-                    if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
-                        Ok(self.merge_root(master_guard, root_guard, height)),
-                    _ => Err(())
+                    _ => Ok((master_guard, root_block, root_guard, height))
                 }
             }
             _ => {
@@ -455,16 +431,10 @@ impl<const FAN_OUT: usize,
                 let root_guard
                     = root_block.borrow_free();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap().as_ref()) {
-                    // NodeUnsafeDegree::Ok =>
-                    //     Ok((master_guard, root_block, root_guard, height)),
-                    // NodeUnsafeDegree::Underflow if height <= INIT_TREE_HEIGHT =>
-                    //     Ok((master_guard, root_block, root_guard, height)),
-                    NodeUnsafeDegree::Overflow =>
+                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
+                    BlockUnsafeDegree::LengthOverflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     _ => Ok((master_guard, root_block, root_guard, height)),
-                    // NodeUnsafeDegree::Underflow =>
-                    //     Ok(self.merge_root(master_guard, root_guard, height)),
                 }
             }
         }
@@ -510,14 +480,14 @@ impl<const FAN_OUT: usize,
                         attempts,
                         max_level);
 
-                    match self.unsafe_degree_of(next_curr_guard.deref().unwrap().as_ref()) {
-                        NodeUnsafeDegree::Overflow
+                    match self.unsafe_degree_of(next_curr_guard.deref().unwrap()) {
+                        BlockUnsafeDegree::LengthOverflow
                         if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
-                        NodeUnsafeDegree::Underflow
+                        BlockUnsafeDegree::ActiveUnderflow
                         if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
                             curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
-                        NodeUnsafeDegree::Ok | _ => {
+                        BlockUnsafeDegree::Ok | _ => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
                             curr_block = next_curr_block;
