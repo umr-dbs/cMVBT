@@ -8,7 +8,7 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::Node;
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem};
+use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem, INIT_TREE_HEIGHT};
 use crate::tree::root::Root;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
@@ -195,19 +195,18 @@ impl<const FAN_OUT: usize,
     }
 
     fn retrieve_root_write(
-        &self
+        &self,
+        mut attempts: Attempts,
     ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-          Height)
+          Height,
+          Attempts)
     {
-        let mut attempts
-            = 0;
-
         loop {
             match self.retrieve_root_write_internal(attempts) {
                 Ok((master, block, guard, height)) =>
-                    break (master, block, guard, height),
+                    break (master, block, guard, height, attempts),
                 _ => attempts += 1
             }
         }
@@ -331,7 +330,7 @@ impl<const FAN_OUT: usize,
                             old_root.root.version
                                 = commit;
 
-                            break
+                            break;
                         }
                         Ok(..) => break,
                         Err(opt) => {
@@ -349,6 +348,7 @@ impl<const FAN_OUT: usize,
 
         (master_guard, root_block, root_guard, height)
     }
+
     #[inline]
     fn retrieve_root_write_internal(&self, attempts: Attempts) -> Result<
         (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
@@ -387,9 +387,10 @@ impl<const FAN_OUT: usize,
                     = root_block.borrow_read();
 
                 match root_guard.deref().unwrap().unsafe_degree() {
-                    BlockUnsafeDegree::Overflow
-                    if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
-                        Ok(self.split_root(master_guard, root_guard, height)),
+                    // BlockUnsafeDegree::Overflow
+                    // if root_guard.is_write_lock() && master_guard.is_write_lock() =>
+                    //     Ok(self.split_root(master_guard, root_guard, height)),
+                    BlockUnsafeDegree::Overflow => Err(()),
                     _ => Ok((master_guard, root_block, root_guard, height))
                 }
             }
@@ -419,7 +420,8 @@ impl<const FAN_OUT: usize,
         let (_master,
             mut curr_block,
             mut curr_guard,
-            height) = self.retrieve_root_write();
+            height,
+            attempts) = self.retrieve_root_write(attempts);
 
         let mut curr_level
             = 1 as Height;
@@ -452,20 +454,24 @@ impl<const FAN_OUT: usize,
                         attempts,
                         max_level);
 
+                    let curr_len
+                        = keys_page.len();
+
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
-                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
+                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                            && curr_len == curr_guard.deref().unwrap().len() =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow
-                        if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
+                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                            && curr_len == curr_guard.deref().unwrap().len() =>
                             curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
-                        BlockUnsafeDegree::Ok | _ => {
+                        BlockUnsafeDegree::Ok => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
                             curr_block = next_curr_block;
                         }
-                        _ =>  // On loose latch and failed upgrade
-                            return Err((curr_level, attempts))
+                        _ => return Err((curr_level, attempts + 1))
                     }
                 }
                 _ => return Ok(curr_guard) // cant have it both ways in non optimistic latching protocol
@@ -584,7 +590,7 @@ impl<const FAN_OUT: usize,
             = mufasa.deref_mut().unwrap();
 
         match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
-            Ok((index_sibling, fence_sibling, merged_block, merged_guard)) => {
+            Ok((index_sibling, fence_sibling, merged_block, _merged_guard)) => {
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
 
@@ -615,7 +621,7 @@ impl<const FAN_OUT: usize,
                             *mufasa_internal_page
                                 .get_version_mut(mufasa_len) = commit;
 
-                            break
+                            break;
                         }
                         Ok(..) => break,
                         Err(opt) => {
