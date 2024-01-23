@@ -9,6 +9,7 @@ use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::page_model::internal_page::InternalPage;
+use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
 use crate::test::{dec_key, inc_key, Key};
@@ -48,6 +49,22 @@ impl<const FAN_OUT: usize,
 
     fn deref(&self) -> &Self::Target {
         &self.root
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash
+> RootItem<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn deep_clone(&self, latch_type: LatchType) -> Self {
+        Self {
+            root: Root {
+                block: self.root.block.unsafe_borrow().clone().into_cell(latch_type),
+                version: self.version,
+                height: self.height,
+            },
+            prev: self.prev.clone(),
+        }
     }
 }
 
@@ -141,100 +158,128 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash + 'static,
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    pub(crate) fn merge<'a>(
+    pub(crate) fn merge(
         &self,
-        mufasa: &mut Block<FAN_OUT, NUM_RECORDS, Key>,
+        mufasa: &Block<FAN_OUT, NUM_RECORDS, Key>,
         simba: &Block<FAN_OUT, NUM_RECORDS, Key>,
         simba_index: usize,
-    ) -> Result<(usize, BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>), ()>
+    ) -> Result<(usize, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>), ()>
     {
         let mufasa_internal_page
-            = mufasa.as_internal_page();
+            = mufasa.as_internal_page_ref();
 
         let is_simba_leaf
             = simba.is_leaf();
 
-        let simba_len_active
+        let simba_fence
+            = mufasa_internal_page.get_key(simba_index);
+
+        let max_len
+            = simba.max_units_safe();
+
+        let simba_active_count
             = simba.active_count();
 
-        let mut merge_candidates = mufasa_internal_page
+        let mut all_merge_candidates = mufasa_internal_page
             .children()
             .iter()
             .enumerate()
             .zip(mufasa_internal_page.versions())
-            .filter(|((index, ..), ..)|
+            .zip(mufasa_internal_page.keys())
+            .filter(|(((index, ..), ..), ..)|
                 *index != simba_index)
-            .filter(|(.., version)|
+            .filter(|((.., version), ..)|
                 InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
-            .map(|((index, bro), ..)|
-                (index, bro))
-            .sorted_by_key(|(.., bro)| bro
-                .unsafe_borrow()
-                .len())
+            .sorted_by_key(|(.., fence)| fence.lower())
+            .map(|(((index, bro), ..), fence)|
+                (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
             .collect_vec();
 
-        let mut candidates_index
-            = merge_candidates.len() - 1;
+        let mut merge_candidates = all_merge_candidates
+            .iter()
+            .enumerate()
+            .filter(|(vec_index, (.., active_count, _))| *active_count + simba_active_count <= max_len)
+            .map(|(vec_index, (.., fence))| (vec_index, *fence))
+            .collect_vec();
 
-        // Start simple one block merge attempt
-        while let Some((merge_index, merge_candidate))
-            = merge_candidates.get(candidates_index)
+        let mut candidate = move || match merge_candidates
+            .binary_search_by_key(&simba_fence.lower, |(.., fence)| fence.lower)
         {
-            let merge_block = merge_candidate
-                .unsafe_borrow();
+            Ok(found) => all_merge_candidates.remove(merge_candidates.get(found).unwrap().0),
+            Err(next_closest) if next_closest < merge_candidates.len() =>
+                all_merge_candidates.remove(merge_candidates.get(next_closest).unwrap().0),
+            _ => unreachable!()
+        };
 
-            let sibling_len = merge_block
-                .len();
+        let (candidate_index,
+            candidate_guard,
+            candidate_block,
+            candidate_active_count,
+            candidate_fence) = candidate();
 
-            let can_accommodate = match is_simba_leaf {
-                true => sibling_len + simba_len_active <= self.block_manager.allocation_leaf() - 1,
-                false => sibling_len + simba_len_active <= self.block_manager.allocation_directory() - 2
-            };
-
-            if can_accommodate {
-                let _merge_block_latch
-                    = merge_candidate.borrow_mut();
-
-                let mut combined_block = merge_block
-                    .clone()
+        let combined_block = match is_simba_leaf {
+            false => {
+                let mut combined_block = self.block_manager
+                    .new_empty_index_block()
                     .into_cell(self.locking_strategy.latch_type());
 
-                match is_simba_leaf {
-                    false => {
-                        let (keys, versions, pointers)
-                            = simba.as_internal_page_ref().keys_versions_pointers();
+                let (keys, versions, pointers)
+                    = simba.as_internal_page_ref().keys_versions_pointers();
 
-                        let shadow_copy = keys
-                            .iter()
-                            .zip(versions.iter())
-                            .zip(pointers.iter())
-                            .filter(|((.., version), ..)|
-                                InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
-                            .collect_vec();
+                let (c_keys, c_versions, c_pointers) = candidate_guard
+                    .deref()
+                    .unwrap()
+                    .as_internal_page_ref()
+                    .keys_versions_pointers();
 
-                        combined_block
-                            .unsafe_borrow_mut()
-                            .as_internal_page()
-                            .bulk_push(shadow_copy)
-                    }
-                    true => combined_block
-                        .unsafe_borrow_mut()
-                        .as_leaf_page()
-                        .bulk_push_from_slice(simba.as_records())
-                }
+                let shadow_copy = keys
+                    .iter()
+                    .zip(versions.iter())
+                    .zip(pointers.iter())
+                    .filter(|((.., version), ..)|
+                        InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+                    .merge_by(
+                        c_keys.iter()
+                            .zip(c_versions.iter())
+                            .zip(c_pointers.iter()),
+                        |(((.., v0), ..)), (((.., v1), ..))| v0 <= v1)
+                    .into_iter()
+                    .collect_vec();
 
-                return Ok((*merge_index, combined_block, _merge_block_latch))
+                combined_block
+                    .unsafe_borrow_mut()
+                    .as_internal_page()
+                    .bulk_push(shadow_copy);
+
+                combined_block
             }
+            true => {
+                let mut combined_block = self.block_manager
+                    .new_empty_leaf()
+                    .into_cell(self.locking_strategy.latch_type());
 
-            if candidates_index <= 0 {
-                break;
+                combined_block
+                    .unsafe_borrow_mut()
+                    .as_leaf_page()
+                    .bulk_push(simba
+                        .as_records()
+                        .iter()
+                        .filter(|r| !r.version().is_deleted())
+                        .merge_by(candidate_guard
+                                      .deref()
+                                      .unwrap()
+                                      .as_records()
+                                      .iter()
+                                      .filter(|r| !r.version().is_deleted()),
+                                  |f, s|
+                                      f.version().insert_version <= s.version().insert_version)
+                        .collect_vec());
+
+                combined_block
             }
+        };
 
-            candidates_index -= 1;
-        }
-
-        // failed attempt one block merge
-        Err(())
+        Ok((candidate_index, candidate_fence.clone(), combined_block, candidate_guard))
     }
 
     pub(crate) fn split(
@@ -243,13 +288,10 @@ impl<const FAN_OUT: usize,
         fence: &Interval<Key>,
     ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
     {
-        let active_count
-            = block.active_count();
-
         let is_leaf
             = block.is_leaf();
 
-        if active_count >= Block::<FAN_OUT, NUM_RECORDS, Key>::min_active() {
+        if block.active_count() >= block.max_units_safe() {
             // KEY_SPLIT
             match is_leaf {
                 true => unsafe { // LeafPage

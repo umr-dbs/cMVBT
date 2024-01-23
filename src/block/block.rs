@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
+use crate::block::block_manager::BlockManager;
 
 use crate::page_model::BlockRef;
 use crate::page_model::leaf_page::LeafPage;
@@ -11,7 +12,7 @@ use crate::utils::smart_cell::{LatchType, SmartGuard};
 #[repr(u8)]
 pub enum BlockUnsafeDegree {
     Ok,
-    LengthOverflow,
+    Overflow,
     ActiveUnderflow
 }
 
@@ -25,7 +26,7 @@ impl BlockUnsafeDegree {
 
     pub const fn is_length_overflow(&self) -> bool {
         match self {
-            Self::LengthOverflow => true,
+            Self::Overflow => true,
             _ => false
         }
     }
@@ -90,10 +91,12 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    pub fn unsafe_degree(&self, allocation: usize) -> BlockUnsafeDegree {
-        if self.len() >= allocation {
-            BlockUnsafeDegree::LengthOverflow
-        } else if self.active_count() < Self::min_active() {
+    pub fn unsafe_degree(&self) -> BlockUnsafeDegree {
+        let (active, dead) = self.active_dead();
+        if self.len() >= self.max_units_safe() || (active <= dead && active >= self.min_active_units()) {
+            BlockUnsafeDegree::Overflow
+        }
+        else if active < self.min_active_units() {
             BlockUnsafeDegree::ActiveUnderflow
         } else {
             BlockUnsafeDegree::Ok
@@ -101,13 +104,27 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn max_active() -> usize { // 80%
-        (NUM_RECORDS as f64 / 1.25) as _
+    pub fn min_active_units(&self) -> usize {
+        match self.is_leaf() {
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_records(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_keys()
+        }
     }
 
     #[inline(always)]
-    pub const fn min_active() -> usize { // 20%
-        NUM_RECORDS / 5
+    pub fn max_units(&self) -> usize {
+        match self.is_leaf() {
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_records(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_keys()
+        }
+    }
+
+    #[inline(always)]
+    pub fn max_units_safe(&self) -> usize {
+        match self.is_leaf() {
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_records_safe(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_keys_safe()
+        }
     }
 
     #[inline(always)]

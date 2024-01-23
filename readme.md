@@ -1,6 +1,6 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-    Build:             - 22.01.2023
-    Version:           - 0.0.5 (Beta)
+    Build:             - 23.01.2023
+    Version:           - 0.0.6 (Beta)
 ---------------------------------------
 # MV B+Tree Build
     Requirements:

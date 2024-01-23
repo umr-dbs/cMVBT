@@ -50,38 +50,52 @@ fn main() {
 
     assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
 
-    // let tree
-    //     = MVTree::orwc();
+    let tree
+        = MVTree::orwc();
 
-    let insertions = 1_000_000_u64;
-    // let start_time = SystemTime::now();
-    // for key in 0u64..insertions as u64 {
-    //     match tree.dispatch(CRUDOperation::Insert(key, Box::new(0))) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             // println!("Inserted at version {}", ver);
-    //             // match tree.dispatch(CRUDOperation::Point(key, ver)) {
-    //             //     CRUDOperationResult::MatchedRecords(found) =>
-    //             //         println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //             //     err => println!("Err at insertion {}", err),
-    //             // }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
+    let insertions = 10_000_u64;
+    let start_time = SystemTime::now();
+    for key in 0u64..insertions as u64 {
+        match tree.dispatch(CRUDOperation::Insert(key, Box::new(0))) {
+            CRUDOperationResult::Inserted(ver) => {
+                println!("Inserted at version {}", ver);
+                match tree.dispatch(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found) =>
+                        println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
+            err => println!("Err at insertion {}", err),
+        }
+    }
 
-    // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
-    // println!("Insertions = {}, Time = {}", format_insertions(insertions), end_time);
+    for key in 0u64..100 {
+        match tree.dispatch(CRUDOperation::Delete(key)) {
+            CRUDOperationResult::Deleted(v) => println!("Key = {}, v = {} deleted", key, v),
+            _ => println!("Error delete")
+        }
+    }
 
+    for key in 0u64..insertions as u64 {
+        match tree.dispatch(CRUDOperation::Point(key, 10159)) {
+            CRUDOperationResult::MatchedRecords(mut v) if v.len() == 1 =>
+                println!("Found Point  {}", v.pop().unwrap()),
+            err => panic!("Point failed: {}, key = {}", err, key)
+        }
+    }
 
-    let insertions = (0u64..insertions)
-        .map(|key| CRUDOperation::Insert(key, Box::new(0)))
-        .collect_vec();
+    let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
+    println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
 
-    let (time, errors) = test::bulk_crud(
-        24,
-        Tree::new(TreeDispatcher::Ref(MVTree::lc_optimistic_clock())),
-        insertions.as_slice());
-    println!("Insertions = {}, Time = {}, Errors = {}", format_insertions(insertions.len()), time, errors);
+    // let insertions = (0u64..insertions)
+    //     .map(|key| CRUDOperation::Insert(key, Box::new(0)))
+    //     .collect_vec();
+    //
+    // let (time, errors) = test::bulk_crud(
+    //     24,
+    //     Tree::new(TreeDispatcher::Ref(MVTree::lc_optimistic_clock())),
+    //     insertions.as_slice());
+    // println!("Insertions = {}, Time = {}, Errors = {}", format_insertions(insertions.len()), time, errors);
 }
 
 

@@ -94,7 +94,37 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub const fn allocation_directory(&self) -> usize {
-        FAN_OUT - 1
+        FAN_OUT
+    }
+
+    #[inline(always)]
+    pub const fn max_records() -> usize {
+        NUM_RECORDS
+    }
+
+    #[inline(always)]
+    pub const fn max_records_safe() -> usize {
+        Self::max_records()
+    }
+
+    #[inline(always)]
+    pub const fn min_active_records() -> usize { // 20%
+        Self::max_records() / 5
+    }
+
+    #[inline(always)]
+    pub const fn min_active_keys() -> usize { // 20%
+        (Self::max_keys()) / 5
+    }
+
+    #[inline(always)]
+    pub const fn max_keys() -> usize {
+        FAN_OUT
+    }
+
+    #[inline(always)]
+    pub const fn max_keys_safe() -> usize {
+        Self::max_keys() - 1
     }
 
     /// Main Constructor requiring supplied BlockSettings.

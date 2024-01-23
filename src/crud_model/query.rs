@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::mem;
 use itertools::Itertools;
 use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
+use crate::block::block_manager::BlockManager;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::Node;
@@ -17,13 +18,6 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash + 'static
 > BPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    pub(crate) fn unsafe_degree_of(&self, block: &Block<FAN_OUT, NUM_RECORDS, Key>) -> BlockUnsafeDegree {
-        match block.is_leaf() {
-            true => block.unsafe_degree(self.block_manager.allocation_leaf()),
-            false => block.unsafe_degree(self.block_manager.allocation_directory() - 2),
-        }
-    }
-
     pub(crate) fn retrieve_root_for(&self, lookup_version: Version) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
         let mut root_anker
             = self.root.clone();
@@ -250,18 +244,7 @@ impl<const FAN_OUT: usize,
 
                 let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
-                    RootItem {
-                        root: Root::new(
-                            self.root
-                                .unsafe_borrow_mut()
-                                .block
-                                .unsafe_borrow()
-                                .clone()
-                                .into_cell(self.locking_strategy().latch_type()),
-                            0,
-                            0),
-                        prev: self.root.unsafe_borrow().prev.clone(),
-                    });
+                    self.root.unsafe_borrow().deep_clone(self.locking_strategy().latch_type()));
 
                 let mut commit_handle
                     = self.begin_commit();
@@ -320,18 +303,7 @@ impl<const FAN_OUT: usize,
             BlockSplit::ByVersion(new_root_block) => {
                 let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
-                    RootItem {
-                        root: Root::new(
-                            self.root
-                                .unsafe_borrow_mut()
-                                .block
-                                .unsafe_borrow()
-                                .clone()
-                                .into_cell(self.locking_strategy().latch_type()),
-                            0,
-                            0),
-                        prev: self.root.unsafe_borrow().prev.clone(),
-                    });
+                    self.root.unsafe_borrow().deep_clone(self.locking_strategy().latch_type()));
 
                 let old_root
                     = self.root.unsafe_borrow_mut();
@@ -398,8 +370,8 @@ impl<const FAN_OUT: usize,
                 let root_guard
                     = root_block.borrow_mut();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
-                    BlockUnsafeDegree::LengthOverflow =>
+                match root_guard.deref().unwrap().unsafe_degree() {
+                    BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     _ => Ok((master_guard, root_block, root_guard, height))
                 }
@@ -414,8 +386,8 @@ impl<const FAN_OUT: usize,
                 let mut root_guard
                     = root_block.borrow_read();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
-                    BlockUnsafeDegree::LengthOverflow
+                match root_guard.deref().unwrap().unsafe_degree() {
+                    BlockUnsafeDegree::Overflow
                     if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     _ => Ok((master_guard, root_block, root_guard, height))
@@ -431,8 +403,8 @@ impl<const FAN_OUT: usize,
                 let root_guard
                     = root_block.borrow_free();
 
-                match self.unsafe_degree_of(root_guard.deref().unwrap()) {
-                    BlockUnsafeDegree::LengthOverflow =>
+                match root_guard.deref().unwrap().unsafe_degree() {
+                    BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     _ => Ok((master_guard, root_block, root_guard, height)),
                 }
@@ -480,8 +452,8 @@ impl<const FAN_OUT: usize,
                         attempts,
                         max_level);
 
-                    match self.unsafe_degree_of(next_curr_guard.deref().unwrap()) {
-                        BlockUnsafeDegree::LengthOverflow
+                    match next_curr_guard.deref().unwrap().unsafe_degree() {
+                        BlockUnsafeDegree::Overflow
                         if curr_guard.upgrade_write_lock() && next_curr_guard.upgrade_write_lock() =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow
@@ -513,12 +485,9 @@ impl<const FAN_OUT: usize,
         let internal_page
             = mufasa_deref_mut.as_internal_page();
 
-        let fence = unsafe {
-            internal_page
-                .keys()
-                .get_unchecked(child_index)
-                .clone()
-        };
+        let fence = internal_page
+            .get_key(child_index)
+            .clone();
 
         let current_len
             = internal_page.len();
@@ -615,21 +584,18 @@ impl<const FAN_OUT: usize,
             = mufasa.deref_mut().unwrap();
 
         match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
-            Ok((index_sibling, merged_block, merged_guard)) => {
+            Ok((index_sibling, fence_sibling, merged_block, merged_guard)) => {
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
 
                 let mufasa_len
                     = mufasa_internal_page.len();
 
-                let fence_sibling = mufasa_internal_page
-                    .get_key(index_sibling);
-
                 let mut merged_fence = mufasa_internal_page
                     .get_key(index_simba)
                     .clone();
 
-                merged_fence.merged(fence_sibling);
+                merged_fence.merged(&fence_sibling);
 
                 let mut commit_handle
                     = self.begin_commit();

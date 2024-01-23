@@ -30,7 +30,7 @@ impl<Key: Display + Ord + Hash + Copy + Default> Display for CRUDOperationResult
             CRUDOperationResult::Error =>
                 write!(f, "Error"),
             MatchedRecords(records) => {
-                write!(f, "MatchedRecords[len={}\n", records.len());
+                write!(f, "MatchedRecords[len={}]\n", records.len());
                 records.iter().for_each(|record| {
                     write!(f, "{}\n", record);
                 });
