@@ -92,8 +92,10 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn unsafe_degree(&self) -> BlockUnsafeDegree {
-        let (active, dead) = self.active_dead();
-        if self.len() >= self.max_units_safe() || (active <= dead && active >= self.min_active_units()) {
+        let active
+            = self.active_count();
+
+        if active > self.max_active_units() || self.len() >= self.max_units_safe() {
             BlockUnsafeDegree::Overflow
         }
         else if active < self.min_active_units() {
@@ -108,6 +110,14 @@ impl<const FAN_OUT: usize,
         match self.is_leaf() {
             true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_records(),
             false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_keys()
+        }
+    }
+
+    #[inline(always)]
+    pub fn max_active_units(&self) -> usize {
+        match self.is_leaf() {
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_records() * 4,
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_keys() * 4
         }
     }
 

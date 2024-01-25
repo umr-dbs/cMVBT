@@ -53,59 +53,63 @@ fn main() {
     let mk_payload: fn() -> Box<u8> = || unsafe {
         mem::transmute(Box::leak(Box::new(0_usize)))
     };
-    // let tree
-    //     = MVTree::orwc();
-    //
-    let insertions = 10_000_000_u64;
-    // let start_time = SystemTime::now();
-    // for key in 0u64..insertions as u64 {
-    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             println!("Inserted at version {}", ver);
-    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
-    //                 CRUDOperationResult::MatchedRecords(found) =>
-    //                     println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //                 err => println!("Err at insertion {}", err),
-    //             }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
-    //
-    // for key in 0u64..100 {
-    //     match tree.dispatch(CRUDOperation::Delete(key)) {
-    //         CRUDOperationResult::Deleted(v) => println!("Key = {}, v = {} deleted", key, v),
-    //         _ => println!("Error delete")
-    //     }
-    // }
-    //
-    // for key in 0u64..insertions as u64 {
-    //     match tree.dispatch(CRUDOperation::Point(key, 10159)) {
-    //         CRUDOperationResult::MatchedRecords(mut v) if v.len() == 1 =>
-    //             println!("Found Point  {}", v.pop().unwrap()),
-    //         err => panic!("Point failed: {}, key = {}", err, key)
-    //     }
-    // }
+    let tree
+        = MVTree::orwc();
+
+    let insertions = 10_000_u64;
+    let mut last_insert_version = Version::MIN;
+
+    for key in 0u64..insertions {
+        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+            CRUDOperationResult::Inserted(ver) => {
+                last_insert_version = ver;
+                // println!("Inserted at version {}", ver);
+                match tree.dispatch(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found)
+                    if found.last().unwrap().key ==  key => {}
+                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
+            err => println!("Err at insertion {}", err),
+        }
+    }
+
+
+    for key in 0u64..1000 {
+        match tree.dispatch(CRUDOperation::Delete(key)) {
+            CRUDOperationResult::Deleted(v) => {}
+                // println!("Key = {}, v = {} deleted", key, v),
+            _ => println!("Error delete")
+        }
+    }
+
+    for key in 0u64..insertions as u64 {
+        match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
+            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+                // println!("Found Point  {}", v.pop().unwrap()),
+            err => panic!("Point failed: {}, key = {}", err, key)
+        }
+    }
     //
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
-
-    let insertions = (0u64..insertions)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()))
-        .collect_vec();
-
-    let (time, errors) = test::bulk_crud(
-        num_cpus::get(),
-        Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock())),
-        insertions.as_slice());
-
-    println!("Insertions = {}, Threads = {}, Time = {}, Errors = {}",
-             format_insertions(insertions.len()),
-             num_cpus::get(),
-             time,
-             errors);
+    //
+    // let insertions = (0u64..insertions)
+    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
+    //     .collect_vec();
+    //
+    // let (time, errors) = test::bulk_crud(
+    //     num_cpus::get(),
+    //     Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock())),
+    //     insertions.as_slice());
+    //
+    // println!("Insertions = {}, Threads = {}, Time = {}, Errors = {}",
+    //          format_insertions(insertions.len()),
+    //          num_cpus::get(),
+    //          time,
+    //          errors);
 }
-
 
 /// Essential function.
 fn make_splash() {

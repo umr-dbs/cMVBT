@@ -151,6 +151,21 @@ impl<const FAN_OUT: usize,
     }
 }
 
+pub(crate) enum MergeResult<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static,
+> {
+    Merged(usize,
+           Interval<Key>,
+           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>),
+    KeySplit(usize,
+             BlockSplit<FAN_OUT, NUM_RECORDS, Key>,
+             BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>),
+}
+
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static,
@@ -161,7 +176,7 @@ impl<const FAN_OUT: usize,
         mufasa: &Block<FAN_OUT, NUM_RECORDS, Key>,
         simba: &Block<FAN_OUT, NUM_RECORDS, Key>,
         simba_index: usize,
-    ) -> Result<(usize, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key>), ()>
+    ) -> MergeResult<FAN_OUT, NUM_RECORDS, Key>
     {
         let mufasa_internal_page
             = mufasa.as_internal_page_ref();
@@ -172,13 +187,18 @@ impl<const FAN_OUT: usize,
         let simba_fence
             = mufasa_internal_page.get_key(simba_index);
 
-        let max_len
-            = simba.max_units_safe();
+        let max_active_units
+            = simba.max_active_units();
 
         let simba_active_count
             = simba.active_count();
 
-        let mut all_merge_candidates = mufasa_internal_page
+        let (candidate_index,
+            candidate_guard,
+            _candidate_block,
+            candidate_active_count,
+            candidate_fence
+        ) = mufasa_internal_page
             .children()
             .iter()
             .enumerate()
@@ -191,93 +211,205 @@ impl<const FAN_OUT: usize,
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
                 (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
-            .collect_vec();
+            .next()
+            .unwrap();
 
-        let mut merge_candidates = all_merge_candidates
-            .iter()
-            .enumerate()
-            .filter(|(vec_index, (.., active_count, _))| *active_count + simba_active_count <= max_len)
-            .map(|(vec_index, (.., fence))| (vec_index, *fence))
-            .collect_vec();
+        if candidate_active_count + simba_active_count <= max_active_units { // <= 4d
+            let combined_block = match is_simba_leaf {
+                false => {
+                    let mut combined_block = self.block_manager
+                        .new_empty_index_block()
+                        .into_cell(self.locking_strategy.latch_type());
 
-        let mut candidate = move || match merge_candidates
-            .binary_search_by_key(&simba_fence.lower, |(.., fence)| fence.lower)
-        {
-            Ok(found) => all_merge_candidates.remove(merge_candidates.get(found).unwrap().0),
-            Err(next_closest) if next_closest < merge_candidates.len() =>
-                all_merge_candidates.remove(merge_candidates.get(next_closest).unwrap().0),
-            _ => unreachable!()
-        };
+                    let (keys, versions, pointers)
+                        = simba.as_internal_page_ref().keys_versions_pointers();
 
-        let (candidate_index,
-            candidate_guard,
-            candidate_block,
-            candidate_active_count,
-            candidate_fence) = candidate();
+                    let (c_keys, c_versions, c_pointers) = candidate_guard
+                        .deref()
+                        .unwrap()
+                        .as_internal_page_ref()
+                        .keys_versions_pointers();
 
-        let combined_block = match is_simba_leaf {
-            false => {
-                let mut combined_block = self.block_manager
-                    .new_empty_index_block()
-                    .into_cell(self.locking_strategy.latch_type());
+                    let shadow_copy = keys
+                        .iter()
+                        .zip(versions)
+                        .zip(pointers)
+                        .filter(|((.., version), ..)|
+                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+                        .merge_by(c_keys.iter()
+                                      .zip(c_versions)
+                                      .zip(c_pointers)
+                                      .filter(|((.., version), ..)|
+                                          InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version)),
+                                  |(((.., v0), ..)), (((.., v1), ..))| v0 <= v1)
+                        .into_iter()
+                        .collect_vec();
 
-                let (keys, versions, pointers)
-                    = simba.as_internal_page_ref().keys_versions_pointers();
+                    combined_block
+                        .unsafe_borrow_mut()
+                        .as_internal_page()
+                        .bulk_push(shadow_copy);
 
-                let (c_keys, c_versions, c_pointers) = candidate_guard
-                    .deref()
-                    .unwrap()
-                    .as_internal_page_ref()
-                    .keys_versions_pointers();
+                    combined_block
+                }
+                true => {
+                    let mut combined_block = self.block_manager
+                        .new_empty_leaf()
+                        .into_cell(self.locking_strategy.latch_type());
 
-                let shadow_copy = keys
-                    .iter()
-                    .zip(versions.iter())
-                    .zip(pointers.iter())
-                    .filter(|((.., version), ..)|
-                        InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
-                    .merge_by(
-                        c_keys.iter()
-                            .zip(c_versions.iter())
-                            .zip(c_pointers.iter()),
-                        |(((.., v0), ..)), (((.., v1), ..))| v0 <= v1)
-                    .into_iter()
-                    .collect_vec();
+                    combined_block
+                        .unsafe_borrow_mut()
+                        .as_leaf_page()
+                        .bulk_push(simba
+                            .as_records()
+                            .iter()
+                            .filter(|r| !r.version().is_deleted())
+                            .merge_by(candidate_guard
+                                          .deref()
+                                          .unwrap()
+                                          .as_records()
+                                          .iter()
+                                          .filter(|r| !r.version().is_deleted()),
+                                      |f, s|
+                                          f.version().insert_version <= s.version().insert_version)
+                            .collect_vec());
 
-                combined_block
-                    .unsafe_borrow_mut()
-                    .as_internal_page()
-                    .bulk_push(shadow_copy);
+                    combined_block
+                }
+            };
 
-                combined_block
-            }
-            true => {
-                let mut combined_block = self.block_manager
-                    .new_empty_leaf()
-                    .into_cell(self.locking_strategy.latch_type());
-
-                combined_block
-                    .unsafe_borrow_mut()
-                    .as_leaf_page()
-                    .bulk_push(simba
+            MergeResult::Merged(candidate_index, candidate_fence.clone(), combined_block, candidate_guard)
+        } else {
+            match is_simba_leaf {
+                true => unsafe {
+                    let mut joined = candidate_guard
+                        .deref()
+                        .unwrap()
                         .as_records()
                         .iter()
                         .filter(|r| !r.version().is_deleted())
-                        .merge_by(candidate_guard
-                                      .deref()
-                                      .unwrap()
-                                      .as_records()
+                        .merge_by(simba.as_records()
                                       .iter()
                                       .filter(|r| !r.version().is_deleted()),
-                                  |f, s|
-                                      f.version().insert_version <= s.version().insert_version)
-                        .collect_vec());
+                                  |f, s| f.key() < s.key())
+                        .collect_vec();
 
-                combined_block
+                    let joined_len = joined.len();
+                    let (first, second)
+                        = joined.split_at_mut(joined_len / 2);
+
+                    let left_interval = Interval::new(
+                        candidate_fence.lower.min(simba_fence.lower),
+                        (self.dec_key)(second.get_unchecked(0).key()));
+
+                    let right_interval = Interval::new(
+                        second.get_unchecked(0).key(),
+                        candidate_fence.upper.max(simba_fence.upper));
+
+                    first.sort_by_key(|r|
+                        r.version().insert_version);
+
+                    second.sort_by_key(|r|
+                        r.version().insert_version);
+
+                    let mut combined_block_0 = self.block_manager
+                        .new_empty_leaf()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    let mut combined_block_1 = self.block_manager
+                        .new_empty_leaf()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    combined_block_0
+                        .unsafe_borrow_mut()
+                        .as_leaf_page()
+                        .bulk_push_from_slice_ref(first);
+
+                    combined_block_1
+                        .unsafe_borrow_mut()
+                        .as_leaf_page()
+                        .bulk_push_from_slice_ref(second);
+
+                    MergeResult::KeySplit(
+                        candidate_index,
+                        BlockSplit::ByKey(
+                            left_interval,
+                            combined_block_0,
+                            right_interval,
+                            combined_block_1),
+                        candidate_guard)
+                }
+                false => unsafe {
+                    let candidate_internal_page = candidate_guard
+                        .deref()
+                        .unwrap()
+                        .as_internal_page_ref();
+
+                    let (c_keys, c_versions, c_children)
+                        = candidate_internal_page.keys_versions_pointers();
+
+                    let (s_keys, s_version, s_children)
+                        = simba.keys_versions_pointers();
+
+                    let mut joined = c_keys
+                        .iter()
+                        .zip(c_versions)
+                        .zip(c_children)
+                        .filter(|((.., v), ..)|
+                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .merge_by(s_keys.iter()
+                                      .zip(s_version)
+                                      .zip(s_children)
+                                      .filter(|((.., v), ..)|
+                                          InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v)),
+                                  |((f, ..), ..), ((s, ..), ..)|
+                                      f.lower < s.lower)
+                        .collect_vec();
+
+                    let joined_len = joined.len();
+                    let (first, second)
+                        = joined.split_at_mut(joined_len / 2);
+
+                    let left_fence = Interval::new(
+                        candidate_fence.lower.min(simba_fence.lower),
+                        (self.dec_key)(second.get_unchecked(0).0.0.lower));
+
+                    let right_fence = Interval::new(
+                        second.get_unchecked(0).0.0.lower,
+                        candidate_fence.upper.max(simba_fence.upper));
+
+                    first.sort_by_key(|((.., v), ..)| **v);
+                    second.sort_by_key(|((.., v), ..)| **v);
+
+                    let mut combined_block_0 = self.block_manager
+                        .new_empty_index_block()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    let mut combined_block_1 = self.block_manager
+                        .new_empty_index_block()
+                        .into_cell(self.locking_strategy.latch_type());
+
+                    combined_block_0
+                        .unsafe_borrow_mut()
+                        .as_internal_page()
+                        .bulk_push_from_slice(first);
+
+                    combined_block_1
+                        .unsafe_borrow_mut()
+                        .as_internal_page()
+                        .bulk_push_from_slice(second);
+
+                    MergeResult::KeySplit(
+                        candidate_index,
+                        BlockSplit::ByKey(
+                            left_fence,
+                            combined_block_0,
+                            right_fence,
+                            combined_block_1),
+                        candidate_guard)
+                }
             }
-        };
-
-        Ok((candidate_index, candidate_fence.clone(), combined_block, candidate_guard))
+        }
     }
 
     pub(crate) fn split(
@@ -289,7 +421,7 @@ impl<const FAN_OUT: usize,
         let is_leaf
             = block.is_leaf();
 
-        if block.active_count() >= block.max_units_safe() {
+        if block.active_count() > block.max_active_units() {
             // KEY_SPLIT
             match is_leaf {
                 true => unsafe { // LeafPage

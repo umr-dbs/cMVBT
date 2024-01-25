@@ -15,10 +15,16 @@ impl<const FAN_OUT: usize,
 {
     #[inline]
     fn dispatch(&self, crud: CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+        let is_optimistic = self.locking_strategy
+            .is_optimistic();
+
         match crud {
             CRUDOperation::Insert(key, payload) => {
-                let leaf_guard
-                    = self.traversal_write(key);
+                let leaf_guard = if is_optimistic {
+                    self.traversal_write_olc(key)
+                } else {
+                    self.traversal_write(key)
+                };
 
                 let leaf_deref_mut = leaf_guard
                     .deref_mut()
@@ -68,8 +74,11 @@ impl<const FAN_OUT: usize,
                 CRUDOperationResult::Inserted(committed_version)
             }
             CRUDOperation::Update(key, payload) => {
-                let leaf_guard
-                    = self.traversal_write(key);
+                let leaf_guard = if is_optimistic {
+                    self.traversal_write_olc(key)
+                } else {
+                    self.traversal_write(key)
+                };
 
                 let leaf_deref_mut = leaf_guard
                     .deref_mut()
@@ -127,8 +136,17 @@ impl<const FAN_OUT: usize,
                 }
             }
             CRUDOperation::Delete(key) => {
-                let leaf_guard
-                    = self.traversal_write(key);
+                unsafe {
+                   let k = *(&key as *const Key as *const u64);
+                    if k == 151 {
+                        let amir = "amir".to_string();
+                    }
+                }
+                let leaf_guard = if is_optimistic {
+                    self.traversal_write_olc(key)
+                } else {
+                    self.traversal_write(key)
+                };
 
                 let leaf_deref_mut = leaf_guard
                     .deref_mut()
@@ -159,7 +177,7 @@ impl<const FAN_OUT: usize,
                     None => CRUDOperationResult::Error,
                     Some(..) => CRUDOperationResult::Deleted(committed_version)
                 }
-            },
+            }
             CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
                 self.retrieve_root_for(version),
                 &range,

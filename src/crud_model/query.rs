@@ -2,14 +2,12 @@ use std::collections::VecDeque;
 use std::hash::Hash;
 use std::mem;
 use itertools::Itertools;
-use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
-use crate::block::block_manager::BlockManager;
+use crate::block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::Node;
 use crate::record_model::version_info::{TimeMatcher, Version};
-use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, RootItem, INIT_TREE_HEIGHT};
-use crate::tree::root::Root;
+use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
 
@@ -212,7 +210,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn split_root<'a>(
+    pub(crate) fn split_root<'a>(
         &self,
         mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
@@ -479,7 +477,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn on_overflow_node<'a>(
+    pub(crate) fn on_overflow_node<'a>(
         &self,
         mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
@@ -579,7 +577,7 @@ impl<const FAN_OUT: usize,
         mufasa
     }
 
-    fn on_underflow_node<'a>(
+    pub(crate) fn on_underflow_node<'a>(
         &self,
         mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
@@ -590,7 +588,12 @@ impl<const FAN_OUT: usize,
             = mufasa.deref_mut().unwrap();
 
         match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
-            Ok((index_sibling, fence_sibling, merged_block, _merged_guard)) => {
+            MergeResult::Merged(
+                   index_sibling,
+                   fence_sibling,
+                   merged_block,
+                   _candidate_guard
+            ) => {
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
 
@@ -643,7 +646,70 @@ impl<const FAN_OUT: usize,
 
                 mufasa
             }
-            Err(..) => unimplemented!("Jesus.. Call a priest")
+            MergeResult::KeySplit(
+                   index_sibling,
+                   BlockSplit::ByKey(left_interval,
+                                     left,
+                                     right_interval,
+                                     right),
+                   _candidate_guard
+            ) => {
+                let mufasa_internal_page = mufasa_deref_mut
+                    .as_internal_page();
+
+                let mufasa_len
+                    = mufasa_internal_page.len();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                mufasa_internal_page.push_uncommitted(
+                    left_interval,
+                    commit_handle.read_handle_version(),
+                    left,
+                    mufasa_len);
+
+                mufasa_internal_page.push_uncommitted(
+                    right_interval,
+                    commit_handle.read_handle_version(),
+                    right,
+                    mufasa_len + 1);
+
+                let mut commit_attempts
+                    = 0;
+
+                loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => {
+                            *mufasa_internal_page
+                                .get_version_mut(mufasa_len) = commit;
+
+                            *mufasa_internal_page
+                                .get_version_mut(mufasa_len + 1) = commit;
+
+                            break;
+                        }
+                        Ok(..) => break,
+                        Err(opt) => {
+                            sched_yield(commit_attempts);
+                            commit_attempts += 1;
+                            commit_handle = opt
+                        }
+                    }
+                }
+
+                mufasa_internal_page
+                    .mark_version_obsolete(index_sibling);
+
+                mufasa_internal_page
+                    .mark_version_obsolete(index_simba);
+
+                mufasa_internal_page
+                    .commit_until(mufasa_len + 1);
+
+                mufasa
+            }
+            _ => unreachable!("Jesus Christ! Call a Priest!")
         }
     }
 }
