@@ -1,29 +1,19 @@
 use std::{env, fs, mem};
-use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::io::Read;
-use std::ptr::NonNull;
 use std::sync::Arc;
-use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use crate::block::block::Block;
 use crate::tree::bplus_tree;
-use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
+use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::page_model::internal_page::InternalPage;
-use crate::page_model::leaf_page::LeafPage;
-use crate::page_model::node::Node;
-use crate::record_model::record_point::{Payload, RecordPoint};
-use crate::record_model::version_info::{Version, VersionInfo};
-use crate::test::{dec_key, format_insertions, inc_key, INDEX, Key, MAKE_INDEX};
+use crate::record_model::version_info::Version;
+use crate::test::{INDEX, Key, MAKE_INDEX};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
-use crate::utils::interval::Interval;
-use crate::utils::safe_cell::SafeCell;
-use crate::utils::smart_cell::{ENABLE_YIELD, OBSOLETE_FLAG_VERSION};
+use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
 mod crud_model;
@@ -41,6 +31,11 @@ pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
         TreeDispatcher::Ref(MAKE_INDEX(crud))
     })
 };
+fn mk_payload() -> Box<u8> {
+    unsafe {
+        mem::transmute(Box::leak(Box::new(0_usize)))
+    }
+}
 
 fn main() {
     make_splash();
@@ -50,9 +45,7 @@ fn main() {
 
     assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
 
-    let mk_payload: fn() -> Box<u8> = || unsafe {
-        mem::transmute(Box::leak(Box::new(0_usize)))
-    };
+
     let tree
         = MVTree::orwc();
 
@@ -80,7 +73,7 @@ fn main() {
         match tree.dispatch(CRUDOperation::Delete(key)) {
             CRUDOperationResult::Deleted(v) => {}
                 // println!("Key = {}, v = {} deleted", key, v),
-            _ => println!("Error delete")
+            _ => println!("Error delete key = {}", key)
         }
     }
 

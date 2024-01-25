@@ -193,12 +193,7 @@ impl<const FAN_OUT: usize,
         let simba_active_count
             = simba.active_count();
 
-        let (candidate_index,
-            candidate_guard,
-            _candidate_block,
-            candidate_active_count,
-            candidate_fence
-        ) = mufasa_internal_page
+        let mut all_candidates = mufasa_internal_page
             .children()
             .iter()
             .enumerate()
@@ -211,8 +206,19 @@ impl<const FAN_OUT: usize,
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
                 (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
-            .next()
-            .unwrap();
+            .collect_vec();
+
+        let (candidate_index,
+            candidate_guard,
+            _candidate_block,
+            candidate_active_count,
+            candidate_fence
+        ) = match all_candidates.binary_search_by_key(&simba_fence.lower, |(.., f)| f.lower) {
+            Err(index) => all_candidates.remove(index),
+            _ => unreachable!("Merger found overlap in active sibling!"),
+        };
+
+        all_candidates.clear();
 
         if candidate_active_count + simba_active_count <= max_active_units { // <= 4d
             let combined_block = match is_simba_leaf {

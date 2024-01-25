@@ -136,12 +136,6 @@ impl<const FAN_OUT: usize,
                 }
             }
             CRUDOperation::Delete(key) => {
-                unsafe {
-                   let k = *(&key as *const Key as *const u64);
-                    if k == 151 {
-                        let amir = "amir".to_string();
-                    }
-                }
                 let leaf_guard = if is_optimistic {
                     self.traversal_write_olc(key)
                 } else {
