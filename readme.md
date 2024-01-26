@@ -1,6 +1,6 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-- Build:             - 25.01.2023
-- Version:           - 0.0.9 (Beta)
+- Build:             - 26.01.2023
+- Version:           - 0.0.10 (Beta)
 ---------------------------------------
 # Supported Operations
 - Insert (Key, Payload)

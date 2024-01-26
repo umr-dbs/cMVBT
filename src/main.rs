@@ -1,6 +1,7 @@
 use std::{env, fs, mem};
 use std::io::Read;
 use std::sync::Arc;
+use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -10,7 +11,7 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::record_model::version_info::Version;
-use crate::test::{INDEX, Key, MAKE_INDEX};
+use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
 use crate::utils::smart_cell::ENABLE_YIELD;
@@ -46,62 +47,67 @@ fn main() {
     assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
 
 
-    let tree
-        = MVTree::orwc();
-
-    let insertions = 10_000_u64;
-    let mut last_insert_version = Version::MIN;
-
-    for key in 0u64..insertions {
-        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-            CRUDOperationResult::Inserted(ver) => {
-                last_insert_version = ver;
-                // println!("Inserted at version {}", ver);
-                match tree.dispatch(CRUDOperation::Point(key, ver)) {
-                    CRUDOperationResult::MatchedRecords(found)
-                    if found.last().unwrap().key ==  key => {}
-                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-                    err => println!("Err at insertion {}", err),
-                }
-            }
-            err => println!("Err at insertion {}", err),
-        }
-    }
-
-
-    for key in 0u64..1000 {
-        match tree.dispatch(CRUDOperation::Delete(key)) {
-            CRUDOperationResult::Deleted(v) => {}
-                // println!("Key = {}, v = {} deleted", key, v),
-            _ => println!("Error delete key = {}", key)
-        }
-    }
-
-    for key in 0u64..insertions as u64 {
-        match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
-            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-                // println!("Found Point  {}", v.pop().unwrap()),
-            err => panic!("Point failed: {}, key = {}", err, key)
-        }
-    }
+    // let tree
+    //     = MVTree::orwc();
+    //
+    let insertions = 10_000_000_u64;
+    // let mut last_insert_version = Version::MIN;
+    //
+    // for key in 0u64..insertions {
+    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+    //         CRUDOperationResult::Inserted(ver) => {
+    //             last_insert_version = ver;
+    //             // println!("Inserted at version {}", ver);
+    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
+    //                 CRUDOperationResult::MatchedRecords(found)
+    //                 if found.last().unwrap().key ==  key => {}
+    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+    //                 err => println!("Err at insertion {}", err),
+    //             }
+    //         }
+    //         err => println!("Err at insertion {}", err),
+    //     }
+    // }
+    //
+    //
+    // for key in 0u64..1000 {
+    //     match tree.dispatch(CRUDOperation::Delete(key)) {
+    //         CRUDOperationResult::Deleted(v) => {}
+    //             // println!("Key = {}, v = {} deleted", key, v),
+    //         _ => println!("Error delete key = {}", key)
+    //     }
+    // }
+    //
+    // for key in 0u64..insertions as u64 {
+    //     match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
+    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+    //             // println!("Found Point  {}", v.pop().unwrap()),
+    //         err => panic!("Point failed: {}, key = {}", err, key)
+    //     }
+    // }
     //
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
-    //
-    // let insertions = (0u64..insertions)
-    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
-    //     .collect_vec();
-    //
-    // let (time, errors) = test::bulk_crud(
-    //     num_cpus::get(),
-    //     Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock())),
-    //     insertions.as_slice());
-    //
-    // println!("Insertions = {}, Threads = {}, Time = {}, Errors = {}",
-    //          format_insertions(insertions.len()),
-    //          num_cpus::get(),
-    //          time,
-    //          errors);
+
+    let insertions = (0u64..insertions)
+        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .collect_vec();
+
+    let tree
+        = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
+
+    let (time, errors) = test::bulk_crud(
+        num_cpus::get(),
+        tree.clone(),
+        insertions.as_slice());
+
+    println!("Concurrency Control: {}\nClock-Type: {}\nInsertions = {}\nThreads = {}\nTime = {}\nErrors = {}",
+             tree.as_index().locking_strategy,
+             tree.as_index().clock_type(),
+             format_insertions(insertions.len()),
+             num_cpus::get(),
+             time,
+             errors);
 }
 
 /// Essential function.

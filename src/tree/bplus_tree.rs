@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -11,7 +12,8 @@ use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
-use crate::tree::locking_strategy::{LockingStrategy, orwc};
+use crate::tree::global_clock::GlobalClock;
+use crate::tree::locking_strategy::{hybrid_lock, LHL_read, LHL_read_write, LockingStrategy, OLC, orwc};
 use crate::tree::version_manager::VersionManager;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
@@ -27,6 +29,16 @@ pub enum ClockType {
     FREE,
     OPTIMISTIC,
     SYNCED,
+}
+
+impl Display for ClockType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClockType::FREE => write!(f, "FREE"),
+            ClockType::OPTIMISTIC => write!(f, "OPTIMISTIC"),
+            ClockType::SYNCED => write!(f, "SYNCED"),
+        }
+    }
 }
 
 #[derive(Default, Clone)]
@@ -138,8 +150,28 @@ impl<const FAN_OUT: usize,
         Self::make_standard(orwc(), ClockType::SYNCED)
     }
 
+    pub fn lhl() -> Self {
+        Self::make_standard(LHL_read(4), ClockType::SYNCED)
+    }
+
+    pub fn lhl_optimistic_clock() -> Self {
+        Self::make_standard(LHL_read(0), ClockType::OPTIMISTIC)
+    }
+
+    pub fn hl() -> Self {
+        Self::make_standard(hybrid_lock(), ClockType::SYNCED)
+    }
+
     pub fn orwc_optimistic_clock() -> Self {
         Self::make_standard(orwc(), ClockType::OPTIMISTIC)
+    }
+
+    pub fn olc_optimistic_clock() -> Self {
+        Self::make_standard(OLC(), ClockType::OPTIMISTIC)
+    }
+
+    pub fn olc() -> Self {
+        Self::make_standard(OLC(), ClockType::SYNCED)
     }
 
     pub fn lc() -> Self {
@@ -582,6 +614,14 @@ impl<const FAN_OUT: usize,
         };
 
         Self::make_smart_root(locking_strategy.latch_type(), root_item)
+    }
+
+    pub(crate) fn clock_type(&self) -> ClockType  {
+        match self.version_manager.committed_version {
+            GlobalClock::Locked(_) => ClockType::SYNCED,
+            GlobalClock::Atomic(_) => ClockType::OPTIMISTIC,
+            GlobalClock::Free(_) => ClockType::FREE
+        }
     }
 
     pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {

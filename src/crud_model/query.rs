@@ -302,42 +302,38 @@ impl<const FAN_OUT: usize,
                     self.locking_strategy.latch_type(),
                     self.root.unsafe_borrow().deep_clone(self.locking_strategy().latch_type()));
 
-                let old_root
-                    = self.root.unsafe_borrow_mut();
-
-                old_root.root.height
-                    = height + 1;
-
-                *old_root.root.block.unsafe_borrow_mut()
-                    = mem::take(new_root_block.unsafe_borrow_mut());
-
-                old_root.prev = Some(copy_root);
-
                 let mut commit_handle
                     = self.begin_commit();
-
-                old_root.root.version
-                    = commit_handle.read_handle_version();
 
                 let mut commit_attempts
                     = 0;
 
-                loop {
+                let committed = loop {
                     match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => {
-                            old_root.root.version
-                                = commit;
-
-                            break;
-                        }
-                        Ok(..) => break,
+                        Ok(commit) =>
+                            break commit,
                         Err(opt) => {
-                            sched_yield(commit_attempts);
                             commit_attempts += 1;
+                            sched_yield(commit_attempts);
                             commit_handle = opt
                         }
                     }
-                }
+                };
+
+                let old_root
+                    = self.root.unsafe_borrow_mut();
+
+                old_root.root.version
+                    = committed;
+
+                old_root.root.height
+                    = height + 1;
+
+                old_root.prev
+                    = Some(copy_root);
+
+                *old_root.root.block.unsafe_borrow_mut()
+                    = mem::take(new_root_block.unsafe_borrow_mut());
 
                 (height, master_guard.deref_mut().unwrap().block())
             }
@@ -385,9 +381,9 @@ impl<const FAN_OUT: usize,
                     = root_block.borrow_read();
 
                 match root_guard.deref().unwrap().unsafe_degree() {
-                    // BlockUnsafeDegree::Overflow
-                    // if root_guard.is_write_lock() && master_guard.is_write_lock() =>
-                    //     Ok(self.split_root(master_guard, root_guard, height)),
+                    BlockUnsafeDegree::Overflow
+                    if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
+                        Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
                     _ => Ok((master_guard, root_block, root_guard, height))
                 }

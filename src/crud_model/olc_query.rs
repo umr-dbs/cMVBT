@@ -66,7 +66,7 @@ impl<const FAN_OUT: usize,
                     = self.root.borrow_mut();
 
                 if !master_guard.is_valid() {
-                    return Err(())
+                    return Err(());
                 }
 
                 let root_block
@@ -78,6 +78,7 @@ impl<const FAN_OUT: usize,
                 if !root_guard.is_valid() {
                     return Err(())
                 }
+
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
@@ -88,24 +89,38 @@ impl<const FAN_OUT: usize,
                 let mut master_guard
                     = self.root.borrow_read();
 
-                if !master_guard.is_valid() {
-                    return Err(())
+                let master_guard_result
+                    = master_guard.deref();
+
+                if let None = master_guard_result {
+                    return Err(());
                 }
 
                 let root_block
-                    = master_guard.deref().unwrap().block();
+                    = master_guard_result.unwrap().block();
 
                 let mut root_guard
                     = root_block.borrow_read();
 
-                if !root_guard.is_valid() {
-                    return Err(())
+                let root_guard_result
+                    = root_guard.deref();
+
+                if let None = root_guard_result {
+                    return Err(());
                 }
 
-                match root_guard.deref().unwrap().unsafe_degree() {
-                    // BlockUnsafeDegree::Overflow
-                    // if root_guard.is_write_lock() && master_guard.is_write_lock() =>
-                    //     Ok(self.split_root(master_guard, root_guard, height)),
+                let guard_deref_ref
+                    = root_guard_result.unwrap();
+
+                let curr_len = guard_deref_ref
+                    .len();
+
+                match guard_deref_ref.unsafe_degree() {
+                    BlockUnsafeDegree::Overflow
+                    if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking; orwc fails here
+                        root_guard.upgrade_write_lock() &&
+                        root_guard.deref().unwrap().len() == curr_len
+                    => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
                     _ => Ok((master_guard, root_block, root_guard, height))
                 }
@@ -115,7 +130,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal_olc(&self, key: Key, attempts: Attempts, max_level: Level)
-                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
+                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
     {
         let (_master,
             mut curr_block,
@@ -131,7 +146,7 @@ impl<const FAN_OUT: usize,
                 = curr_guard.deref();
 
             if let None = curr_guard_result {
-                return Err((curr_level, attempts + 1))
+                return Err((curr_level, attempts + 1));
             }
 
             match curr_guard_result.unwrap().as_ref() {
@@ -155,7 +170,7 @@ impl<const FAN_OUT: usize,
                         .clone();
 
                     if !curr_guard.is_valid() {
-                        return Err((curr_level, attempts + 1))
+                        return Err((curr_level, attempts + 1));
                     }
 
                     let mut next_curr_guard = self.apply_for_ref(
@@ -169,7 +184,7 @@ impl<const FAN_OUT: usize,
                         = next_curr_guard.deref();
 
                     if let None = next_curr_guard_result {
-                        return Err((curr_level, attempts + 1))
+                        return Err((curr_level, attempts + 1));
                     }
 
                     let curr_len
