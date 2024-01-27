@@ -52,11 +52,13 @@ fn main() {
     //
     let insertions = 10_000_000_u64;
     // let mut last_insert_version = Version::MIN;
-    //
+    // let mut version_inserts = vec![];
+    // //
     // for key in 0u64..insertions {
     //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
     //         CRUDOperationResult::Inserted(ver) => {
     //             last_insert_version = ver;
+    //             version_inserts.push(ver);
     //             // println!("Inserted at version {}", ver);
     //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
     //                 CRUDOperationResult::MatchedRecords(found)
@@ -70,11 +72,24 @@ fn main() {
     // }
     //
     //
-    // for key in 0u64..1000 {
+    // for key in 0u64..insertions{
     //     match tree.dispatch(CRUDOperation::Delete(key)) {
-    //         CRUDOperationResult::Deleted(v) => {}
-    //             // println!("Key = {}, v = {} deleted", key, v),
+    //         CRUDOperationResult::Deleted(v) =>
+    //             println!("Key = {}, v = {} deleted", key, v),
     //         _ => println!("Error delete key = {}", key)
+    //     }
+    // }
+    // for key in 0u64..1_000 {
+    //     println!("Verified key = {key}");
+    //     if key == 999 {
+    //         let s = "3123".to_string();
+    //     }
+    //     let r = tree
+    //         .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
+    //     if let CRUDOperationResult::MatchedRecords(v) = r {
+    //         if v.last().unwrap().key != key {
+    //             println!("ERR")
+    //         }
     //     }
     // }
     //
@@ -85,6 +100,7 @@ fn main() {
     //         err => panic!("Point failed: {}, key = {}", err, key)
     //     }
     // }
+    // println!("Height = {}", tree.root.unsafe_borrow().height);
     //
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);

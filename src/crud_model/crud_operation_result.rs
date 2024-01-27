@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use crate::record_model::record_point::RecordPoint;
+use crate::record_model::record_point::{RecordPoint, RecordPointResult};
 use crate::crud_model::crud_operation_result::CRUDOperationResult::{Deleted, Inserted, MatchedRecords, Updated};
 use crate::record_model::version_info::{Version, VersionInfo};
 
@@ -14,7 +14,7 @@ use crate::record_model::version_info::{Version, VersionInfo};
 /// matches is held.
 #[derive(Default)]
 pub enum CRUDOperationResult<Key: Ord + Hash + Copy + Default> {
-    MatchedRecords(Vec<RecordPoint<Key>>),
+    MatchedRecords(Vec<RecordPointResult<Key>>),
     Inserted(Version),
     Updated(Version),
     Deleted(Version),
@@ -46,11 +46,9 @@ impl<Key: Display + Ord + Hash + Copy + Default> Display for CRUDOperationResult
     }
 }
 
-/// Sugar implementation, wrapping collection of records to a TransactionResult.
-impl<Key: Ord + Hash + Copy + Default> Into<CRUDOperationResult<Key>>
-for
-Vec<RecordPoint<Key>> {
-    fn into(self) -> CRUDOperationResult<Key> {
-        MatchedRecords(self)
+/// Sugar implementation, wrapping collection of records to a RecordPointResult.
+impl<Key: Ord + Hash + Copy + Default> Into<RecordPointResult<Key>> for RecordPoint<Key> {
+    fn into(self) -> RecordPointResult<Key> {
+        RecordPointResult::from(&self)
     }
 }

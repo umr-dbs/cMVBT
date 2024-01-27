@@ -1,10 +1,11 @@
 use std::fmt::Pointer;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::mem;
+use std::{mem, ptr};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU16, fence};
 use std::sync::atomic::Ordering::{Acquire, Release};
+use itertools::Itertools;
 use crate::page_model::BlockRef;
 use crate::record_model::version_info::Version;
 use crate::utils::interval::Interval;
@@ -12,6 +13,31 @@ use crate::utils::interval::Interval;
 type Len = AtomicU16;
 
 const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
+
+pub trait TimeMatcher {
+    fn match_version(self, other: Version) -> bool;
+
+    fn is_obsolete(&self) -> bool;
+
+    fn is_active(&self) -> bool;
+}
+
+impl TimeMatcher for Version {
+    #[inline(always)]
+    fn match_version(self, other: Version) -> bool {
+        self & !OBSOLETE_VERSION_MARK <= other
+    }
+
+    #[inline(always)]
+    fn is_obsolete(&self) -> bool {
+        *self & OBSOLETE_VERSION_MARK != 0
+    }
+
+    #[inline(always)]
+    fn is_active(&self) -> bool {
+        *self & OBSOLETE_VERSION_MARK == 0
+    }
+}
 
 // #[repr(align(16))]
 pub struct InternalPage<
@@ -150,8 +176,23 @@ impl<const FAN_OUT: usize,
     //     }
     // }
 
+    #[inline(always)]
+    pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
+        let children = self
+            .children()
+            .iter()
+            .map(|c| ptr::read(c))
+            .collect_vec();
+
+        debug_assert!(children.len() == 1);
+
+        self.len.store(0, Release);
+        self.bulk_push(entries);
+        mem::drop(children);
+    }
+
     #[inline]
-    pub fn bulk_push(&mut self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
+    pub fn bulk_push(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
         let len
             = self.len();
 
@@ -161,20 +202,20 @@ impl<const FAN_OUT: usize,
         entries.into_iter()
             .enumerate()
             .for_each(|(index, ((key, version), pointer))| unsafe {
-                self.key_interval_region
-                    .as_mut_ptr()
+                (self.key_interval_region
+                    .as_ptr() as *mut Interval<Key>)
                     .add(index + len)
-                    .write(MaybeUninit::new(key.clone()));
+                    .write(key.clone());
 
-                self.version_region
-                    .as_mut_ptr()
+                (self.version_region
+                    .as_ptr() as *mut Version)
                     .add(index + len)
-                    .write(MaybeUninit::new(*version));
+                    .write(*version);
 
-                self.pointer_region
-                    .as_mut_ptr()
+                (self.pointer_region
+                    .as_ptr() as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>)
                     .add(index + len)
-                    .write(MaybeUninit::new(pointer.clone()));
+                    .write(pointer.clone());
             });
 
         self.len.store(len as u16 + add as u16, Release)
@@ -295,7 +336,7 @@ impl<const FAN_OUT: usize,
     pub fn active_count(&self) -> usize {
         unsafe {
             self.versions().iter().fold(0, |c, next|
-                if Self::is_active(*next) { c + 1 } else { c })
+                if next.is_active() { c + 1 } else { c })
         }
     }
 
@@ -304,7 +345,7 @@ impl<const FAN_OUT: usize,
         self.versions()
             .iter()
             .fold((0, 0), |(active, dead), next_version|
-                match Self::is_obsolete(*next_version) {
+                match next_version.is_obsolete() {
                     true => (active, dead + 1),
                     false => (active + 1, dead)
                 })
@@ -314,19 +355,19 @@ impl<const FAN_OUT: usize,
     pub fn obsolete_count(&self) -> usize {
         unsafe {
             self.versions().iter().fold(0, |c, next|
-                if Self::is_obsolete(*next) { c + 1 } else { c })
+                if next.is_obsolete() { c + 1 } else { c })
         }
     }
 
-    #[inline(always)]
-    pub const fn is_obsolete(version: Version) -> bool {
-        version & OBSOLETE_VERSION_MARK != 0
-    }
+    // #[inline(always)]
+    // pub const fn is_obsolete(version: Version) -> bool {
+    //     version & OBSOLETE_VERSION_MARK != 0
+    // }
 
-    #[inline(always)]
-    pub const fn is_active(version: Version) -> bool {
-        version & OBSOLETE_VERSION_MARK == 0
-    }
+    // #[inline(always)]
+    // pub const fn is_active(version: Version) -> bool {
+    //     version & OBSOLETE_VERSION_MARK == 0
+    // }
 
     #[inline(always)]
     pub fn mark_version_obsolete(&mut self, index: usize) {

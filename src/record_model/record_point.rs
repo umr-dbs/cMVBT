@@ -18,6 +18,36 @@ pub struct RecordPoint<Key: Ord + Copy + Hash + Default> {
     pub payload: ManuallyDrop<Payload>,
 }
 
+pub struct RecordPointResult<Key: Ord + Copy + Hash + Default> {
+    pub key: Key,
+    pub payload: ManuallyDrop<Payload>,
+}
+
+impl<Key: Ord + Copy + Hash + Default> RecordPointResult<Key> {
+    #[inline]
+    pub fn from(r: &RecordPoint<Key>) -> Self {
+        Self {
+            key: r.key(),
+            payload: r.payload.clone()
+        }
+    }
+}
+
+impl<Key: Ord + Copy + Hash + Default> Drop for RecordPointResult<Key> {
+    fn drop(&mut self) {
+        unsafe {
+            let size = (self.payload.deref().deref() as *const u8 as *const usize)
+                .read();
+
+            let layout = Layout::from_size_align_unchecked(
+                size + mem::size_of::<usize>(),
+                mem::align_of::<u8>());
+
+            alloc::dealloc(self.payload.deref_mut().deref_mut(), layout);
+        }
+    }
+}
+
 impl<Key: Ord + Copy + Hash + Default> Clone for RecordPoint<Key> {
     fn clone(&self) -> Self {
         Self {
@@ -104,7 +134,7 @@ for RecordPoint<Key> {
     }
 }
 
-fn read_payload(payload: &Payload) -> &str {
+fn read_payload(payload: &Payload) -> &[u8]{
     unsafe {
         let size = (payload.deref() as *const _ as *const usize)
             .read();
@@ -118,9 +148,16 @@ fn read_payload(payload: &Payload) -> &str {
 impl<Key: Display + Ord + Copy + Hash + Default> Display
 for RecordPoint<Key> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let payload_str = read_payload(self.payload());
         write!(f, "RecordPoint(Key: {}, Version: {})",
                self.key(),
                self.version())
+    }
+}
+
+
+impl<Key: Display + Ord + Copy + Hash + Default> Display
+for RecordPointResult<Key> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RecordPointResult(Key: {})", self.key)
     }
 }

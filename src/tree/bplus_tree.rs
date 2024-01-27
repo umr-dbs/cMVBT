@@ -9,7 +9,7 @@ use crate::block::block::{Block, BlockGuard, BlockSplit};
 use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
-use crate::page_model::internal_page::InternalPage;
+use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
 use crate::tree::global_clock::GlobalClock;
@@ -233,8 +233,7 @@ impl<const FAN_OUT: usize,
             .zip(mufasa_internal_page.keys())
             .filter(|(((index, ..), ..), ..)|
                 *index != simba_index)
-            .filter(|((.., version), ..)|
-                InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+            .filter(|((.., version), ..)| version.is_active())
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
                 (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
@@ -246,8 +245,13 @@ impl<const FAN_OUT: usize,
             candidate_active_count,
             candidate_fence
         ) = match all_candidates.binary_search_by_key(&simba_fence.lower, |(.., f)| f.lower) {
-            Err(index) => all_candidates.remove(index),
-            _ => unreachable!("Merger found overlap in active sibling!"),
+            Err(index)  => if index < all_candidates.len() {
+                all_candidates.remove(index)
+            }
+            else {
+                all_candidates.remove(index - 1)
+            },
+            Ok(index) => all_candidates.remove(index),
         };
 
         all_candidates.clear();
@@ -272,13 +276,11 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions)
                         .zip(pointers)
-                        .filter(|((.., version), ..)|
-                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version))
+                        .filter(|((.., version), ..)| version.is_active())
                         .merge_by(c_keys.iter()
                                       .zip(c_versions)
                                       .zip(c_pointers)
-                                      .filter(|((.., version), ..)|
-                                          InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**version)),
+                                      .filter(|((.., version), ..)| version.is_active()),
                                   |(((.., v0), ..)), (((.., v1), ..))| v0 <= v1)
                         .into_iter()
                         .collect_vec();
@@ -393,13 +395,11 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(c_versions)
                         .zip(c_children)
-                        .filter(|((.., v), ..)|
-                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .filter(|((.., v), ..)| v.is_active())
                         .merge_by(s_keys.iter()
                                       .zip(s_version)
                                       .zip(s_children)
-                                      .filter(|((.., v), ..)|
-                                          InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v)),
+                                      .filter(|((.., v), ..)| v.is_active()),
                                   |((f, ..), ..), ((s, ..), ..)|
                                       f.lower < s.lower)
                         .collect_vec();
@@ -518,8 +518,7 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions.iter())
                         .zip(pointers.iter())
-                        .filter(|((.., v), ..)|
-                            InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .filter(|((.., v), ..)| v.is_active())
                         .sorted_by_key(|((i, ..), ..)| *i)
                         .collect_vec();
 
@@ -583,7 +582,7 @@ impl<const FAN_OUT: usize,
                         .iter()
                         .zip(versions.iter())
                         .zip(pointers.iter())
-                        .filter(|((.., v), ..)| InternalPage::<FAN_OUT, NUM_RECORDS, Key>::is_active(**v))
+                        .filter(|((.., v), ..)| v.is_active())
                         .collect_vec();
 
                     debug_assert!(!active_entries.is_empty());

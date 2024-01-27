@@ -5,8 +5,10 @@ use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
+use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::node::Node;
-use crate::record_model::version_info::{TimeMatcher, Version};
+use crate::record_model::record_point::RecordPointResult;
+use crate::record_model::version_info::Version;
 use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
@@ -24,7 +26,7 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_anker.unsafe_borrow();
 
-            if root_item.version() <= lookup_version {
+            if root_item.version().match_version(lookup_version) {
                 break root_anker;
             } else {
                 root_anker = match root_item.prev.as_ref() {
@@ -136,7 +138,7 @@ impl<const FAN_OUT: usize,
             .find(|r| r.key() == key)
         {
             None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
-            Some(result) => CRUDOperationResult::MatchedRecords(vec![result.clone()])
+            Some(result) => CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
         }
     }
 
@@ -170,7 +172,8 @@ impl<const FAN_OUT: usize,
                 .skip_while(|r| !r.version().matches(version))
                 .take_while(|r| r.version().matches(version))
                 .filter(|r| range.contains(r.key()))
-                .cloned()
+                // .cloned()
+                .map(|r| RecordPointResult::from(r))
                 .collect::<Vec<_>>())
             .flatten()
             .collect())
@@ -214,7 +217,7 @@ impl<const FAN_OUT: usize,
         &self,
         mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        height: Height,
+        mut height: Height,
     ) -> (RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
@@ -297,10 +300,46 @@ impl<const FAN_OUT: usize,
 
                 (height + 1, master_guard.deref_mut().unwrap().block())
             }
-            BlockSplit::ByVersion(new_root_block) => {
+            BlockSplit::ByVersion(new_root_block) => unsafe {
                 let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
                     self.root.unsafe_borrow().deep_clone(self.locking_strategy().latch_type()));
+
+                let new_root_block_mut
+                    = new_root_block.unsafe_borrow_mut();
+
+                let root_can_shrink
+                    = !new_root_block_mut.is_leaf() && new_root_block_mut.active_count() == 1;
+
+                let old_root
+                    = self.root.unsafe_borrow_mut();
+
+                if root_can_shrink {
+                    let new_root_internal_page
+                        = new_root_block_mut.as_internal_page();
+
+                    let (key_intervals,
+                        versions,
+                        pointers
+                    ) = new_root_internal_page
+                        .get_pointer(0)
+                        .unsafe_borrow()
+                        .as_internal_page_ref()
+                        .keys_versions_pointers();
+
+                    let active_entries = key_intervals
+                        .iter()
+                        .zip(versions)
+                        .zip(pointers)
+                        .filter(|((.., v), ..)| v.is_active())
+                        .collect_vec();
+
+                    new_root_internal_page
+                        .override_clone(active_entries);
+                } else {
+                    height += 1;
+                    old_root.root.height = height;
+                }
 
                 let mut commit_handle
                     = self.begin_commit();
@@ -320,25 +359,18 @@ impl<const FAN_OUT: usize,
                     }
                 };
 
-                let old_root
-                    = self.root.unsafe_borrow_mut();
+                old_root.prev
+                    = Some(copy_root);
 
                 old_root.root.version
                     = committed;
 
-                old_root.root.height
-                    = height + 1;
-
-                old_root.prev
-                    = Some(copy_root);
-
                 *old_root.root.block.unsafe_borrow_mut()
-                    = mem::take(new_root_block.unsafe_borrow_mut());
+                    = mem::take(new_root_block_mut);
 
                 (height, master_guard.deref_mut().unwrap().block())
             }
         };
-
 
         (master_guard, root_block, root_guard, height)
     }
@@ -585,10 +617,10 @@ impl<const FAN_OUT: usize,
 
         match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
             MergeResult::Merged(
-                   index_sibling,
-                   fence_sibling,
-                   merged_block,
-                   _candidate_guard
+                index_sibling,
+                fence_sibling,
+                merged_block,
+                _candidate_guard
             ) => {
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
@@ -643,12 +675,12 @@ impl<const FAN_OUT: usize,
                 mufasa
             }
             MergeResult::KeySplit(
-                   index_sibling,
-                   BlockSplit::ByKey(left_interval,
-                                     left,
-                                     right_interval,
-                                     right),
-                   _candidate_guard
+                index_sibling,
+                BlockSplit::ByKey(left_interval,
+                                  left,
+                                  right_interval,
+                                  right),
+                _candidate_guard
             ) => {
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
