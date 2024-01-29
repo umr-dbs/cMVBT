@@ -105,6 +105,7 @@ impl<const FAN_OUT: usize,
                             .rev())
                         .skip_while(|((.., v), ..)| !v.match_version(version))
                         .filter(|(.., range)| lookup_range.overlap(range))
+                        .unique_by(|(.., range)| range.lower())
                         .map(|((pos, ..), ..)| internal_page
                             .get_pointer(pos)
                             .clone())

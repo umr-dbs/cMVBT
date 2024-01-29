@@ -14,6 +14,7 @@ use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
+use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
 mod block;
@@ -47,31 +48,36 @@ fn main() {
     assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
 
 
-    // let tree
-    //     = MVTree::orwc();
-    //
-    let insertions = 10_000_000_u64;
-    // let mut last_insert_version = Version::MIN;
-    // let mut version_inserts = vec![];
-    // //
-    // for key in 0u64..insertions {
-    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             last_insert_version = ver;
-    //             version_inserts.push(ver);
-    //             // println!("Inserted at version {}", ver);
-    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
-    //                 CRUDOperationResult::MatchedRecords(found)
-    //                 if found.last().unwrap().key ==  key => {}
-    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //                 err => println!("Err at insertion {}", err),
-    //             }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
-    //
-    //
+    let tree
+        = MVTree::orwc();
+
+    let insertions = 10_000_u64;
+    let mut last_insert_version = Version::MIN;
+    let mut version_inserts = vec![];
+
+    for key in 0u64..insertions {
+        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+            CRUDOperationResult::Inserted(ver) => {
+                last_insert_version = ver;
+                version_inserts.push(ver);
+                // println!("Inserted at version {}", ver);
+                match tree.dispatch(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found)
+                    if found.last().unwrap().key ==  key => {}
+                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
+            err => println!("Err at insertion {}", err),
+        }
+    }
+
+    match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+        CRUDOperationResult::MatchedRecords(v) =>
+            println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+        _ => println!("Error Range")
+    }
+
     // for key in 0u64..insertions{
     //     match tree.dispatch(CRUDOperation::Delete(key)) {
     //         CRUDOperationResult::Deleted(v) =>
@@ -101,29 +107,29 @@ fn main() {
     //     }
     // }
     // println!("Height = {}", tree.root.unsafe_borrow().height);
-    //
+
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
 
-    let insertions = (0u64..insertions)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()))
-        .collect_vec();
-
-    let tree
-        = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
-
-    let (time, errors) = test::bulk_crud(
-        num_cpus::get(),
-        tree.clone(),
-        insertions.as_slice());
-
-    println!("Concurrency Control: {}\nClock-Type: {}\nInsertions = {}\nThreads = {}\nTime = {}\nErrors = {}",
-             tree.as_index().locking_strategy,
-             tree.as_index().clock_type(),
-             format_insertions(insertions.len()),
-             num_cpus::get(),
-             time,
-             errors);
+    // let insertions = (0u64..insertions)
+    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
+    //     .collect_vec();
+    //
+    // let tree
+    //     = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
+    //
+    // let (time, errors) = test::bulk_crud(
+    //     num_cpus::get(),
+    //     tree.clone(),
+    //     insertions.as_slice());
+    //
+    // println!("Concurrency Control: {}\nClock-Type: {}\nInsertions = {}\nThreads = {}\nTime = {}\nErrors = {}",
+    //          tree.as_index().locking_strategy,
+    //          tree.as_index().clock_type(),
+    //          format_insertions(insertions.len()),
+    //          num_cpus::get(),
+    //          time,
+    //          errors);
 }
 
 /// Essential function.
