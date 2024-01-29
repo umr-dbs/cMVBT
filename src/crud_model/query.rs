@@ -274,8 +274,8 @@ impl<const FAN_OUT: usize,
                         },
                         Ok(commit) => break commit,
                         Err(opt) => {
-                            sched_yield(commit_attempts);
                             commit_attempts += 1;
+                            sched_yield(commit_attempts);
                             commit_handle = opt
                         }
                     }
@@ -561,6 +561,7 @@ impl<const FAN_OUT: usize,
                         }
                         Ok(..) => break,
                         Err(opt) => {
+                            commit_attempts += 1;
                             sched_yield(commit_attempts);
                             commit_handle = opt
                         }
@@ -592,6 +593,7 @@ impl<const FAN_OUT: usize,
                         }
                         Ok(..) => break,
                         Err(opt) => {
+                            commit_attempts += 1;
                             sched_yield(commit_attempts);
                             commit_handle = opt
                         }
@@ -656,8 +658,8 @@ impl<const FAN_OUT: usize,
                         }
                         Ok(..) => break,
                         Err(opt) => {
-                            sched_yield(commit_attempts);
                             commit_attempts += 1;
+                            sched_yield(commit_attempts);
                             commit_handle = opt
                         }
                     }
@@ -719,8 +721,8 @@ impl<const FAN_OUT: usize,
                         }
                         Ok(..) => break,
                         Err(opt) => {
-                            sched_yield(commit_attempts);
                             commit_attempts += 1;
+                            sched_yield(commit_attempts);
                             commit_handle = opt
                         }
                     }
