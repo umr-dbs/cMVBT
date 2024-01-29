@@ -4,12 +4,10 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tx_model::transaction::{Transaction, TXState};
 
-impl<Key: Ord + Copy + Hash + Default + 'static> Transaction<Key> {
-    pub fn dispatch_loop<
-        const FAN_OUT: usize,
-        const NUM_RECORDS: usize>(
+impl<Key: Ord + Copy + Hash + Default> Transaction<Key> {
+    pub fn dispatch_loop(
         &mut self,
-        index: BPlusTree<FAN_OUT, NUM_RECORDS, Key>
+        index: &impl CRUDDispatcher<Key>
     ) {
         if let TXState::Waiting = self.state {
             self.state = TXState::Running;
@@ -24,7 +22,6 @@ impl<Key: Ord + Copy + Hash + Default + 'static> Transaction<Key> {
                     res => self.result.push(res),
                 }
             }
-
 
             self.state = TXState::Completed
         }
