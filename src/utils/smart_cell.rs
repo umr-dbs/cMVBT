@@ -100,7 +100,7 @@ pub const FORCE_YIELD: Attempts = 4;
 
 #[inline(always)]
 #[cfg(not(target_os = "linux"))]
-pub fn sched_yield(attempt: usize) {
+pub fn sched_yield(attempt: Attempts) {
     if attempt > 3 {
         std::thread::yield_now();
     } else {
