@@ -3,12 +3,23 @@ use parking_lot::{Mutex, RawMutex};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::Ordering::Relaxed;
 use crate::record_model::version_info::{AtomicVersion, Version};
+use crate::tree::version_manager::VersionManager;
 use crate::utils::safe_cell::SafeCell;
 
 pub(crate) enum GlobalClock {
     Locked(Mutex<Version>),
     Atomic(AtomicVersion),
     Free(SafeCell<Version>)
+}
+
+impl Clone for GlobalClock {
+    fn clone(&self) -> Self {
+        match self {
+            GlobalClock::Locked(_) => Self::Locked(Mutex::new(VersionManager::START_VERSION)),
+            GlobalClock::Atomic(_) => Self::Atomic(AtomicVersion::new(VersionManager::START_VERSION)),
+            GlobalClock::Free(_) => Self::Free(SafeCell::new(VersionManager::START_VERSION))
+        }
+    }
 }
 
 /// Holds Version Commit Clock atomic strategy, either locked in multi-threaded or

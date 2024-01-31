@@ -2,17 +2,20 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Div;
+use std::sync::Arc;
 use std::thread::spawn;
 use std::time::SystemTime;
 use itertools::Itertools;
-use rand::Rng;
+use rand::prelude::SliceRandom;
+use rand::{Rng, thread_rng};
 use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::bplus_tree::BPlusTree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::Tree;
+use crate::{mk_payload, MVTree, test, Tree};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::record_model::version_info::Version;
 use crate::tree::locking_strategy::LockingStrategy;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
@@ -46,7 +49,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
 
 #[inline(always)]
-pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
+pub fn bulk_crud(worker_threads: usize, tree: Arc<MVTree>, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -91,6 +94,55 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
         = SystemTime::now().duration_since(start).unwrap();
 
     (time_elapsed.as_millis(), errs)
+}
+
+pub fn test01(mut tree: Arc<MVTree>) {
+    let protocol = tree.locking_strategy().clone();
+    const EVENT_COUNT: u64
+        = 10_000_000;
+
+    let insertions = (1u64..=EVENT_COUNT)
+        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .collect_vec();
+
+    for threads in 1..=num_cpus::get() {
+        let (time, errors) = bulk_crud(
+            threads,
+            tree.clone(),
+            insertions.as_slice());
+
+        println!("{EVENT_COUNT},{threads},{protocol},{errors},{time},{EVENT_COUNT},0");
+        tree = Arc::new(tree.as_ref().make_empty_copy());
+    }
+}
+
+pub fn test02(mut tree: Arc<MVTree>) {
+    const EVENT_COUNT: u64
+    = 3_000_000;
+
+    const READER_COUNT: u64
+    = 7_000_000;
+    let protocol = tree.locking_strategy().clone();
+    let total = EVENT_COUNT + READER_COUNT;
+    let mut crud = (1u64..=EVENT_COUNT)
+        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .collect_vec();
+
+    crud.extend((1u64..=READER_COUNT)
+        .map(|key| CRUDOperation::Point(key, Version::MAX)));
+
+    crud.shuffle(&mut thread_rng());
+
+    for threads in 1..=num_cpus::get() {
+        let (time, errors) = bulk_crud(
+            threads,
+            tree.clone(),
+            crud.as_slice());
+
+        println!("{total},{threads},{protocol},{errors},{time},{EVENT_COUNT},{READER_COUNT}");
+
+        tree = Arc::new(tree.as_ref().make_empty_copy());
+    }
 }
 
 pub fn format_insertions(i: usize) -> String {

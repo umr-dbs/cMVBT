@@ -7,6 +7,7 @@ use crate::tree::global_clock::{ClockHandle, GlobalClock};
 use crate::utils::safe_cell::SafeCell;
 
 /// Structure wrapping the VC counter via a FairMutex.
+#[derive(Clone)]
 pub struct VersionManager {
     pub committed_version: GlobalClock,
 }

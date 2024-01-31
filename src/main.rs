@@ -11,7 +11,7 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::record_model::version_info::Version;
-use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX};
+use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::bplus_tree::BPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
 use crate::utils::interval::Interval;
@@ -33,50 +33,66 @@ pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
         TreeDispatcher::Ref(MAKE_INDEX(crud))
     })
 };
+
 fn mk_payload() -> Box<u8> {
     unsafe {
         mem::transmute(Box::leak(Box::new(0_usize)))
     }
 }
 
+pub const FAN_OUT: usize = 125;
+// const FAN_OUT: usize = 70;
+pub const NUMBER_RECORDS: usize = 125;
+
+pub type MVTree = BPlusTree::<FAN_OUT, NUMBER_RECORDS, u64>;
+
 fn main() {
     make_splash();
-    const FAN_OUT: usize = 127; // const FAN_OUT: usize = 70;
-    const NUMBER_RECORDS: usize = 127;
-    type MVTree = BPlusTree::<FAN_OUT, NUMBER_RECORDS, u64>;
 
-    assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
+    let trees = vec![
+        Arc::new(MVTree::orwc_optimistic_clock()),
+        Arc::new(MVTree::lhl_optimistic_clock()),
+        Arc::new(MVTree::olc_optimistic_clock()),
+    ];
 
-
-    let tree
-        = MVTree::orwc();
-
-    let insertions = 10_000_u64;
-    let mut last_insert_version = Version::MIN;
-    let mut version_inserts = vec![];
-
-    for key in 0u64..insertions {
-        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-            CRUDOperationResult::Inserted(ver) => {
-                last_insert_version = ver;
-                version_inserts.push(ver);
-                // println!("Inserted at version {}", ver);
-                match tree.dispatch(CRUDOperation::Point(key, ver)) {
-                    CRUDOperationResult::MatchedRecords(found)
-                    if found.last().unwrap().key ==  key => {}
-                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-                    err => println!("Err at insertion {}", err),
-                }
-            }
-            err => println!("Err at insertion {}", err),
-        }
+    println!("Records,Threads,Protocol,Errors,Time,Inserts,Reads");
+    for tree in trees.into_iter() {
+        test01(tree.clone());
+        test02(tree.clone());
     }
 
-    match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-        CRUDOperationResult::MatchedRecords(v) =>
-            println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-        _ => println!("Error Range")
-    }
+    // assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
+    //
+    //
+    // let tree
+    //     = MVTree::orwc();
+    //
+    // let insertions = 10_000_u64;
+    // let mut last_insert_version = Version::MIN;
+    // let mut version_inserts = vec![];
+    //
+    // for key in 0u64..insertions {
+    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+    //         CRUDOperationResult::Inserted(ver) => {
+    //             last_insert_version = ver;
+    //             version_inserts.push(ver);
+    //             // println!("Inserted at version {}", ver);
+    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
+    //                 CRUDOperationResult::MatchedRecords(found)
+    //                 if found.last().unwrap().key ==  key => {}
+    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+    //                 err => println!("Err at insertion {}", err),
+    //             }
+    //         }
+    //         err => println!("Err at insertion {}", err),
+    //     }
+    // }
+    //
+    // match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+    //     CRUDOperationResult::MatchedRecords(v) =>
+    //         println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+    //     _ => println!("Error Range")
+    // }
 
     // for key in 0u64..insertions{
     //     match tree.dispatch(CRUDOperation::Delete(key)) {
@@ -144,7 +160,7 @@ fn make_splash() {
     println!(" |                                                                       |");
     println!(" |               ------------------------------                          |");
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
-    println!(" |               # Current version: {}                                |", env!("CARGO_PKG_VERSION"));
+    println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
     println!(" |               -------------------------                               |");
     println!(" |               # OLC-HLE:   {}                                     |", hle());
     println!(" |               # RW-HLE:    AUTO                                       |");
@@ -205,7 +221,7 @@ pub fn hle() -> &'static str {
         if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
             "ON    "
         } else {
-            "NO HTL"
+            "NO HLE"
         }
     } else {
         "OFF   "

@@ -811,4 +811,22 @@ impl<const FAN_OUT: usize,
     pub const fn locking_strategy(&self) -> &LockingStrategy {
         &self.locking_strategy
     }
+
+    pub fn make_empty_copy(&self) -> Self {
+        Self {
+            root: UnCell::new(Self::make_root_item(
+                self.locking_strategy(),
+                &self.block_manager,
+                VersionManager::START_VERSION,
+                INIT_TREE_HEIGHT,
+                None)),
+            locking_strategy: self.locking_strategy.clone(),
+            block_manager: self.block_manager.clone(),
+            version_manager: self.version_manager.clone(),
+            inc_key: self.inc_key,
+            dec_key: self.dec_key,
+            min_key: self.min_key,
+            max_key: self.max_key,
+        }
+    }
 }
