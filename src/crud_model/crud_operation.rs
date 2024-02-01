@@ -19,7 +19,10 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash> {
 
     // Readers
     Point(Key, Version),
+    PointSi(Key),
+
     Range(Interval<Key>, Version),
+    RangeSi(Interval<Key>)
     // TimeTravel(Interval<Version>, Interval<Key>)
 }
 
@@ -41,6 +44,10 @@ impl<Key: Display + Ord + Copy + Hash> Display for CRUDOperation<Key> {
             Range(key, version) =>
                 write!(f, "Range(Keys: [{}, {}], version: {})", key.lower(), key.upper(), version),
             Empty => write!(f, "Empty"),
+            CRUDOperation::PointSi(key) =>
+                write!(f, "Point(Key: {}, version: Si)", key),
+            CRUDOperation::RangeSi(key) =>
+                write!(f, "Range(Keys: [{}, {}], version: Si)", key.lower(), key.upper()),
         }
     }
 }

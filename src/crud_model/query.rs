@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
-use crate::page_model::internal_page::{InternalPage, TimeMatcher};
+use crate::page_model::internal_page::TimeMatcher;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPointResult;
 use crate::record_model::version_info::Version;
@@ -143,13 +143,13 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn snapshot(&self, version: Version) -> CRUDOperationResult<Key> {
-        Self::key_range_read_from_root(
-            self.retrieve_root_for(version),
-            &Interval::new(self.min_key, self.max_key),
-            version)
-    }
+    // #[inline(always)]
+    // pub(crate) fn snapshot(&self, version: Version) -> CRUDOperationResult<Key> {
+    //     Self::key_range_read_from_root(
+    //         self.retrieve_root_for(version),
+    //         &Interval::new(self.min_key, self.max_key),
+    //         version)
+    // }
 
     #[inline]
     pub(crate) fn key_range_read_from_root(
