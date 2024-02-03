@@ -375,7 +375,7 @@ impl<const FAN_OUT: usize,
             let ptr
                 = self.version_region.as_mut_ptr().add(index) as *mut Version;
 
-            debug_assert_eq!(*ptr & OBSOLETE_VERSION_MARK, 0);
+            // debug_assert_eq!(*ptr & OBSOLETE_VERSION_MARK, 0);
 
             ptr.write(*ptr | OBSOLETE_VERSION_MARK);
         }

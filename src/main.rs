@@ -55,74 +55,78 @@ fn main() {
         Arc::new(MVTree::olc_optimistic_clock()),
     ];
 
-    println!("Records,Threads,Protocol,Errors,Time,Inserts,Reads");
-    for tree in trees.into_iter() {
-        test01(tree.clone());
-        test02(tree.clone());
+    // println!("Records,Threads,Protocol,Errors,Time,Inserts,Reads");
+    // for tree in trees.into_iter() {
+    //     test01(tree.clone());
+    //     test02(tree.clone());
+    // }
+
+    assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
+
+
+    let tree
+        = MVTree::orwc();
+
+    let insertions = 12040_u64;
+    let mut last_insert_version = Version::MIN;
+    let mut version_inserts = vec![];
+
+    for key in 0u64..insertions {
+        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+            CRUDOperationResult::Inserted(ver) => {
+                last_insert_version = ver;
+                version_inserts.push(ver);
+                // println!("Inserted at version {}", ver);
+                match tree.dispatch(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found)
+                    if found.last().unwrap().key == key => {}
+                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
+            err => println!("Err at insertion {}", err),
+        }
     }
 
-    // assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
-    //
-    //
-    // let tree
-    //     = MVTree::orwc();
-    //
-    // let insertions = 10_000_u64;
-    // let mut last_insert_version = Version::MIN;
-    // let mut version_inserts = vec![];
-    //
-    // for key in 0u64..insertions {
-    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             last_insert_version = ver;
-    //             version_inserts.push(ver);
-    //             // println!("Inserted at version {}", ver);
-    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
-    //                 CRUDOperationResult::MatchedRecords(found)
-    //                 if found.last().unwrap().key ==  key => {}
-    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //                 err => println!("Err at insertion {}", err),
-    //             }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
-    //
-    // match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-    //     CRUDOperationResult::MatchedRecords(v) =>
-    //         println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-    //     _ => println!("Error Range")
-    // }
+    match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+        CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
+            // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+        _ => println!("Error Range")
+    }
 
-    // for key in 0u64..insertions{
-    //     match tree.dispatch(CRUDOperation::Delete(key)) {
-    //         CRUDOperationResult::Deleted(v) =>
-    //             println!("Key = {}, v = {} deleted", key, v),
-    //         _ => println!("Error delete key = {}", key)
-    //     }
-    // }
-    // for key in 0u64..1_000 {
-    //     println!("Verified key = {key}");
-    //     if key == 999 {
-    //         let s = "3123".to_string();
-    //     }
-    //     let r = tree
-    //         .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
-    //     if let CRUDOperationResult::MatchedRecords(v) = r {
-    //         if v.last().unwrap().key != key {
-    //             println!("ERR")
-    //         }
-    //     }
-    // }
-    //
-    // for key in 0u64..insertions as u64 {
-    //     match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
-    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-    //             // println!("Found Point  {}", v.pop().unwrap()),
-    //         err => panic!("Point failed: {}, key = {}", err, key)
-    //     }
-    // }
-    // println!("Height = {}", tree.root.unsafe_borrow().height);
+    println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
+    for key in 0u64..insertions{
+        match tree.dispatch(CRUDOperation::Delete(key)) {
+            CRUDOperationResult::Deleted(v) => {}
+                // println!("Key = {}, v = {} deleted", key, v),
+            _ => println!("Error delete key = {}", key)
+        }
+    }
+    for key in 0u64..insertions {
+        // println!("Verified key = {key}");
+        let r = tree
+            .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
+        if let CRUDOperationResult::MatchedRecords(v) = r {
+            if v.last().unwrap().key != key {
+                println!("ERR")
+            }
+        }
+    }
+
+    for key in 0u64..insertions as u64 {
+        match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
+            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+                // println!("Found Point  {}", v.pop().unwrap()),
+            err => panic!("Point failed: {}, key = {}", err, key)
+        }
+    }
+
+    let (keys, versions) = tree.root.unsafe_borrow()
+        .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
+
+    println!("Keys Root = {}", keys.iter().zip(versions)
+        .map(|(k, v)| format!("{k}, v: {v}")).into_iter().join("\n"));
+    println!("Height = {}", tree.root.unsafe_borrow().height);
 
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);

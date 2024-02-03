@@ -10,8 +10,22 @@ use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPointResult;
 use crate::record_model::version_info::Version;
 use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
+use crate::tx_model::tx_api::IsolatedSnapShot;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
+
+pub struct RangeQueryIter<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static
+> {
+    isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>,
+    range: Interval<Key>,
+    curr: Option<BlockRef<FAN_OUT, NUM_RECORDS, Key>>,
+    buff: VecDeque<RecordPointResult<Key>>,
+}
+
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -150,6 +164,16 @@ impl<const FAN_OUT: usize,
     //         &Interval::new(self.min_key, self.max_key),
     //         version)
     // }
+
+    pub(crate) fn key_range_read_from_root_lazy(
+        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
+        range: &Interval<Key>,
+        version: Version)
+        -> CRUDOperationResult<Key>
+    {
+        unimplemented!()
+    }
+
 
     #[inline]
     pub(crate) fn key_range_read_from_root(
@@ -316,27 +340,11 @@ impl<const FAN_OUT: usize,
                     = self.root.unsafe_borrow_mut();
 
                 if root_can_shrink {
-                    let new_root_internal_page
-                        = new_root_block_mut.as_internal_page();
-
-                    let (key_intervals,
-                        versions,
-                        pointers
-                    ) = new_root_internal_page
+                    *new_root_block_mut = new_root_block_mut
+                        .as_internal_page_ref()
                         .get_pointer(0)
                         .unsafe_borrow()
-                        .as_internal_page_ref()
-                        .keys_versions_pointers();
-
-                    let active_entries = key_intervals
-                        .iter()
-                        .zip(versions)
-                        .zip(pointers)
-                        .filter(|((.., v), ..)| v.is_active())
-                        .collect_vec();
-
-                    new_root_internal_page
-                        .override_clone(active_entries);
+                        .clone();
                 } else {
                     height += 1;
                     old_root.root.height = height;
@@ -569,7 +577,8 @@ impl<const FAN_OUT: usize,
                     }
                 }
 
-                internal_page.commit_until(current_len + 1)
+                internal_page.mark_version_obsolete(child_index);
+                internal_page.commit_until(current_len + 1);
             }
             BlockSplit::ByVersion(fresh) => {
                 let mut commit_handle
@@ -601,7 +610,8 @@ impl<const FAN_OUT: usize,
                     }
                 }
 
-                internal_page.commit_until(current_len)
+                internal_page.mark_version_obsolete(child_index);
+                internal_page.commit_until(current_len);
             }
         }
 

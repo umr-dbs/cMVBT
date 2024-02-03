@@ -25,6 +25,22 @@ pub struct IsolatedSnapShot<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
+    Key: Default + Hash + Copy + Ord> IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
+{
+    #[inline(always)]
+    pub const fn snapshot(&self) -> SnapShot {
+        self.0
+    }
+
+    #[inline(always)]
+    pub const fn mv_tree(&self) -> &BPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+        self.1
+    }
+}
+
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
     Key: Default + Hash + Copy + Ord + 'static> CRUDDispatcher<Key> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]

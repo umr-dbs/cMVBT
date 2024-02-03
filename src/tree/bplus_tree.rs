@@ -233,7 +233,7 @@ impl<const FAN_OUT: usize,
             .zip(mufasa_internal_page.keys())
             .filter(|(((index, ..), ..), ..)|
                 *index != simba_index)
-            .filter(|((.., version), ..)| version.is_active())
+            // .filter(|((.., version), ..)| version.is_active())
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
                 (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
