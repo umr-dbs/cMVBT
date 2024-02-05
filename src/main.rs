@@ -6,14 +6,16 @@ use chrono::{DateTime, Local};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use crate::block::block::Block;
-use crate::tree::bplus_tree;
+use crate::tree::mvbplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::crud_model::query::RangeQueryIter;
 use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
+use crate::tx_model::tx_api::IsolatedSnapShot;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
@@ -40,11 +42,9 @@ fn mk_payload() -> Box<u8> {
     }
 }
 
-pub const FAN_OUT: usize = 125;
-// const FAN_OUT: usize = 70;
-pub const NUMBER_RECORDS: usize = 125;
-
-pub type MVTree = BPlusTree::<FAN_OUT, NUMBER_RECORDS, u64>;
+const FAN_OUT: usize = test::FAN_OUT;
+const NUM_RECORDS: usize = test::NUM_RECORDS;
+pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
 
 fn main() {
     make_splash();
@@ -61,7 +61,7 @@ fn main() {
     //     test02(tree.clone());
     // }
 
-    assert!(mem::size_of::<Block<FAN_OUT, NUMBER_RECORDS, u64>>() <= 4096);
+    assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
 
 
     let tree
@@ -94,39 +94,46 @@ fn main() {
         _ => println!("Error Range")
     }
 
-    println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
-    for key in 0u64..insertions{
-        match tree.dispatch(CRUDOperation::Delete(key)) {
-            CRUDOperationResult::Deleted(v) => {}
-                // println!("Key = {}, v = {} deleted", key, v),
-            _ => println!("Error delete key = {}", key)
-        }
-    }
-    for key in 0u64..insertions {
-        // println!("Verified key = {key}");
-        let r = tree
-            .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
-        if let CRUDOperationResult::MatchedRecords(v) = r {
-            if v.last().unwrap().key != key {
-                println!("ERR")
-            }
-        }
-    }
+    let lazy_range = RangeQueryIter::new(
+        &tree,
+        last_insert_version,
+        Interval::new(0, 255));
 
-    for key in 0u64..insertions as u64 {
-        match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
-            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-                // println!("Found Point  {}", v.pop().unwrap()),
-            err => panic!("Point failed: {}, key = {}", err, key)
-        }
-    }
+    println!("Lazy Range = \n{}", lazy_range.into_iter().join("\n"));
 
-    let (keys, versions) = tree.root.unsafe_borrow()
-        .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
-
-    println!("Keys Root = {}", keys.iter().zip(versions)
-        .map(|(k, v)| format!("{k}, v: {v}")).into_iter().join("\n"));
-    println!("Height = {}", tree.root.unsafe_borrow().height);
+    // println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
+    // for key in 0u64..insertions{
+    //     match tree.dispatch(CRUDOperation::Delete(key)) {
+    //         CRUDOperationResult::Deleted(v) => {}
+    //             // println!("Key = {}, v = {} deleted", key, v),
+    //         _ => println!("Error delete key = {}", key)
+    //     }
+    // }
+    // for key in 0u64..insertions {
+    //     // println!("Verified key = {key}");
+    //     let r = tree
+    //         .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
+    //     if let CRUDOperationResult::MatchedRecords(v) = r {
+    //         if v.last().unwrap().key != key {
+    //             println!("ERR")
+    //         }
+    //     }
+    // }
+    //
+    // for key in 0u64..insertions as u64 {
+    //     match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
+    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+    //             // println!("Found Point  {}", v.pop().unwrap()),
+    //         err => panic!("Point failed: {}, key = {}", err, key)
+    //     }
+    // }
+    //
+    // let (keys, versions) = tree.root.unsafe_borrow()
+    //     .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
+    //
+    // println!("Keys Root = {}", keys.iter().zip(versions)
+    //     .map(|(k, v)| format!("{k}, v: {v}")).into_iter().join("\n"));
+    // println!("Height = {}", tree.root.unsafe_borrow().height);
 
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
@@ -194,15 +201,17 @@ pub enum TreeDispatcher {
     Ref(INDEX),
 }
 
-impl CRUDDispatcher<Key> for TreeDispatcher {
+impl<'a> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for TreeDispatcher {
     #[inline(always)]
-    fn dispatch(&self, crud: CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+    fn dispatch(&'a self, crud: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         match self {
             TreeDispatcher::Ref(inner) => inner.dispatch(crud),
-            TreeDispatcher::Wrapper(sync) => if crud.is_read() {
-                sync.read().dispatch(crud)
-            } else {
-                sync.write().dispatch(crud)
+            TreeDispatcher::Wrapper(sync) => unsafe {
+                if crud.is_read() {
+                    mem::transmute(sync.read().dispatch(crud))
+                } else {
+                    mem::transmute(sync.write().dispatch(crud))
+                }
             }
         }
     }

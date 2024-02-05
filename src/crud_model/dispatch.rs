@@ -1,20 +1,23 @@
 use std::hash::Hash;
 use std::fmt::Display;
+use std::mem;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
+use crate::crud_model::query::RangeQueryIter;
 use crate::record_model::record_point::RecordPoint;
 use crate::record_model::version_info::VersionInfo;
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::utils::smart_cell::sched_yield;
 
-impl<const FAN_OUT: usize,
+impl<'a,
+    const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static,
-> CRUDDispatcher<Key> for BPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn dispatch(&self, crud: CRUDOperation<Key>) -> CRUDOperationResult<Key> {
+    fn dispatch(&'a self, crud: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         let is_optimistic = self.locking_strategy
             .is_optimistic();
 
@@ -174,13 +177,18 @@ impl<const FAN_OUT: usize,
             }
             CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
                 self.retrieve_root_for(version),
-                &range,
+                range,
                 version),
             CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
                 self.retrieve_root_for(version),
                 key,
                 version),
-            _ => CRUDOperationResult::Error
+            CRUDOperation::RangeIter(key, version) =>
+                CRUDOperationResult::MatchedRecordIter(RangeQueryIter::new(
+                    self,
+                    version,
+                    key)),
+            _ => CRUDOperationResult::Error,
         }
     }
 }

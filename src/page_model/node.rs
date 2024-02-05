@@ -11,7 +11,7 @@ use crate::utils::interval::Interval;
 pub enum Node<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > {
     Index(InternalPage<FAN_OUT, NUM_RECORDS, Key>),
     Leaf(LeafPage<NUM_RECORDS, Key>),
@@ -19,7 +19,7 @@ pub enum Node<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Node<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     pub const fn is_leaf(&self) -> bool {
@@ -118,7 +118,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > AsRef<Node<FAN_OUT, NUM_RECORDS, Key>> for Node<FAN_OUT, NUM_RECORDS, Key> {
     fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key> {
         &self
@@ -127,7 +127,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Default for Node<FAN_OUT, NUM_RECORDS, Key> {
     fn default() -> Self {
         Self::Leaf(LeafPage::default())

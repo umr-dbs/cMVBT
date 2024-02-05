@@ -9,7 +9,7 @@ pub const LEVEL_ROOT: Height = 1;
 pub(crate) struct Root<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > {
     pub(crate) block: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
     pub(crate) version: Version,
@@ -19,12 +19,12 @@ pub(crate) struct Root<
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Send for Root<FAN_OUT, NUM_RECORDS, Key> { }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Display for Root<FAN_OUT, NUM_RECORDS, Key> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Root(height: {}, version: {})", self.height(), self.version)
@@ -34,12 +34,12 @@ impl<const FAN_OUT: usize,
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Sync for Root<FAN_OUT, NUM_RECORDS, Key> { }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Into<Root<FAN_OUT, NUM_RECORDS, Key>> for (BlockRef<FAN_OUT, NUM_RECORDS, Key>, Version, Height) {
     #[inline(always)]
     fn into(self) -> Root<FAN_OUT, NUM_RECORDS, Key> {
@@ -49,7 +49,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Root<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     pub(crate) fn new(block: BlockRef<FAN_OUT, NUM_RECORDS, Key>, version: Version, height: Height) -> Self {

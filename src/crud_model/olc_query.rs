@@ -1,15 +1,16 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::node::Node;
-use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, RootItemGuard};
+use crate::tree::mvbplus_tree::{MVBPlusTree, LockLevel, MAX_TREE_HEIGHT, RootItemGuard};
 use crate::utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
     pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {

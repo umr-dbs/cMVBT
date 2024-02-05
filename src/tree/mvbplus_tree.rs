@@ -45,7 +45,7 @@ impl Display for ClockType {
 pub(crate) struct RootItem<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > {
     pub(crate) root: Root<FAN_OUT, NUM_RECORDS, Key>,
     pub(crate) prev: Option<SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>>,
@@ -53,7 +53,7 @@ pub(crate) struct RootItem<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Deref for RootItem<FAN_OUT, NUM_RECORDS, Key> {
     type Target = Root<FAN_OUT, NUM_RECORDS, Key>;
 
@@ -64,7 +64,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > RootItem<FAN_OUT, NUM_RECORDS, Key> {
     pub(crate) fn deep_clone(&self, latch_type: LatchType) -> Self {
         Self {
@@ -91,10 +91,10 @@ pub(crate) type RootItemGuard<
     Key
 > = SmartGuard<'a, RootItem<FAN_OUT, NUM_RECORDS, Key>>;
 
-pub struct BPlusTree<
+pub struct MVBPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > {
     pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
     pub(crate) locking_strategy: LockingStrategy,
@@ -108,18 +108,18 @@ pub struct BPlusTree<
 
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
-> Sync for BPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
+    Key: Default + Ord + Copy + Hash + Display,
+> Sync for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
 
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
-> Send for BPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
+    Key: Default + Ord + Copy + Hash + Display
+> Send for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize
-> Default for BPlusTree<FAN_OUT, NUM_RECORDS, u64> {
+> Default for MVBPlusTree<FAN_OUT, NUM_RECORDS, u64> {
     fn default() -> Self {
         Self::standard()
     }
@@ -127,7 +127,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-> BPlusTree<FAN_OUT, NUM_RECORDS, u64>
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, u64>
 {
     #[inline]
     fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
@@ -187,7 +187,7 @@ pub(crate) enum MergeResult<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static,
+    Key: Default + Ord + Copy + Hash + 'static + Display,
 > {
     Merged(usize,
            Interval<Key>,
@@ -200,8 +200,8 @@ pub(crate) enum MergeResult<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static,
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     pub(crate) fn merge(
         &self,

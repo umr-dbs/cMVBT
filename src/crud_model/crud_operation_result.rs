@@ -1,7 +1,8 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, write};
 use std::hash::Hash;
 use crate::record_model::record_point::{RecordPoint, RecordPointResult};
-use crate::crud_model::crud_operation_result::CRUDOperationResult::{Deleted, Inserted, MatchedRecords, Updated};
+use crate::crud_model::crud_operation_result::CRUDOperationResult::{Deleted, Inserted, MatchedRecordIter, MatchedRecords, Updated};
+use crate::crud_model::query::RangeQueryIter;
 use crate::record_model::version_info::{Version, VersionInfo};
 
 /// Defines possible Transaction execution result.
@@ -13,8 +14,14 @@ use crate::record_model::version_info::{Version, VersionInfo};
 /// *MatchedRecords*, indicates that the Transaction executed was successful and the result of
 /// matches is held.
 #[derive(Default)]
-pub enum CRUDOperationResult<Key: Ord + Hash + Copy + Default> {
+pub enum CRUDOperationResult<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> {
     MatchedRecords(Vec<RecordPointResult<Key>>),
+    MatchedRecordIter(RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key>),
     Inserted(Version),
     Updated(Version),
     Deleted(Version),
@@ -24,7 +31,11 @@ pub enum CRUDOperationResult<Key: Ord + Hash + Copy + Default> {
 }
 
 /// Implements pretty printers for TransactionResult.
-impl<Key: Display + Ord + Hash + Copy + Default> Display for CRUDOperationResult<Key> {
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> Display for CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             CRUDOperationResult::Error =>
@@ -42,6 +53,11 @@ impl<Key: Display + Ord + Hash + Copy + Default> Display for CRUDOperationResult
                 write!(f, "Updated(version: {})", version),
             Deleted(version) =>
                 write!(f, "Deleted(version: {})", version),
+            MatchedRecordIter(iter) =>
+                write!(f, "RangeQueryIterator(low: {}, high: {}, version: {})",
+                       iter.range.lower(),
+                       iter.range.upper(),
+                       iter.isolated_snapshot.snapshot())
         }
     }
 }

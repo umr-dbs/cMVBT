@@ -7,7 +7,7 @@ pub type U64interval = Interval<u64>;
 // pub type VersionInterval = Interval<Version>;
 
 #[derive(Eq, PartialEq, Hash, Default, Clone)]
-pub struct Interval<E: Ord + Copy + Hash> {
+pub struct Interval<E: Ord + Copy + Hash + Display> {
     pub lower: E,
     pub upper: E,
 }
@@ -40,7 +40,7 @@ impl U64interval {
     }
 }
 
-impl<E: Ord + Copy + Hash> Interval<E> {
+impl<E: Ord + Copy + Hash + Display> Interval<E> {
     pub const fn new(lower: E, upper: E) -> Self {
         Self { lower, upper }
     }
@@ -147,13 +147,13 @@ impl<E: Ord + Copy + Hash> Interval<E> {
     }
 }
 
-impl<E: Ord + Copy + Hash> Into<Interval<E>> for (E, E) {
+impl<E: Ord + Copy + Hash + Display> Into<Interval<E>> for (E, E) {
     fn into(self) -> Interval<E> {
         Interval::new(self.0, self.1)
     }
 }
 
-impl<E: Ord + Copy + Hash> Into<Interval<E>> for RangeInclusive<E> {
+impl<E: Ord + Copy + Hash + Display> Into<Interval<E>> for RangeInclusive<E> {
     fn into(self) -> Interval<E> {
         Interval::new(*self.start(), *self.end())
     }
@@ -165,13 +165,13 @@ impl Into<U64interval> for Range<u64> {
     }
 }
 
-impl<E: Ord + Copy + Hash> PartialOrd<Self> for Interval<E> {
+impl<E: Ord + Copy + Hash + Display> PartialOrd<Self> for Interval<E> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.lower.partial_cmp(&other.lower)
     }
 }
 
-impl<E: Ord + Copy + Hash> Ord for Interval<E> {
+impl<E: Ord + Copy + Hash + Display> Ord for Interval<E> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.lower.cmp(&other.lower)
     }

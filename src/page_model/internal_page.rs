@@ -1,4 +1,4 @@
-use std::fmt::Pointer;
+use std::fmt::{Display, Pointer};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr};
@@ -43,7 +43,7 @@ impl TimeMatcher for Version {
 pub struct InternalPage<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > {
     len: Len,
     key_interval_region: [MaybeUninit<Interval<Key>>; FAN_OUT],
@@ -54,7 +54,7 @@ pub struct InternalPage<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Clone for InternalPage<FAN_OUT, NUM_RECORDS, Key> {
     fn clone(&self) -> Self {
         Self::from(self)
@@ -63,7 +63,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key>
 {
     fn drop(&mut self) {
@@ -78,7 +78,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > InternalPage<FAN_OUT, NUM_RECORDS, Key> {
     #[inline]
     pub fn from(from: &Self) -> Self {

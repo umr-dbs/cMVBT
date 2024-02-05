@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
@@ -42,7 +43,7 @@ impl BlockUnsafeDegree {
 pub(crate) enum BlockSplit<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash>
+    Key: Default + Ord + Copy + Hash + Display>
 {
     ByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
     ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>)
@@ -50,7 +51,7 @@ pub(crate) enum BlockSplit<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + Display> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
 {
 
 }
@@ -62,7 +63,7 @@ impl<const FAN_OUT: usize,
 pub struct Block<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + Display,
 > {
     // pub block_id: BlockID,
     pub node_data: Node<FAN_OUT, NUM_RECORDS, Key>,
@@ -70,7 +71,7 @@ pub struct Block<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + Display,
 > Default for Block<FAN_OUT, NUM_RECORDS, Key>
 {
     fn default() -> Self {
@@ -83,7 +84,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Block<FAN_OUT, NUM_RECORDS, Key>
 { // #[inline(always)]
     // pub const fn block_id(&self) -> BlockID {
@@ -172,7 +173,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Deref for Block<FAN_OUT, NUM_RECORDS, Key> {
     type Target = Node<FAN_OUT, NUM_RECORDS, Key>;
 
@@ -186,7 +187,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > DerefMut for Block<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -199,7 +200,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + Display,
 > AsRef<Node<FAN_OUT, NUM_RECORDS, Key>> for Block<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key> {
@@ -212,7 +213,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > AsMut<Node<FAN_OUT, NUM_RECORDS, Key>> for Block<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     fn as_mut(&mut self) -> &mut Node<FAN_OUT, NUM_RECORDS, Key> {
@@ -232,7 +233,7 @@ pub type BlockGuard<
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash,
+    Key: Default + Ord + Copy + Hash + Display,
 > BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key> {
 
 }

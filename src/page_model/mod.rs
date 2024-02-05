@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
 use parking_lot::lock_api::{Mutex, RwLock};
@@ -24,7 +25,7 @@ pub type BlockRef<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Hash + Copy
+    Key: Default + Ord + Hash + Copy + Display
 > Block<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
     pub fn into_rw(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {

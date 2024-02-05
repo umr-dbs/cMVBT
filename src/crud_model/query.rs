@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use itertools::Itertools;
@@ -9,7 +10,7 @@ use crate::page_model::internal_page::TimeMatcher;
 use crate::page_model::node::Node;
 use crate::record_model::record_point::RecordPointResult;
 use crate::record_model::version_info::Version;
-use crate::tree::bplus_tree::{BPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
+use crate::tree::mvbplus_tree::{MVBPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
 use crate::tx_model::tx_api::IsolatedSnapShot;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::sched_yield;
@@ -18,19 +19,108 @@ pub struct RangeQueryIter<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static
+    Key: Default + Ord + Copy + Hash + 'static + Display
 > {
-    isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>,
-    range: Interval<Key>,
-    curr: Option<BlockRef<FAN_OUT, NUM_RECORDS, Key>>,
+    pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) range: Interval<Key>,
+    path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>)>,
     buff: VecDeque<RecordPointResult<Key>>,
 }
 
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key> {
+    #[inline(always)]
+    pub const fn new(tree: &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>, version: Version, range: Interval<Key>) -> Self {
+        Self {
+            isolated_snapshot: IsolatedSnapShot(version, tree),
+            range,
+            path: vec![],
+            buff: VecDeque::new(),
+        }
+    }
+}
+
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> Iterator for RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key> {
+    type Item = RecordPointResult<Key>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.buff.is_empty() {
+            return self.buff.pop_front();
+        }
+
+        if self.range.lower > self.range.upper {
+            return None;
+        }
+
+        if self.path.is_empty() {
+            let smart_root = self
+                .isolated_snapshot
+                .mv_tree()
+                .retrieve_root_for(self.isolated_snapshot.snapshot());
+
+            self.path.push((
+                Interval::new(self.isolated_snapshot.mv_tree().min_key,
+                              self.isolated_snapshot.mv_tree().max_key),
+                smart_root.unsafe_borrow().block())
+            );
+        }
+
+        loop {
+            let (fence, block)
+                = self.path.last().unwrap();
+
+            match block.unsafe_borrow().as_ref() {
+                Node::Index(internal_page) => {
+                    let (keys_page, versions_page) = internal_page
+                        .keys_versions();
+
+                    self.path.push(versions_page
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .zip(keys_page
+                            .iter()
+                            .rev())
+                        .skip_while(|((.., v), ..)| !v.match_version(self.isolated_snapshot.snapshot()))
+                        .find(|(.., range)| range.contains(self.range.lower))
+                        .map(|((pos, ..), key)| (key.clone(), internal_page
+                            .get_pointer(pos)
+                            .clone()))
+                        .unwrap()
+                    );
+                }
+                Node::Leaf(leaf_page) => {
+                    self.buff.extend(leaf_page
+                        .as_records()
+                        .iter()
+                        .rev()
+                        .filter(|r| r.version().matches(self.isolated_snapshot.snapshot()))
+                        .filter(|r| self.range.contains(r.key()))
+                        .sorted_by_key(|r| r.key())
+                        .map(|r| RecordPointResult::from(r)));
+
+                    self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(fence.upper);
+                    self.path.pop();
+                    break;
+                }
+            }
+        }
+
+        self.buff.pop_front()
+    }
+}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     pub(crate) fn retrieve_root_for(&self, lookup_version: Version) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
         let mut root_anker
@@ -137,7 +227,7 @@ impl<const FAN_OUT: usize,
         root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
         key: Key,
         version: Version)
-        -> CRUDOperationResult<Key>
+        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
     {
         let leaf = Self::traverse_read_key(
             root.unsafe_borrow().block(),
@@ -165,26 +255,17 @@ impl<const FAN_OUT: usize,
     //         version)
     // }
 
-    pub(crate) fn key_range_read_from_root_lazy(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
-        range: &Interval<Key>,
-        version: Version)
-        -> CRUDOperationResult<Key>
-    {
-        unimplemented!()
-    }
-
 
     #[inline]
     pub(crate) fn key_range_read_from_root(
         root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
-        range: &Interval<Key>,
+        range: Interval<Key>,
         version: Version)
-        -> CRUDOperationResult<Key>
+        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
     {
         let blocks = Self::traverse_read_key_range(
             root.unsafe_borrow().block(),
-            range,
+            &range,
             version);
 
         CRUDOperationResult::MatchedRecords(blocks

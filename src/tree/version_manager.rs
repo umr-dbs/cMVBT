@@ -1,8 +1,9 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering::{AcqRel, Acquire};
 use crate::record_model::version_info::{AtomicVersion, Version};
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::global_clock::{ClockHandle, GlobalClock};
 use crate::utils::safe_cell::SafeCell;
 
@@ -61,8 +62,8 @@ impl VersionManager {
 /// Extended "Index" implementation, i.e. including version specific methods.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
-> BPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
     /// Applies adaptive lock on commit version counter.
     #[inline]
     pub(crate) fn begin_commit(&self) -> ClockHandle {

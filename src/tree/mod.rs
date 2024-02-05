@@ -1,4 +1,4 @@
-pub mod bplus_tree;
+pub mod mvbplus_tree;
 pub mod root;
 pub mod version_manager;
 pub mod global_clock;

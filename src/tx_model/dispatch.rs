@@ -1,26 +1,34 @@
+use std::fmt::Display;
 use std::hash::Hash;
+use std::mem;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::tree::bplus_tree::BPlusTree;
+use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tx_model::transaction::{SnapShot, Transaction};
 use crate::tx_model::tx_api::TransactionDispatcher;
 
-pub type TransactionResult<Key>
-= Result<(SnapShot, Vec<CRUDOperationResult<Key>>), (Transaction<Key>, Vec<CRUDOperationResult<Key>>)>;
+pub type TransactionResult<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize, Key>
+= Result<(SnapShot, Vec<CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key>>),
+    (Transaction<Key>, Vec<CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key>>)>;
 
-impl<const FAN_OUT: usize,
+impl<'a,
+    const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static
-> TransactionDispatcher<Key> for BPlusTree<FAN_OUT, NUM_RECORDS, Key> {
-    fn dispatch_loop(&self, mut tx: Transaction<Key>) -> TransactionResult<Key> {
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    fn dispatch_loop(&'a self, mut tx: Transaction<Key>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS,Key> {
         let snapshot
             = self.snapshot(tx.snapshot());
 
         let mut result = Vec::with_capacity(tx.crud.len());
         while let Some(crud) = tx.crud.pop_front() {
-            match snapshot.dispatch(crud) {
+            match unsafe { mem::transmute(snapshot.dispatch(crud)) } {
                 CRUDOperationResult::Error => {
                     result.push(CRUDOperationResult::Error);
+
                     return Err((tx, result));
                 }
                 res => result.push(res),

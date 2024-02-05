@@ -10,7 +10,7 @@ use rand::prelude::SliceRandom;
 use rand::{Rng, thread_rng};
 use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
-use crate::bplus_tree::BPlusTree;
+use crate::mvbplus_tree::MVBPlusTree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
 use crate::{mk_payload, MVTree, test, Tree};
 use crate::crud_model::crud_operation::CRUDOperation;
@@ -27,8 +27,8 @@ pub const BSZ: usize = BSZ_BASE - 0; // bsz_alignment::<Key, Payload>();
 // pub const FAN_OUT: usize = BSZ / 8 / 2;
 // pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
-pub const FAN_OUT: usize = 127;
-pub const NUM_RECORDS: usize = 127;
+pub const FAN_OUT: usize = 125;
+pub const NUM_RECORDS: usize = 125;
 
 // pub const NUM_RECORDS: usize = 64;
 
@@ -43,7 +43,7 @@ pub fn dec_key(k: Key) -> Key {
     k.checked_sub(1).unwrap_or(Key::MIN)
 }
 
-pub type INDEX = BPlusTree<FAN_OUT, NUM_RECORDS, Key>;
+pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);

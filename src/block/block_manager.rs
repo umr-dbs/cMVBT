@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
@@ -23,7 +24,7 @@ pub const _16KB: usize  = 16 * _1KB;
 pub const _32KB: usize  = 32 * _1KB;
 
 pub const fn bsz_alignment_min<Key, Payload>() -> usize
-where Key: Default + Ord + Copy + Hash,
+where Key: Default + Ord + Copy + Hash + Display,
       Payload: Default + Clone
 {
         mem::align_of::<Arc<()>>() + // ptr size
@@ -37,7 +38,7 @@ where Key: Default + Ord + Copy + Hash,
 }
 
 pub const fn bsz_alignment<Key, Payload>() -> usize
-where Key: Default + Ord + Copy + Hash,
+where Key: Default + Ord + Copy + Hash + Display,
       Payload: Default + Clone
 {
     bsz_alignment_min::<Key, Payload>() +
@@ -68,7 +69,7 @@ impl<const FAN_OUT: usize,
 /// Default implementation for BlockManager with default BlockSettings.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > Default for BlockManager<FAN_OUT, NUM_RECORDS, Key> {
     fn default() -> Self {
         BlockManager::new()
@@ -78,7 +79,7 @@ impl<const FAN_OUT: usize,
 /// Main functionality implementation for BlockManager.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash
+    Key: Default + Ord + Copy + Hash + Display
 > BlockManager<FAN_OUT, NUM_RECORDS, Key>
 {
     // /// Generates and returns a new atomic (unique across callers) BlockID.
