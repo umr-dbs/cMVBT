@@ -73,9 +73,20 @@ impl<'a,
         }
 
         loop {
-            let (fence, block)
-                = self.path.last().unwrap();
+            let (mut fence, mut block)
+                = self.path.pop().unwrap();
 
+            while fence.upper < self.range.lower {
+                match self.path.pop() {
+                    Some((f, b)) => {
+                        fence = f;
+                        block = b;
+                    }
+                    _ => return None,
+                }
+            }
+
+            self.path.push((fence.clone(), block.clone()));
             match block.unsafe_borrow().as_ref() {
                 Node::Index(internal_page) => {
                     let (keys_page, versions_page) = internal_page
@@ -133,9 +144,9 @@ impl<const FAN_OUT: usize,
             if root_item.version().match_version(lookup_version) {
                 break root_anker;
             } else {
-                root_anker = match root_item.prev.as_ref() {
-                    None => unreachable!(),
-                    Some(s) => s.clone()
+                root_anker = match root_item.prev {
+                    Some(ref p_root) => p_root.clone(),
+                    _ => unreachable!()
                 };
             }
         }
@@ -414,22 +425,21 @@ impl<const FAN_OUT: usize,
                 let new_root_block_mut
                     = new_root_block.unsafe_borrow_mut();
 
-                let root_can_shrink
-                    = !new_root_block_mut.is_leaf() && new_root_block_mut.active_count() == 1;
+                // let root_can_shrink
+                //     = !new_root_block_mut.is_leaf() && new_root_block_mut.active_count() == 1;
 
                 let old_root
                     = self.root.unsafe_borrow_mut();
 
-                if root_can_shrink {
-                    *new_root_block_mut = new_root_block_mut
-                        .as_internal_page_ref()
-                        .get_pointer(0)
-                        .unsafe_borrow()
-                        .clone();
-                } else {
-                    height += 1;
-                    old_root.root.height = height;
-                }
+                // if root_can_shrink {
+                //     *new_root_block_mut = new_root_block_mut
+                //         .as_internal_page_ref()
+                //         .get_pointer(0)
+                //         .unsafe_borrow()
+                //         .clone();
+                //
+                //     height -= 1;
+                // }
 
                 let mut commit_handle
                     = self.begin_commit();
@@ -452,8 +462,12 @@ impl<const FAN_OUT: usize,
                 old_root.prev
                     = Some(copy_root);
 
+                // Do we need a release fence here?
                 old_root.root.version
                     = committed;
+
+                old_root.root.height
+                    = height;
 
                 *old_root.root.block.unsafe_borrow_mut()
                     = mem::take(new_root_block_mut);

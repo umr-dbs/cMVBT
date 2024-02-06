@@ -11,6 +11,7 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::crud_model::query::RangeQueryIter;
+use crate::page_model::internal_page::TimeMatcher;
 use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
@@ -44,6 +45,7 @@ fn mk_payload() -> Box<u8> {
 
 const FAN_OUT: usize = test::FAN_OUT;
 const NUM_RECORDS: usize = test::NUM_RECORDS;
+
 pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
 
 fn main() {
@@ -64,43 +66,44 @@ fn main() {
     assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
 
 
-    let tree
-        = MVTree::orwc();
+    // let tree
+    //     = MVTree::orwc();
 
-    let insertions = 12040_u64;
-    let mut last_insert_version = Version::MIN;
-    let mut version_inserts = vec![];
-
-    for key in 0u64..insertions {
-        match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-            CRUDOperationResult::Inserted(ver) => {
-                last_insert_version = ver;
-                version_inserts.push(ver);
-                // println!("Inserted at version {}", ver);
-                match tree.dispatch(CRUDOperation::Point(key, ver)) {
-                    CRUDOperationResult::MatchedRecords(found)
-                    if found.last().unwrap().key == key => {}
-                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-                    err => println!("Err at insertion {}", err),
-                }
-            }
-            err => println!("Err at insertion {}", err),
-        }
-    }
-
-    match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-        CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
-            // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-        _ => println!("Error Range")
-    }
-
-    let lazy_range = RangeQueryIter::new(
-        &tree,
-        last_insert_version,
-        Interval::new(0, 255));
-
-    println!("Lazy Range = \n{}", lazy_range.into_iter().join("\n"));
-
+    let insertions = 10_000_000_u64;
+    // let mut last_insert_version = Version::MIN;
+    // let mut version_inserts = vec![];
+    //
+    // for key in 0u64..insertions {
+    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
+    //         CRUDOperationResult::Inserted(ver) => {
+    //             last_insert_version = ver;
+    //             version_inserts.push(ver);
+    //             // println!("Inserted at version {}", ver);
+    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
+    //                 CRUDOperationResult::MatchedRecords(found)
+    //                 if found.last().unwrap().key == key => {}
+    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+    //                 err => println!("Err at insertion {}", err),
+    //             }
+    //         }
+    //         err => println!("Err at insertion {}", err),
+    //     }
+    // }
+    //
+    // match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+    //     CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
+    //         // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+    //     _ => println!("Error Range")
+    // }
+    //
+    // let lazy_range = RangeQueryIter::new(
+    //     &tree,
+    //     last_insert_version,
+    //     Interval::new(0, insertions));
+    //
+    // println!("Height = {}", tree.root.unsafe_borrow().height());
+    // println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
+    //
     // println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
     // for key in 0u64..insertions{
     //     match tree.dispatch(CRUDOperation::Delete(key)) {
@@ -131,32 +134,45 @@ fn main() {
     // let (keys, versions) = tree.root.unsafe_borrow()
     //     .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
     //
-    // println!("Keys Root = {}", keys.iter().zip(versions)
-    //     .map(|(k, v)| format!("{k}, v: {v}")).into_iter().join("\n"));
+    // println!("Keys Root\n{}", keys
+    //     .iter()
+    //     .zip(versions)
+    //     .filter(|(.., v)| v.is_active())
+    //     .map(|(k, v)|
+    //         format!("{k}, v: {v}")).into_iter().join("\n"));
+    //
     // println!("Height = {}", tree.root.unsafe_borrow().height);
 
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
 
-    // let insertions = (0u64..insertions)
-    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
-    //     .collect_vec();
-    //
-    // let tree
-    //     = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
-    //
-    // let (time, errors) = test::bulk_crud(
-    //     num_cpus::get(),
-    //     tree.clone(),
-    //     insertions.as_slice());
-    //
-    // println!("Concurrency Control: {}\nClock-Type: {}\nInsertions = {}\nThreads = {}\nTime = {}\nErrors = {}",
-    //          tree.as_index().locking_strategy,
-    //          tree.as_index().clock_type(),
-    //          format_insertions(insertions.len()),
-    //          num_cpus::get(),
-    //          time,
-    //          errors);
+    let insertions = (0u64..insertions)
+        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .collect_vec();
+
+    let tree
+        = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
+
+    let (time, errors) = test::bulk_crud(
+        num_cpus::get(),
+        tree.clone(),
+        insertions.as_slice());
+
+    println!("\
+    Concurrency Control: {}\n\
+    Clock-Type: {}\n\
+    Insertions = {}\n\
+    Commit-Number = {}\n\
+    Threads = {}\n\
+    Time = {}\n\
+    Errors = {}",
+             tree.as_index().locking_strategy,
+             tree.as_index().clock_type(),
+             format_insertions(insertions.len()),
+             tree.as_index().version_manager.committed_version(),
+             num_cpus::get(),
+             time,
+             errors);
 }
 
 /// Essential function.

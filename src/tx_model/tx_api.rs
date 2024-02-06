@@ -30,7 +30,8 @@ pub struct IsolatedSnapShot<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display> IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Copy + Ord + Display>
+IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline(always)]
     pub const fn snapshot(&self) -> SnapShot {
@@ -46,7 +47,8 @@ impl<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + 'static + Display> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Copy + Ord + 'static + Display>
+CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
     fn dispatch(&'a self, operation: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {

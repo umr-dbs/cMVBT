@@ -1,6 +1,6 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-- Build:             - 05.01.2024
-- Version:           - 0.0.16 (Beta)
+- Build: 06.01.2024
+- Version: 0.0.17 (Beta)
 ---------------------------------------
 # Supported Operations
 - Insert (Key, Payload)
@@ -9,7 +9,7 @@
 - Range Query ([key_min, key_max], Version)
 - **Snapshot** Range Query ([key_min, key_max])
 - _Lazy Iterator_ Range Query ([key_min, key_max], Version)
-- **Snapshot** _Lazy Iterator_ Range Query ([key_min, key_max], Version)
+- **Snapshot** _Lazy Iterator_ Range Query ([key_min, key_max])
 - **Snapshot** Dispatch-Loop Transaction
 ---------------------------------------
 # Build

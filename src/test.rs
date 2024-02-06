@@ -12,7 +12,7 @@ use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::mvbplus_tree::MVBPlusTree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::{mk_payload, MVTree, test, Tree};
+use crate::{mk_payload, MVTree, test, Tree, TREE, TreeDispatcher};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::record_model::version_info::Version;
@@ -49,7 +49,7 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
 
 #[inline(always)]
-pub fn bulk_crud(worker_threads: usize, tree: Arc<MVTree>, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
+pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -96,8 +96,8 @@ pub fn bulk_crud(worker_threads: usize, tree: Arc<MVTree>, operations_queue: &[C
     (time_elapsed.as_millis(), errs)
 }
 
-pub fn test01(mut tree: Arc<MVTree>) {
-    let protocol = tree.locking_strategy().clone();
+pub fn test01(mut tree: Tree) {
+    let protocol = tree.as_index().locking_strategy().clone();
     const EVENT_COUNT: u64
         = 10_000_000;
 
@@ -112,17 +112,18 @@ pub fn test01(mut tree: Arc<MVTree>) {
             insertions.as_slice());
 
         println!("{EVENT_COUNT},{threads},{protocol},{errors},{time},{EVENT_COUNT},0");
-        tree = Arc::new(tree.as_ref().make_empty_copy());
+
+        tree = TREE(protocol.clone());
     }
 }
 
-pub fn test02(mut tree: Arc<MVTree>) {
+pub fn test02(mut tree: Tree) {
     const EVENT_COUNT: u64
     = 3_000_000;
 
     const READER_COUNT: u64
     = 7_000_000;
-    let protocol = tree.locking_strategy().clone();
+    let protocol = tree.as_index().locking_strategy().clone();
     let total = EVENT_COUNT + READER_COUNT;
     let mut crud = (1u64..=EVENT_COUNT)
         .map(|key| CRUDOperation::Insert(key, mk_payload()))
@@ -141,7 +142,7 @@ pub fn test02(mut tree: Arc<MVTree>) {
 
         println!("{total},{threads},{protocol},{errors},{time},{EVENT_COUNT},{READER_COUNT}");
 
-        tree = Arc::new(tree.as_ref().make_empty_copy());
+        tree = TREE(protocol.clone());
     }
 }
 
