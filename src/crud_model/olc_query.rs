@@ -152,18 +152,15 @@ impl<const FAN_OUT: usize,
 
             match curr_guard_result.unwrap().as_ref() {
                 Node::Index(internal_page) => {
-                    let (keys_page, versions_page) = internal_page
-                        .keys_versions();
+                    let keys_page = internal_page
+                        .keys();
 
-                    let index = versions_page
+                    let index = keys_page
                         .iter()
                         .enumerate()
                         .rev()
-                        .zip(keys_page
-                            .iter()
-                            .rev())
                         .find(|(.., range)| range.contains(key))
-                        .map(|((pos, ..), ..)| pos)
+                        .map(|(pos, ..)| pos)
                         .unwrap();
 
                     let next_curr_block = internal_page

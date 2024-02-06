@@ -116,7 +116,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub const fn new() -> Self {
-        debug_assert!(mem::size_of::<[Key; FAN_OUT]>() +
+        debug_assert!(mem::size_of::<[Interval<Key>; FAN_OUT]>() +
                           mem::size_of::<[Version; FAN_OUT]>() +
                           mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key>; FAN_OUT]>() +
                           mem::size_of::<Len>()
