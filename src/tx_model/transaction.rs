@@ -7,18 +7,18 @@ use crate::record_model::version_info::Version;
 pub type SnapShot = Version;
 
 pub struct Transaction<Key: Ord + Copy + Hash + Default + Display> {
-    pub(crate) snapshot: SnapShot,
+    pub(crate) snapshot: Option<SnapShot>,
     pub(crate) crud: VecDeque<CRUDOperation<Key>>,
 }
 
 pub struct AtomicTransaction<Key: Ord + Copy + Hash + Default + Display> {
-    pub(crate) snapshot: SnapShot,
+    pub(crate) snapshot: Option<SnapShot>,
     pub(crate) crud: CRUDOperation<Key>,
 }
 
 impl<Key: Ord + Copy + Hash + Default + Display> AtomicTransaction<Key> {
     #[inline(always)]
-    pub const fn new(snapshot: SnapShot, crud: CRUDOperation<Key>) -> Self {
+    pub const fn new(snapshot: Option<SnapShot>, crud: CRUDOperation<Key>) -> Self {
         Self {
             snapshot,
             crud
@@ -26,15 +26,15 @@ impl<Key: Ord + Copy + Hash + Default + Display> AtomicTransaction<Key> {
     }
 
     #[inline(always)]
-    pub const fn snapshot(&self) -> Version {
-        self.snapshot
+    pub fn snapshot(&self) -> Version {
+        self.snapshot.unwrap_or(Version::MAX)
     }
 }
 
 impl<Key: Ord + Copy + Hash + Default + Display> Transaction<Key> {
     #[inline(always)]
     pub const fn new(
-        snapshot: Version,
+        snapshot: Option<Version>,
         crud: VecDeque<CRUDOperation<Key>>)
         -> Self
     {
@@ -45,8 +45,8 @@ impl<Key: Ord + Copy + Hash + Default + Display> Transaction<Key> {
     }
 
     #[inline(always)]
-    pub const fn snapshot(&self) -> Version {
-        self.snapshot
+    pub fn snapshot(&self) -> Version {
+        self.snapshot.unwrap_or(Version::MAX)
     }
 
     #[inline(always)]

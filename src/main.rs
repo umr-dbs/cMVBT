@@ -1,7 +1,7 @@
-use std::{env, fs, mem};
+use std::{env, fs, mem, thread};
 use std::io::Read;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -13,7 +13,9 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::internal_page::TimeMatcher;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
-use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
+use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC};
+use crate::tx_model::transaction::AtomicTransaction;
+use crate::tx_model::tx_manager::TransactionManager;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
@@ -44,11 +46,11 @@ pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
 fn main() {
     make_splash();
 
-    let trees = vec![
-        Arc::new(MVTree::orwc_optimistic_clock()),
-        Arc::new(MVTree::lhl_optimistic_clock()),
-        Arc::new(MVTree::olc_optimistic_clock()),
-    ];
+    // let trees = vec![
+    //     Arc::new(MVTree::orwc_optimistic_clock()),
+    //     Arc::new(MVTree::lhl_optimistic_clock()),
+    //     Arc::new(MVTree::olc_optimistic_clock()),
+    // ];
 
     // println!("Records,Threads,Protocol,Errors,Time,Inserts,Reads");
     // for tree in trees.into_iter() {
@@ -143,67 +145,76 @@ fn main() {
     //     tree.clone(),
     //     insertions.as_slice());
 
-    let tree
-        = MVTree::orwc_optimistic_clock();
 
-    let insertions_vec = (0u64..insertions)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+    let insertions_tx = (0u64..insertions)
+        .map(|key| AtomicTransaction::new(None, CRUDOperation::Insert(key, mk_payload())))
         .collect_vec();
 
-    let start = SystemTime::now();
-    insertions_vec.into_par_iter().for_each(|t|
-        if tree.dispatch_crud(t).is_err() {
-            println!("ERROR Insert")
-        });
+    let tx_manager = TransactionManager::new(
+        12, MVTree::orwc_optimistic_clock());
 
-    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-    println!("\
-    Concurrency Control: {}\n\
-    Clock-Type: {}\n\
-    Insertions = {}\n\
-    Commit-Number = {}\n\
-    Threads = {}\n\
-    Time = {}ms\n",
-             tree.locking_strategy(),
-             tree.clock_type(),
-             format_insertions(insertions as _),
-             tree.current_version(),
-             rayon::current_num_threads(),
-             end);
+    insertions_tx.into_iter().for_each(|tx| {
+        tx_manager.execute_atomic_transaction(tx);
+    });
 
-    let snapshot =
-        tree.current_version();
+    tx_manager.join()
 
-    let start = SystemTime::now();
-    (0..insertions).into_par_iter().for_each(|key|
-        if tree.dispatch_crud(CRUDOperation::Point(key, snapshot))
-            .is_err()
-        {
-            println!("ERROR Point dispatch crud.")
-        });
-    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
 
-    println!("\
-    All Keys Point Search = {}\n\
-    Threads = {}\n\
-    Time = {}ms\n",
-             format_insertions(insertions as _),
-             rayon::current_num_threads(),
-             end);
+    //
+    // let insertions_vec = (0u64..insertions)
+    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
+    //     .collect_vec();
+    //
+    // let mut tree
+    //     = Arc::new(MVTree::lhl_optimistic_clock());
+    //
+    // println!("Insertions,Threads,Protocol,Clock,Time");
+    // for threads in [1, 2, 4, 8, 16, 32, 64] {
+    //     tree = Arc::new(MVTree::lhl_optimistic_clock());
+    //
+    //     let (time, ..)
+    //         = test::bulk_crud(threads, tree.clone(), insertions_vec.as_slice());
+    //     println!("{},{},{},{},{}",
+    //              insertions,
+    //              threads,
+    //              tree.locking_strategy(),
+    //              tree.clock_type(),
+    //              time);
+    // }
 
-    let range
-        = Interval::new(tree.min_key, tree.max_key);
-
-    let start = SystemTime::now();
-    match tree.dispatch_crud(CRUDOperation::RangeIter(range, snapshot)) {
-        CRUDOperationResult::MatchedRecordIter(iter) => if iter.count() != insertions as _ {
-            println!("ERROR Range Iter")
-        }
-        _ => println!("Range Iter Failed")
-    }
-
-    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-    println!("Scan = Key-Space\nTime = {end}ms");
+    // let snapshot =
+    //     tree.current_version();
+    //
+    // let start = SystemTime::now();
+    // (0..insertions).into_par_iter().for_each(|key|
+    //     if tree.dispatch_crud(CRUDOperation::Point(key, snapshot))
+    //         .is_err()
+    //     {
+    //         println!("ERROR Point dispatch crud.")
+    //     });
+    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+    //
+    // println!("\
+    // All Keys Point Search = {}\n\
+    // Threads = {}\n\
+    // Time = {}ms\n",
+    //          format_insertions(insertions as _),
+    //          rayon::current_num_threads(),
+    //          end);
+    //
+    // let range
+    //     = Interval::new(tree.min_key, tree.max_key);
+    //
+    // let start = SystemTime::now();
+    // match tree.dispatch_crud(CRUDOperation::RangeIter(range, snapshot)) {
+    //     CRUDOperationResult::MatchedRecordIter(iter) => if iter.count() != insertions as _ {
+    //         println!("ERROR Range Iter")
+    //     }
+    //     _ => println!("Range Iter Failed")
+    // }
+    //
+    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+    // println!("Scan = Key-Space\nTime = {end}ms");
 }
 
 /// Essential function.

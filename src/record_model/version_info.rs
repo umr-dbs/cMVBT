@@ -17,7 +17,7 @@ struct DeletedVersion(Version);
 /// Implements mapping for deletion versions.
 impl DeletedVersion {
     /// Defines the mask of a non-null Version, i.e. where the left outer most bit is set.
-    /// Otherwise defines a null mapping and thus does not exist.
+    /// Otherwise, defines a null mapping and thus does not exist.
     const NON_NULL_FLAG: Version = 0x80_00000000000000;
 
     /// Defines the null instance.

@@ -13,7 +13,7 @@ use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
 use crate::tree::global_clock::GlobalClock;
-use crate::tree::locking_strategy::{hybrid_lock, LHL_read, LHL_read_write, LockingStrategy, OLC, orwc};
+use crate::tree::locking_strategy::{hybrid_lock, LHL_read, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
 use crate::tree::version_manager::VersionManager;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
@@ -155,7 +155,7 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn lhl_optimistic_clock() -> Self {
-        Self::make_standard(LHL_read(0), ClockType::OPTIMISTIC)
+        Self::make_standard(LHL_read(4), ClockType::OPTIMISTIC)
     }
 
     pub fn hl() -> Self {
