@@ -12,7 +12,7 @@ use rand::rngs::StdRng;
 use crate::block::block_manager::{_4KB, bsz_alignment};
 use crate::mvbplus_tree::MVBPlusTree;
 use crate::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
-use crate::{mk_payload, MVTree, test, Tree, TREE, TreeDispatcher};
+use crate::{mk_payload, Tree, TREE};
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::record_model::version_info::Version;
@@ -27,8 +27,8 @@ pub const BSZ: usize = BSZ_BASE - 0; // bsz_alignment::<Key, Payload>();
 // pub const FAN_OUT: usize = BSZ / 8 / 2;
 // pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
 
-pub const FAN_OUT: usize = 125;
-pub const NUM_RECORDS: usize = 125;
+pub const FAN_OUT: usize = 127;
+pub const NUM_RECORDS: usize = 127;
 
 // pub const NUM_RECORDS: usize = 64;
 
@@ -75,7 +75,7 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
             let mut counter_errs = 0;
             current_chunk
                 .into_iter()
-                .for_each(|next_query| match index.dispatch(next_query) { // tree.execute(operation),
+                .for_each(|next_query| match index.dispatch_crud(next_query) { // tree.execute(operation),
                     CRUDOperationResult::Error => counter_errs += 1,
                     _ => {}
                 });
@@ -97,7 +97,7 @@ pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOper
 }
 
 pub fn test01(mut tree: Tree) {
-    let protocol = tree.as_index().locking_strategy().clone();
+    let protocol = tree.locking_strategy().clone();
     const EVENT_COUNT: u64
         = 10_000_000;
 
@@ -123,7 +123,7 @@ pub fn test02(mut tree: Tree) {
 
     const READER_COUNT: u64
     = 7_000_000;
-    let protocol = tree.as_index().locking_strategy().clone();
+    let protocol = tree.locking_strategy().clone();
     let total = EVENT_COUNT + READER_COUNT;
     let mut crud = (1u64..=EVENT_COUNT)
         .map(|key| CRUDOperation::Insert(key, mk_payload()))

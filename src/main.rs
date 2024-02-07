@@ -4,19 +4,16 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use parking_lot::RwLock;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::block::block::Block;
 use crate::tree::mvbplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::crud_model::query::RangeQueryIter;
 use crate::page_model::internal_page::TimeMatcher;
-use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LockingStrategy};
-use crate::tx_model::tx_api::IsolatedSnapShot;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
 
@@ -30,11 +27,7 @@ mod test;
 mod tx_model;
 
 pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
-    Arc::new(if let LockingStrategy::MonoWriter = crud {
-        TreeDispatcher::Wrapper(RwLock::new(MAKE_INDEX(crud)))
-    } else {
-        TreeDispatcher::Ref(MAKE_INDEX(crud))
-    })
+    Arc::new(MAKE_INDEX(crud))
 };
 
 fn mk_payload() -> Box<u8> {
@@ -64,7 +57,6 @@ fn main() {
     // }
 
     assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
-
 
     // let tree
     //     = MVTree::orwc();
@@ -146,33 +138,72 @@ fn main() {
     // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
     // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
 
-    let insertions = (0u64..insertions)
+    // let (time, errors) = test::bulk_crud(
+    //     num_cpus::get(),
+    //     tree.clone(),
+    //     insertions.as_slice());
+
+    let tree
+        = MVTree::orwc_optimistic_clock();
+
+    let insertions_vec = (0u64..insertions)
         .map(|key| CRUDOperation::Insert(key, mk_payload()))
         .collect_vec();
 
-    let tree
-        = Tree::new(TreeDispatcher::Ref(MVTree::orwc_optimistic_clock()));
+    let start = SystemTime::now();
+    insertions_vec.into_par_iter().for_each(|t|
+        if tree.dispatch_crud(t).is_err() {
+            println!("ERROR Insert")
+        });
 
-    let (time, errors) = test::bulk_crud(
-        num_cpus::get(),
-        tree.clone(),
-        insertions.as_slice());
-
+    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
     println!("\
     Concurrency Control: {}\n\
     Clock-Type: {}\n\
     Insertions = {}\n\
     Commit-Number = {}\n\
     Threads = {}\n\
-    Time = {}\n\
-    Errors = {}",
-             tree.as_index().locking_strategy,
-             tree.as_index().clock_type(),
-             format_insertions(insertions.len()),
-             tree.as_index().version_manager.committed_version(),
-             num_cpus::get(),
-             time,
-             errors);
+    Time = {}ms\n",
+             tree.locking_strategy(),
+             tree.clock_type(),
+             format_insertions(insertions as _),
+             tree.current_version(),
+             rayon::current_num_threads(),
+             end);
+
+    let snapshot =
+        tree.current_version();
+
+    let start = SystemTime::now();
+    (0..insertions).into_par_iter().for_each(|key|
+        if tree.dispatch_crud(CRUDOperation::Point(key, snapshot))
+            .is_err()
+        {
+            println!("ERROR Point dispatch crud.")
+        });
+    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+    println!("\
+    All Keys Point Search = {}\n\
+    Threads = {}\n\
+    Time = {}ms\n",
+             format_insertions(insertions as _),
+             rayon::current_num_threads(),
+             end);
+
+    let range
+        = Interval::new(tree.min_key, tree.max_key);
+
+    let start = SystemTime::now();
+    match tree.dispatch_crud(CRUDOperation::RangeIter(range, snapshot)) {
+        CRUDOperationResult::MatchedRecordIter(iter) => if iter.count() != insertions as _ {
+            println!("ERROR Range Iter")
+        }
+        _ => println!("Range Iter Failed")
+    }
+
+    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+    println!("Scan = Key-Space\nTime = {end}ms");
 }
 
 /// Essential function.
@@ -210,40 +241,7 @@ fn make_splash() {
     println!("--> System Log:");
 }
 
-pub type Tree = Arc<TreeDispatcher>;
-
-pub enum TreeDispatcher {
-    Wrapper(RwLock<INDEX>),
-    Ref(INDEX),
-}
-
-impl<'a> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for TreeDispatcher {
-    #[inline(always)]
-    fn dispatch(&'a self, crud: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
-        match self {
-            TreeDispatcher::Ref(inner) => inner.dispatch(crud),
-            TreeDispatcher::Wrapper(sync) => unsafe {
-                if crud.is_read() {
-                    mem::transmute(sync.read().dispatch(crud))
-                } else {
-                    mem::transmute(sync.write().dispatch(crud))
-                }
-            }
-        }
-    }
-}
-
-// unsafe impl Send for TreeDispatcher {}
-// unsafe impl Sync for TreeDispatcher {}
-
-impl TreeDispatcher {
-    pub fn as_index(&self) -> &INDEX {
-        match self {
-            TreeDispatcher::Wrapper(inner) => unsafe { &*inner.data_ptr() },
-            TreeDispatcher::Ref(inner) => inner
-        }
-    }
-}
+pub type Tree = Arc<INDEX>;
 
 pub fn hle() -> &'static str {
     if cfg!(feature = "hardware-lock-elision") {

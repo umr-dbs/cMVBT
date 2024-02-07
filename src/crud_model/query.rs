@@ -289,7 +289,7 @@ impl<const FAN_OUT: usize,
                 .skip_while(|r| !r.version().matches(version))
                 .take_while(|r| r.version().matches(version))
                 .filter(|r| range.contains(r.key()))
-                // .cloned()
+                .sorted_by_key(|r| r.key())
                 .map(|r| RecordPointResult::from(r))
                 .collect::<Vec<_>>())
             .flatten()

@@ -64,6 +64,11 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    #[inline(always)]
+    pub fn current_version(&self) -> Version {
+        self.version_manager.committed_version()
+    }
+
     /// Applies adaptive lock on commit version counter.
     #[inline]
     pub(crate) fn begin_commit(&self) -> ClockHandle {
@@ -74,7 +79,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    /// Uses supplied lock to increment commit counter and releasing it afterwards.
+    /// Uses supplied lock to increment commit counter and releasing it afterward.
     #[inline]
     pub(crate) fn try_end_commit<'a>(&self, mut guard: ClockHandle<'a>) -> Result<Version, ClockHandle<'a>> {
         match guard {

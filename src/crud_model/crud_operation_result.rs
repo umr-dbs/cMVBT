@@ -30,6 +30,25 @@ pub enum CRUDOperationResult<
     Error, // flatten no good
 }
 
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + 'static + Display
+> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    #[inline(always)]
+    pub const fn is_err(&self) -> bool {
+        match self {
+            CRUDOperationResult::Error => true,
+            _ => false
+        }
+    }
+
+    #[inline(always)]
+    pub const fn is_ok(&self) -> bool {
+        !self.is_err()
+    }
+}
+
 /// Implements pretty printers for TransactionResult.
 impl<'a,
     const FAN_OUT: usize,

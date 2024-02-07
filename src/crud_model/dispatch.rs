@@ -17,7 +17,7 @@ impl<'a,
 > CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn dispatch(&'a self, crud: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    fn dispatch_crud(&'a self, crud: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         let is_optimistic = self.locking_strategy
             .is_optimistic();
 

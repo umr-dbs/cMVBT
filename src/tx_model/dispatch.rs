@@ -4,7 +4,7 @@ use std::mem;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::tree::mvbplus_tree::MVBPlusTree;
-use crate::tx_model::transaction::{SnapShot, Transaction};
+use crate::tx_model::transaction::{AtomicTransaction, SnapShot, Transaction};
 use crate::tx_model::tx_api::TransactionDispatcher;
 
 pub type TransactionResult<
@@ -14,18 +14,24 @@ pub type TransactionResult<
 = Result<(SnapShot, Vec<CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key>>),
     (Transaction<Key>, Vec<CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key>>)>;
 
+pub type AtomicTransactionResult<
+    'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize, Key>
+= Result<(SnapShot, CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key>), SnapShot>;
+
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static + Display
 > TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
-    fn dispatch_loop(&'a self, mut tx: Transaction<Key>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS,Key> {
+    fn dispatch_transaction(&'a self, mut tx: Transaction<Key>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         let snapshot
-            = self.snapshot(tx.snapshot());
+            = self.snapshot_for(tx.snapshot());
 
         let mut result = Vec::with_capacity(tx.crud.len());
         while let Some(crud) = tx.crud.pop_front() {
-            match unsafe { mem::transmute(snapshot.dispatch(crud)) } {
+            match unsafe { mem::transmute(snapshot.dispatch_crud(crud)) } {
                 CRUDOperationResult::Error => {
                     result.push(CRUDOperationResult::Error);
 
@@ -36,5 +42,16 @@ impl<'a,
         }
 
         Ok((tx.snapshot(), result))
+    }
+
+    fn dispatch_atomic_transaction(&'a self, tx: AtomicTransaction<Key>)
+        -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key>
+    {
+        match unsafe { mem::transmute(self.snapshot_for(tx.snapshot()).dispatch_crud(tx.crud)) } {
+            CRUDOperationResult::Error =>
+                Err(tx.snapshot),
+            crud_result =>
+                Ok((tx.snapshot, crud_result))
+        }
     }
 }

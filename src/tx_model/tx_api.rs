@@ -4,21 +4,27 @@ use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::tree::mvbplus_tree::MVBPlusTree;
-use crate::tx_model::dispatch::TransactionResult;
-use crate::tx_model::transaction::{SnapShot, Transaction};
+use crate::tx_model::dispatch::{AtomicTransactionResult, TransactionResult};
+use crate::tx_model::transaction::{AtomicTransaction, SnapShot, Transaction};
 
 pub trait TransactionDispatcher<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Ord + Copy + Hash + Default + Display> {
-    fn dispatch_loop(
+    fn dispatch_transaction(
         &'a self,
         tx: Transaction<Key>
     ) -> TransactionResult<FAN_OUT, NUM_RECORDS, Key>;
+
+    fn dispatch_atomic_transaction(
+        &'a self,
+        tx: AtomicTransaction<Key>
+    ) -> AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key>;
 }
 
-pub struct IsolatedSnapShot<'a,
+pub struct IsolatedSnapShot<
+    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Hash + Copy + Ord + Display>
@@ -51,20 +57,20 @@ impl<'a,
 CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline]
-    fn dispatch(&'a self, operation: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    fn dispatch_crud(&'a self, operation: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         match operation {
             CRUDOperation::PointSi(key)=> self
                 .mv_tree()
-                .dispatch(CRUDOperation::Point(key, self.snapshot())),
+                .dispatch_crud(CRUDOperation::Point(key, self.snapshot())),
             CRUDOperation::RangeSi(range) => self
                 .mv_tree()
-                .dispatch(CRUDOperation::Range(range, self.snapshot())),
+                .dispatch_crud(CRUDOperation::Range(range, self.snapshot())),
             CRUDOperation::RangeIterSi(key) => self
                 .mv_tree()
-                .dispatch(CRUDOperation::RangeIter(key, self.snapshot())),
+                .dispatch_crud(CRUDOperation::RangeIter(key, self.snapshot())),
             _ => self
                 .mv_tree()
-                .dispatch(operation)
+                .dispatch_crud(operation)
         }
     }
 }
@@ -73,7 +79,13 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Hash + Copy + Ord + Display> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
-    pub fn snapshot(&self, snap_shot: SnapShot) -> IsolatedSnapShot<FAN_OUT, NUM_RECORDS, Key> {
+    #[inline(always)]
+    pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<FAN_OUT, NUM_RECORDS, Key> {
         IsolatedSnapShot(snap_shot, self)
+    }
+
+    #[inline(always)]
+    pub fn snapshot_current(&self) -> IsolatedSnapShot<FAN_OUT, NUM_RECORDS, Key> {
+        IsolatedSnapShot(self.version_manager.committed_version(), self)
     }
 }

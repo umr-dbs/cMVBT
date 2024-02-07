@@ -1,16 +1,25 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-- Build: 06.01.2024
-- Version: 0.0.17 (Beta)
+- Build: 07.01.2024
+- Version: 0.0.18 (Beta)
 ---------------------------------------
-# Supported Operations
-- Insert (Key, Payload)
-- Point Query (Key, Version)
-- **Snapshot** Point Query (Key)
-- Range Query ([key_min, key_max], Version)
-- **Snapshot** Range Query ([key_min, key_max])
-- _Lazy Iterator_ Range Query ([key_min, key_max], Version)
-- **Snapshot** _Lazy Iterator_ Range Query ([key_min, key_max])
-- **Snapshot** Dispatch-Loop Transaction
+# Concurrency Controls
+- **MonoWriter**:
+  - One writer.
+  - Unlimited lock-free readers.
+- **ORWC**, **OLC**, **LHL** and **HL**:
+  - Unlimited writers.
+  - Unlimited lock-free readers.
+# Operations (CC Built-in)
+- ### CreateReadUpdateDelete (CRUD) 
+  - Insert (Key, Payload)
+  - Delete (Key)
+  - Update (Key, Payload)
+  - Point Query (Key, Version)
+  - Range Query ([key_min, key_max], Version)
+  - _Lazy Iterator_ Range Query ([key_min, key_max], Version)
+- ### Snapshot Isolation
+  - Atomic Transaction: A single CRUD Operation on a Snapshot.
+  - Transaction: Collection of CRUD on a Snapshot.
 ---------------------------------------
 # Build
 #### Requirements:
