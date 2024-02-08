@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::block::block::Block;
 use crate::tree::mvbplus_tree;
@@ -13,7 +15,7 @@ use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::internal_page::TimeMatcher;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
-use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC};
+use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
 use crate::tx_model::transaction::AtomicTransaction;
 use crate::tx_model::tx_manager::TransactionManager;
 use crate::utils::interval::Interval;
@@ -146,42 +148,49 @@ fn main() {
     //     insertions.as_slice());
 
 
-    let insertions_tx = (0u64..insertions)
-        .map(|key| AtomicTransaction::new(None, CRUDOperation::Insert(key, mk_payload())))
-        .collect_vec();
-
-    let tx_manager = TransactionManager::new(
-        12, MVTree::orwc_optimistic_clock());
-
-    insertions_tx.into_iter().for_each(|tx| {
-        tx_manager.execute_atomic_transaction(tx);
-    });
-
-    tx_manager.join()
-
-
-    //
-    // let insertions_vec = (0u64..insertions)
-    //     .map(|key| CRUDOperation::Insert(key, mk_payload()))
+    // let insertions_tx = (0u64..insertions)
+    //     .map(|key| AtomicTransaction::from_crud(CRUDOperation::Insert(key, mk_payload())))
     //     .collect_vec();
     //
-    // let mut tree
-    //     = Arc::new(MVTree::lhl_optimistic_clock());
+    // let tx_manager = TransactionManager::new(
+    //     24, MVTree::orwc_optimistic_clock());
     //
-    // println!("Insertions,Threads,Protocol,Clock,Time");
-    // for threads in [1, 2, 4, 8, 16, 32, 64] {
-    //     tree = Arc::new(MVTree::lhl_optimistic_clock());
+    // let start = SystemTime::now();
+    // let res = insertions_tx.into_iter().map(|tx|
+    //     tx_manager.execute_atomic_transaction(tx)
+    // ).collect_vec();
     //
-    //     let (time, ..)
-    //         = test::bulk_crud(threads, tree.clone(), insertions_vec.as_slice());
-    //     println!("{},{},{},{},{}",
-    //              insertions,
-    //              threads,
-    //              tree.locking_strategy(),
-    //              tree.clock_type(),
-    //              time);
-    // }
+    // tx_manager.join();
+    //
+    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+    //
+    // println!("Time = {end}");
 
+    //
+    let mut insertions_vec = (0u64..insertions)
+        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .collect_vec();
+
+    insertions_vec.shuffle(&mut thread_rng());
+
+
+    println!("Insertions,Threads,Protocol,Clock,Time");
+    for btree in [
+        MVTree::olc_optimistic_clock(),
+        MVTree::lhl_optimistic_clock(),
+        MVTree::orwc_optimistic_clock()]
+    {
+        for threads in [1, 2, 4, 8, 16, 32, 64] {
+            let tree = Arc::new(btree.make_empty_copy());
+
+            let (time, ..)
+                = test::bulk_crud(threads, tree.clone(), insertions_vec.as_slice());
+
+            println!("{insertions},{threads},{},{},{time}",
+                     tree.locking_strategy(),
+                     tree.clock_type());
+        }
+    }
     // let snapshot =
     //     tree.current_version();
     //

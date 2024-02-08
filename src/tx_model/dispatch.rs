@@ -25,6 +25,7 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static + Display
 > TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    #[inline]
     fn dispatch_transaction(&'a self, mut tx: Transaction<Key>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         let snapshot
             = self.snapshot_for(tx.snapshot());
@@ -44,6 +45,7 @@ impl<'a,
         Ok((tx.snapshot(), result))
     }
 
+    #[inline(always)]
     fn dispatch_atomic_transaction(&'a self, tx: AtomicTransaction<Key>)
         -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key>
     {

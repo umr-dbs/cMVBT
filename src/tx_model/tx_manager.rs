@@ -5,7 +5,9 @@ use std::mem;
 use std::ops::Deref;
 use std::sync::Arc;
 use crossbeam_channel::Receiver;
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::ThreadPool;
+// use threadpool::ThreadPool;
+// use rayon::{ThreadPool, ThreadPoolBuilder};
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::MVTree;
 use crate::record_model::version_info::Version;
@@ -14,6 +16,7 @@ use crate::tree::version_manager::VersionManager;
 use crate::tx_model::dispatch::{AtomicTransactionResult, TransactionResult};
 use crate::tx_model::transaction::{AtomicTransaction, Transaction};
 use crate::tx_model::tx_api::{IsolatedSnapShot, TransactionDispatcher};
+use crate::utils::safe_cell::SafeCell;
 
 
 // enum TransactionHolder<
@@ -92,12 +95,12 @@ pub struct TransactionManager<
     threads: usize,
     oldest_version: Version,
     pool: ThreadPool,
-    index: Box<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>
+    index: Box<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + Send
+    Key: Default + Hash + Ord + Copy + Display + Send + 'static
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key>
 {
     pub fn join(self) {
@@ -108,50 +111,56 @@ impl<const FAN_OUT: usize,
         Self {
             threads,
             oldest_version: VersionManager::START_VERSION,
-            pool: ThreadPoolBuilder::new()
+            pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
-                .thread_name(|f| format!("TxRunner_{}", f))
+                .thread_name(|t| format!("TxRunner{}", t))
                 .build()
                 .unwrap(),
-            index: Box::new(index)
+            index: Box::new(index),
         }
     }
 
-    pub fn execute_transaction(&self, tx: Transaction<Key>)
-    -> Receiver<TransactionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
+    // pub fn execute_transaction(&self, tx: Transaction<Key>)
+    // -> Receiver<TransactionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
+    // {
+    //     let (sender, receiver)
+    //         = crossbeam_channel::bounded(1);
+    //
+    //     let snapshot: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> = unsafe {
+    //         mem::transmute(self.index.deref())
+    //     };
+    //
+    //     self.pool.spawn(move || unsafe {
+    //         let si
+    //             = snapshot.snapshot_for(tx.snapshot());
+    //
+    //         let mv_tree: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    //             = mem::transmute(si.mv_tree());
+    //
+    //         sender.send(mv_tree.dispatch_transaction(tx));
+    //     });
+    //
+    //     receiver
+    // }
+
+    #[inline]
+    pub fn execute_atomic_transaction(&self, tx: AtomicTransaction<Key>)
+                                      -> Receiver<AtomicTransactionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
     {
         let (sender, receiver)
-            = crossbeam_channel::bounded(1);
+            = crossbeam_channel::unbounded();
 
-        let snapshot: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> = unsafe {
-            mem::transmute(self.index.deref())
-        };
+        let index: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+            = unsafe { mem::transmute(self.index.as_ref()) };
 
         self.pool.spawn(move || unsafe {
-            let si
-                = snapshot.snapshot_for(tx.snapshot());
+            let result
+                = index.dispatch_atomic_transaction(tx);
 
-            let mv_tree: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
-                = mem::transmute(si.mv_tree());
+            let result: AtomicTransactionResult<'static, FAN_OUT, NUM_RECORDS, Key>
+                = mem::transmute(result);
 
-            sender.send(mv_tree.dispatch_transaction(tx));
-        });
-
-        receiver
-    }
-
-    pub fn execute_atomic_transaction(&self, tx: AtomicTransaction<Key>)
-    -> Receiver<AtomicTransactionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
-    {
-        let (sender, receiver)
-            = crossbeam_channel::bounded(1);
-
-        let snapshot: &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> = unsafe {
-            mem::transmute(self.index.deref())
-        };
-
-        self.pool.spawn(move || {
-            sender.send(snapshot.dispatch_atomic_transaction(tx));
+            sender.send(result);
         });
 
         receiver

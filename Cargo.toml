@@ -18,6 +18,7 @@ hardware-lock-elision = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+threadpool = "1.8.1"
 crossbeam-channel = "0.5.11"
 rayon = "1.8.1"
 num_cpus = "1.16.0"
