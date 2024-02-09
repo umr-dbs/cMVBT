@@ -1,6 +1,6 @@
 # Multi Version B+Tree (MV-BPlusTree) Repository
-- Build: 07.01.2024
-- Version: 0.0.18 (Beta)
+- Build: 09.01.2024
+- Version: 0.0.19 (Beta)
 ---------------------------------------
 # Concurrency Controls
 - **MonoWriter**:
@@ -20,6 +20,11 @@
 - ### Snapshot Isolation
   - Atomic Transaction: A single CRUD Operation on a Snapshot.
   - Transaction: Collection of CRUD on a Snapshot.
+# Transaction Manager
+  - Execute Transactions
+  - Execute AtomicTransactions
+  - Execute Non-reader Transactions
+  - Execute Non-reader AtomicTransactions
 ---------------------------------------
 # Build
 #### Requirements:

@@ -17,6 +17,8 @@ use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::record_model::version_info::Version;
 use crate::tree::locking_strategy::LockingStrategy;
+use crate::tx_model::transaction::AtomicTransaction;
+use crate::tx_model::tx_api::TransactionDispatcher;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
@@ -47,6 +49,54 @@ pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
+
+#[inline(always)]
+pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key>]) -> (u128, u64) {
+    let mut data_buff = operations_queue
+        .iter()
+        .chunks(operations_queue.len() / worker_threads)
+        .into_iter()
+        .map(|s| s.into_iter().cloned().collect::<Vec<_>>())
+        .collect::<VecDeque<_>>();
+
+    if data_buff.len() > worker_threads {
+        let back = data_buff.pop_back().unwrap();
+        data_buff.front_mut().unwrap().extend(back);
+    }
+
+    let mut handles
+        = Vec::with_capacity(worker_threads);
+
+    let start = SystemTime::now();
+    for _ in 1..=worker_threads {
+        let current_chunk
+            = data_buff.pop_front().unwrap();
+
+        let index = tree.clone();
+        handles.push(spawn(move || {
+            let mut counter_errs = 0;
+            current_chunk
+                .into_iter()
+                .for_each(|next_query| match index.dispatch_atomic_transaction(next_query) { // tree.execute(operation),
+                    Err(..) => counter_errs += 1,
+                    _ => {}
+                });
+            counter_errs
+        }));
+    }
+
+    let errs = handles
+        .into_iter()
+        .map(|handle| handle
+            .join()
+            .unwrap()
+        ).fold(0, |errors, n_e| errors + n_e);
+
+    let time_elapsed
+        = SystemTime::now().duration_since(start).unwrap();
+
+    (time_elapsed.as_millis(), errs)
+}
 
 #[inline(always)]
 pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
