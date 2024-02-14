@@ -1,6 +1,12 @@
-# Multi Version B+Tree (MV-BPlusTree) Repository
-- Build: 09.01.2024
-- Version: 0.0.19 (Beta)
+# Multi Version B+Tree
+- Release Date: 14.02.2024
+- Latest Version: 0.0.20 (Beta)
+#### Requirements:
+- OS:          Linux/Windows
+- Rustc:       >= 1.60.0 (2021 Edition)
+
+#### Build:
+- Standalone as `cargo build --release`.
 ---------------------------------------
 # Concurrency Controls
 - **MonoWriter**:
@@ -25,14 +31,6 @@
   - Execute AtomicTransactions
   - Execute Non-reader Transactions
   - Execute Non-reader AtomicTransactions
----------------------------------------
-# Build
-#### Requirements:
-- OS:          Linux
-- Rustc:       >= 1.60.0 (2021 Edition)
-    
-#### Build:
-- Standalone as `cargo build --release`.
 ---------------------------------------
 # Contact
     Name:               Amir El-Shaikh

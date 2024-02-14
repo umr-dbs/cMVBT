@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.18"
+version = "0.0.20"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -18,11 +18,11 @@ hardware-lock-elision = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-threadpool = "1.8.1"
+rb_tree = "0.5.0"
 crossbeam-channel = "0.5.11"
 rayon = "1.8.1"
 num_cpus = "1.16.0"
-chrono = "0.4.33"
+chrono = "0.4.34"
 rand = "0.8.5"
 itertools = "0.12.1"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }

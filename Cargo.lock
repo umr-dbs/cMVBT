@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "MV-BPlusTree"
-version = "0.0.18"
+version = "0.0.20"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -14,7 +14,7 @@ dependencies = [
  "parking_lot",
  "rand",
  "rayon",
- "threadpool",
+ "rb_tree",
 ]
 
 [[package]]
@@ -67,9 +67,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f13690e35a5e4ace198e7beea2895d29f3a9cc55015fcebe6336bd2010af9eb"
+checksum = "5bc015644b92d5890fab7489e49d21f879d5c990186827d42ec511919404f38b"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -328,6 +328,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rb_tree"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6724c78e033e1c4155b4d3f76593d09ad384739c6986c1addc2bd2f55b1aefe"
+
+[[package]]
 name = "redox_syscall"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -357,15 +363,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "threadpool"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
-dependencies = [
- "num_cpus",
 ]
 
 [[package]]

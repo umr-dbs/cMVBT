@@ -351,8 +351,7 @@ impl<const FAN_OUT: usize,
             ) => {
                 let new_root_block = self
                     .block_manager
-                    .new_empty_index_block()
-                    .into_cell(self.locking_strategy.latch_type());
+                    .new_empty_index_block(self.locking_strategy.latch_type());
 
                 let root_internal_page = new_root_block
                     .unsafe_borrow_mut()
@@ -592,7 +591,8 @@ impl<const FAN_OUT: usize,
                         BlockUnsafeDegree::ActiveUnderflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
                             && curr_len == curr_guard.deref().unwrap().len() =>
-                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
+                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
+                                .unwrap(),
                         BlockUnsafeDegree::Ok => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
@@ -707,6 +707,10 @@ impl<const FAN_OUT: usize,
             }
         }
 
+        self.block_manager.register_dead(
+            (internal_page.get_version_ptr(child_index),
+             internal_page.get_pointer(child_index).clone()));
+
         mufasa
     }
 
@@ -715,7 +719,7 @@ impl<const FAN_OUT: usize,
         mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
         index_simba: usize)
-        -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>
+        -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>, ()>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
@@ -777,7 +781,14 @@ impl<const FAN_OUT: usize,
                 mufasa_internal_page
                     .commit_until(mufasa_len);
 
-                mufasa
+                self.block_manager.register_dead_col([
+                    (mufasa_internal_page.get_version_ptr(index_simba),
+                    mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (mufasa_internal_page.get_version_ptr(index_sibling),
+                     mufasa_internal_page.get_pointer(index_sibling).clone())
+                ]);
+
+                Ok(mufasa)
             }
             MergeResult::KeySplit(
                 index_sibling,
@@ -840,9 +851,16 @@ impl<const FAN_OUT: usize,
                 mufasa_internal_page
                     .commit_until(mufasa_len + 1);
 
-                mufasa
+                self.block_manager.register_dead_col([
+                    (mufasa_internal_page.get_version_ptr(index_simba),
+                     mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (mufasa_internal_page.get_version_ptr(index_sibling),
+                     mufasa_internal_page.get_pointer(index_sibling).clone())
+                ]);
+
+                Ok(mufasa)
             }
-            _ => unreachable!("Jesus Christ! Call a Priest!")
+            _ => Err(()),
         }
     }
 }

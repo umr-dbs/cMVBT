@@ -10,9 +10,10 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::block::block::Block;
 use crate::tree::mvbplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
-use crate::crud_model::crud_operation::CRUDOperation;
+use crate::crud_model::crud_operation::{CRUDOperation, TxAtomicOperation};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::internal_page::TimeMatcher;
+use crate::page_model::node::Node;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
@@ -65,7 +66,7 @@ fn main() {
     // let tree
     //     = MVTree::orwc();
 
-    let insertions = 10_000_000_u64;
+    // let insertions = 1_000_000_u64;
     // let mut last_insert_version = Version::MIN;
     // let mut version_inserts = vec![];
     //
@@ -147,51 +148,67 @@ fn main() {
     //     tree.clone(),
     //     insertions.as_slice());
 
+    let insertions = 1_000_000_u64;
 
-    // let insertions_tx = (0u64..insertions)
+    let mut insertions_tx = (0u64..insertions)
+        .map(|key| AtomicTransaction::new_latest_si(TxAtomicOperation::Insert(key, mk_payload())))
+        .collect_vec();
+
+    insertions_tx.shuffle(&mut thread_rng());
+
+    let mut tx_manager = TransactionManager::new_with_gc(
+        24, MVTree::orwc_optimistic_clock());
+
+    tx_manager.disable_gc();
+
+    let start = SystemTime::now();
+    insertions_tx
+        .into_iter()
+        .for_each(|tx|
+            tx_manager.execute_tx_non_reader(tx));
+
+
+    let lookups =
+        (0..insertions).map(|key|
+            AtomicTransaction::from_crud(TxAtomicOperation::Point(key, key)));
+
+    lookups
+        .into_iter()
+        .for_each(|tx|
+            tx_manager.execute_tx_non_reader(tx));
+
+
+    tx_manager.join();
+
+    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
+
+    println!("Time = {end}");
+
+    //
+    // let mut insertions_vec = (0u64..insertions)
     //     .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
     //     .collect_vec();
     //
-    // let tx_manager = TransactionManager::new(
-    //     24, MVTree::olc_optimistic_clock());
+    // insertions_vec.shuffle(&mut thread_rng());
+
+
+    // println!("Insertions,Threads,Protocol,Clock,Time");
+    // for btree in [
+    //     MVTree::olc_optimistic_clock(),
+    //     MVTree::lhl_optimistic_clock(),
+    //     MVTree::orwc_optimistic_clock()]
+    // {
+    //     for threads in [1, 2, 4, 8, 16, 32, 64] {
+    //         let tree = Arc::new(btree.make_empty_copy());
     //
-    // let start = SystemTime::now();
-    // insertions_tx
-    //     .into_iter()
-    //     .for_each(|tx|
-    //         tx_manager.execute_atomic_transaction_non_reader(tx));
+    //         let (time, ..)
+    //             = test::bulk_atomic_tx(threads, tree.clone(), insertions_vec.as_slice());
     //
-    // tx_manager.join();
-    //
-    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-    //
-    // println!("Time = {end}");
-
-    //
-    let mut insertions_vec = (0u64..insertions)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
-        .collect_vec();
-
-    insertions_vec.shuffle(&mut thread_rng());
-
-
-    println!("Insertions,Threads,Protocol,Clock,Time");
-    for btree in [
-        MVTree::olc_optimistic_clock(),
-        MVTree::lhl_optimistic_clock(),
-        MVTree::orwc_optimistic_clock()]
-    {
-        for threads in [1, 2, 4, 8, 16, 32, 64] {
-            let tree = Arc::new(btree.make_empty_copy());
-
-            let (time, ..)
-                = test::bulk_atomic_tx(threads, tree.clone(), insertions_vec.as_slice());
-
-            println!("{insertions},{threads},{},{},{time}",
-                     tree.locking_strategy(),
-                     tree.clock_type());
-        }
-    }
+    //         println!("{insertions},{threads},{},{},{time}",
+    //                  tree.locking_strategy(),
+    //                  tree.clock_type());
+    //     }
+    // }
     // let snapshot =
     //     tree.current_version();
     //

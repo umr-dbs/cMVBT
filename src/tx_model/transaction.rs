@@ -75,16 +75,21 @@ impl<Key: Ord + Copy + Hash + Default + Display> AtomicTransaction<Key> {
     }
 
     #[inline(always)]
+    pub const fn new_latest_si(crud: CRUDOperation<Key>) -> Self {
+        Self {
+            snapshot: None,
+            crud
+        }
+    }
+
+    #[inline(always)]
     pub fn into_transaction(self) -> Transaction<Key> {
         Transaction::new(self.snapshot, VecDeque::from([self.crud]))
     }
 
     #[inline(always)]
     pub const fn from_crud(crud: CRUDOperation<Key>) -> Self {
-        Self {
-            snapshot: None,
-            crud
-        }
+        Self::new_latest_si(crud)
     }
 
     #[inline(always)]

@@ -5,6 +5,8 @@ use crate::crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Ins
 use crate::record_model::record_point::Payload;
 use crate::record_model::version_info::Version;
 
+pub type TxAtomicOperation<Key> = CRUDOperation<Key>;
+
 /// Transactions definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
 #[derive(Clone, Default)]

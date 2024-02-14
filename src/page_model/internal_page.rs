@@ -13,9 +13,11 @@ use crate::utils::interval::Interval;
 type Len = AtomicU16;
 
 const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
+pub const OOO_REUSED_VERSION_MARK: Version = 0x40_00000000000000;
 
 pub trait TimeMatcher {
     fn match_version(self, other: Version) -> bool;
+    fn lt(self, other: Version) -> bool;
 
     fn is_obsolete(&self) -> bool;
 
@@ -26,6 +28,11 @@ impl TimeMatcher for Version {
     #[inline(always)]
     fn match_version(self, other: Version) -> bool {
         self & !OBSOLETE_VERSION_MARK <= other
+    }
+
+    #[inline(always)]
+    fn lt(self, other: Version) -> bool {
+        self & !OBSOLETE_VERSION_MARK < other
     }
 
     #[inline(always)]
@@ -176,6 +183,20 @@ impl<const FAN_OUT: usize,
     //     }
     // }
 
+    #[inline]
+    pub fn on_reuse(&mut self) {
+        let len = self.len();
+        self.len.store(0, Release);
+
+        unsafe {
+            (0..len).for_each(|index| {
+                ptr::drop_in_place(self.pointer_region
+                    .as_mut_ptr()
+                    .add(index) as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>);
+            });
+        }
+    }
+
     #[inline(always)]
     pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
         let children = self
@@ -315,6 +336,16 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn get_version_mut(&mut self, index: usize) -> &mut Version {
         unsafe { &mut *(self.version_region.as_mut_ptr().add(index) as *mut Version) }
+    }
+
+    #[inline(always)]
+    pub fn get_version(&self, index: usize) -> Version {
+        unsafe { *(self.version_region.as_ptr().add(index) as *const Version) }
+    }
+
+    #[inline(always)]
+    pub fn get_version_ptr(&self, index: usize) -> *mut Version {
+        unsafe { (self.version_region.as_ptr().add(index) as *mut Version) }
     }
 
     #[inline(always)]

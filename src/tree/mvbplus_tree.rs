@@ -196,6 +196,7 @@ pub(crate) enum MergeResult<
     KeySplit(usize,
              BlockSplit<FAN_OUT, NUM_RECORDS, Key>,
              BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>),
+    Error,
 }
 
 impl<const FAN_OUT: usize,
@@ -239,19 +240,31 @@ impl<const FAN_OUT: usize,
                 (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
             .collect_vec();
 
+        let mut compute_candidate = ||
+            match all_candidates.binary_search_by_key(&simba_fence.lower, |(.., f)| f.lower) {
+                Ok(index) => Ok(all_candidates.remove(index)),
+                Err(index) => if index < all_candidates.len() {
+                    Ok(all_candidates.remove(index))
+                } else if !all_candidates.is_empty() {
+                    return Ok(all_candidates.pop().unwrap())
+                } else {
+                    return Err(())
+                },
+            };
+
         let (candidate_index,
             candidate_guard,
             _candidate_block,
             candidate_active_count,
             candidate_fence
-        ) = match all_candidates.binary_search_by_key(&simba_fence.lower, |(.., f)| f.lower) {
-            Err(index)  => if index < all_candidates.len() {
-                all_candidates.remove(index)
+        ) = loop {
+            match compute_candidate() {
+                Ok((_, candidate_guard, ..))
+                    if !candidate_guard.is_valid() => return MergeResult::Error,
+                Ok(r) => {}
+                    Ok(r) => break r,
+                _ => return MergeResult::Error
             }
-            else {
-                all_candidates.remove(index - 1)
-            },
-            Ok(index) => all_candidates.remove(index),
         };
 
         all_candidates.clear();
@@ -260,8 +273,7 @@ impl<const FAN_OUT: usize,
             let combined_block = match is_simba_leaf {
                 false => {
                     let mut combined_block = self.block_manager
-                        .new_empty_index_block()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_index_block(self.locking_strategy.latch_type());
 
                     let (keys, versions, pointers)
                         = simba.as_internal_page_ref().keys_versions_pointers();
@@ -294,8 +306,7 @@ impl<const FAN_OUT: usize,
                 }
                 true => {
                     let mut combined_block = self.block_manager
-                        .new_empty_leaf()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_leaf(self.locking_strategy.latch_type());
 
                     combined_block
                         .unsafe_borrow_mut()
@@ -353,12 +364,10 @@ impl<const FAN_OUT: usize,
                         r.version().insert_version);
 
                     let mut combined_block_0 = self.block_manager
-                        .new_empty_leaf()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_leaf(self.locking_strategy.latch_type());
 
                     let mut combined_block_1 = self.block_manager
-                        .new_empty_leaf()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_leaf(self.locking_strategy.latch_type());
 
                     combined_block_0
                         .unsafe_borrow_mut()
@@ -420,12 +429,10 @@ impl<const FAN_OUT: usize,
                     second.sort_by_key(|((.., v), ..)| **v);
 
                     let mut combined_block_0 = self.block_manager
-                        .new_empty_index_block()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_index_block(self.locking_strategy.latch_type());
 
                     let mut combined_block_1 = self.block_manager
-                        .new_empty_index_block()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_index_block(self.locking_strategy.latch_type());
 
                     combined_block_0
                         .unsafe_borrow_mut()
@@ -465,11 +472,9 @@ impl<const FAN_OUT: usize,
                 true => unsafe { // LeafPage
                     let (left, right) =
                         (self.block_manager
-                             .new_empty_leaf()
-                             .into_cell(self.locking_strategy.latch_type()),
+                             .new_empty_leaf(self.locking_strategy.latch_type()),
                          self.block_manager
-                             .new_empty_leaf()
-                             .into_cell(self.locking_strategy.latch_type()));
+                             .new_empty_leaf(self.locking_strategy.latch_type()));
 
                     let mut sorted_block = block
                         .as_records()
@@ -505,11 +510,9 @@ impl<const FAN_OUT: usize,
                 false => unsafe { // KEY_SPLIT InternalPage
                     let (left, right) =
                         (self.block_manager
-                             .new_empty_index_block()
-                             .into_cell(self.locking_strategy.latch_type()),
+                             .new_empty_index_block(self.locking_strategy.latch_type()),
                          self.block_manager
-                             .new_empty_index_block()
-                             .into_cell(self.locking_strategy.latch_type()));
+                             .new_empty_index_block(self.locking_strategy.latch_type()));
 
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
@@ -554,8 +557,7 @@ impl<const FAN_OUT: usize,
             match is_leaf {
                 true => { // LeafPage
                     let new_leaf = self.block_manager
-                        .new_empty_leaf()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_leaf(self.locking_strategy.latch_type());
 
                     let active_records = block
                         .as_records()
@@ -572,8 +574,7 @@ impl<const FAN_OUT: usize,
                 }
                 false => { // VERSION SPLIT InternalPage
                     let new_internal_page = self.block_manager
-                        .new_empty_index_block()
-                        .into_cell(self.locking_strategy.latch_type());
+                        .new_empty_index_block(self.locking_strategy.latch_type());
 
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
@@ -615,7 +616,7 @@ impl<const FAN_OUT: usize,
         Self::make_smart_root(locking_strategy.latch_type(), root_item)
     }
 
-    pub(crate) fn clock_type(&self) -> ClockType  {
+    pub(crate) fn clock_type(&self) -> ClockType {
         match self.version_manager.committed_version {
             GlobalClock::Locked(_) => ClockType::SYNCED,
             GlobalClock::Atomic(_) => ClockType::OPTIMISTIC,
@@ -629,7 +630,7 @@ impl<const FAN_OUT: usize,
                 Mutex::new(()),
                 SafeCell::new(root_item), ),
             LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
-                RwLock::new(()),
+                Mutex::new(()),
                 SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
                 OptCell::new(root_item)),
@@ -652,7 +653,7 @@ impl<const FAN_OUT: usize,
     {
         let root_item = RootItem {
             root: Root::new(
-                block_manager.new_empty_leaf().into_cell(locking_strategy.latch_type()),
+                block_manager.new_empty_leaf(locking_strategy.latch_type()),
                 version,
                 height,
             ),
@@ -664,7 +665,7 @@ impl<const FAN_OUT: usize,
                 Mutex::new(()),
                 SafeCell::new(root_item), ),
             LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
-                RwLock::new(()),
+                Mutex::new(()),
                 SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
                 OptCell::new(root_item)),
@@ -714,21 +715,21 @@ impl<const FAN_OUT: usize,
     }
 
 
-    #[inline]
-    pub(crate) fn apply_for_root(
-        &self,
-        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-        attempts: Attempts,
-        height: Height,
-    ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
-    {
-        self.apply_for_ref(
-            curr,
-            height,
-            INIT_TREE_HEIGHT,
-            attempts,
-            Level::MAX)
-    }
+    // #[inline]
+    // pub(crate) fn apply_for_root(
+    //     &self,
+    //     curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+    //     attempts: Attempts,
+    //     height: Height,
+    // ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
+    // {
+    //     self.apply_for_ref(
+    //         curr,
+    //         height,
+    //         INIT_TREE_HEIGHT,
+    //         attempts,
+    //         Level::MAX)
+    // }
 
     #[inline]
     pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
@@ -763,7 +764,7 @@ impl<const FAN_OUT: usize,
         curr_level: Level,
         attempts: Attempts,
         max_level: Level,
-    ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
+    ) -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key>
     {
         match self.locking_strategy() {
             LockingStrategy::ORWC {
@@ -779,14 +780,19 @@ impl<const FAN_OUT: usize,
             } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
                 (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
                 curr.borrow_pin(),
-            LockingStrategy::MonoWriter =>
-                curr.borrow_free(),
+            LockingStrategy::HybridLocking {
+                read_attempt
+            } if curr.unsafe_borrow().as_ref().is_leaf() ||
+                attempts > *read_attempt || height <= curr_level || curr_level >= max_level =>
+                curr.borrow_mut(),
             LockingStrategy::LockCoupling =>
                 curr.borrow_mut(),
-            LockingStrategy::OLC => curr.borrow_read(),
-            LockingStrategy::ORWC { .. } => curr.borrow_read(),
-            LockingStrategy::LightweightHybridLock { .. } => curr.borrow_read(),
-            LockingStrategy::HybridLocking { .. } => curr.borrow_mut()
+            LockingStrategy::MonoWriter =>
+                curr.borrow_free(),
+            LockingStrategy::OLC |
+            LockingStrategy::ORWC { .. } |
+            LockingStrategy::LightweightHybridLock { .. } |
+            LockingStrategy::HybridLocking { .. } => curr.borrow_read(),
         }
     }
     #[inline(always)]

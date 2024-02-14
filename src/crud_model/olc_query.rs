@@ -196,7 +196,10 @@ impl<const FAN_OUT: usize,
                         BlockUnsafeDegree::ActiveUnderflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
                             && curr_len == curr_guard.deref().unwrap().len() =>
-                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index),
+                            match self.on_underflow_node(curr_guard, next_curr_guard, index) {
+                                Ok(guard) => curr_guard = guard,
+                                Err(..) => return Err((curr_level - 1, attempts + 1))
+                            },
                         BlockUnsafeDegree::Ok => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;

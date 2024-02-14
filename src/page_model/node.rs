@@ -92,6 +92,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn on_reuse(&mut self) {
+        match self {
+            Node::Index(internal_page) => internal_page.on_reuse(),
+            Node::Leaf(leaf_page) => leaf_page.on_reuse()
+        }
+    }
+
+    #[inline(always)]
     pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key>{
         match self {
             Node::Index(internal_page) => internal_page,

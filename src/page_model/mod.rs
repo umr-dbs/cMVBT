@@ -30,7 +30,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn into_rw(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
         SmartCell(Arc::new(SmartFlavor::ReadersWriterCell(
-            RwLock::new(()),
+            Mutex::new(()),
             SafeCell::new(self))))
     }
 

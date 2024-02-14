@@ -164,11 +164,23 @@ impl<const NUM_RECORDS: usize,
     #[inline]
     pub fn undo_uncommitted(&mut self, index: usize) {
         unsafe {
-            self.record_data
+            ptr::drop_in_place(self.record_data
                 .as_mut_ptr()
-                .add(index)
-                .read()
-                .assume_init();
+                .add(index) as *mut RecordPoint<Key>);
+        }
+    }
+
+    #[inline]
+    pub fn on_reuse(&mut self) {
+        let len = self.len();
+        self.len.store(0, Release);
+
+        unsafe {
+            (0..len).for_each(|index| {
+                ptr::drop_in_place(self.record_data
+                    .as_mut_ptr()
+                    .add(index) as *mut RecordPoint<Key>);
+            });
         }
     }
 
