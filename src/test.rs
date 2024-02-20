@@ -163,7 +163,7 @@ pub fn test01(mut tree: Tree) {
 
         println!("{EVENT_COUNT},{threads},{protocol},{errors},{time},{EVENT_COUNT},0");
 
-        tree = TREE(protocol.clone());
+        tree = Tree::new(tree.make_empty_copy());
     }
 }
 
@@ -192,7 +192,7 @@ pub fn test02(mut tree: Tree) {
 
         println!("{total},{threads},{protocol},{errors},{time},{EVENT_COUNT},{READER_COUNT}");
 
-        tree = TREE(protocol.clone());
+        tree = Tree::new(tree.make_empty_copy());
     }
 }
 

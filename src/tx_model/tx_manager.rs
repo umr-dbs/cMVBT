@@ -8,7 +8,9 @@ use crossbeam_channel::{at, Receiver};
 use parking_lot::Mutex;
 use rayon::ThreadPool;
 use rb_tree::RBTree;
-use crate::tree::mvbplus_tree::MVBPlusTree;
+use crate::record_model::version_info::Version;
+use crate::tree::locking_strategy::LockingStrategy;
+use crate::tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
 use crate::tx_model::tx_api::TransactionDispatcher;
 use crate::utils::safe_cell::SafeCell;
@@ -107,6 +109,22 @@ impl<const FAN_OUT: usize,
             TransactionHolder::Multi(tx) => tx.snapshot
         }
     }
+
+    #[inline(always)]
+    pub fn set_snapshot(&mut self, si: Option<SnapShot>) {
+        match self {
+            TransactionHolder::Atomic(atomic) => atomic.snapshot = si,
+            TransactionHolder::Multi(tx) => tx.snapshot = si
+        }
+    }
+
+    #[inline(always)]
+    fn snapshot_version(&self) -> SnapShot {
+        match self {
+            TransactionHolder::Atomic(atomic) => atomic.snapshot(),
+            TransactionHolder::Multi(tx) => tx.snapshot()
+        }
+    }
 }
 
 pub type ActiveTransactions = Arc<Mutex<RBTree<SnapShot>>>;
@@ -121,7 +139,7 @@ pub struct TransactionManager<
 > {
     active_tx: Option<ActiveTransactions>,
     pool: ThreadPool,
-    index: SafeCell<NonNull<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>>,
+    index: SafeCell<Box<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>>,
 }
 
 impl<const FAN_OUT: usize,
@@ -136,7 +154,20 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn tx_dispatcher(&self) -> TxDispatcher<FAN_OUT, NUM_RECORDS, Key> {
-        unsafe { mem::transmute(self.index.get_mut().as_ref()) }
+        unsafe { mem::transmute(self.index()) }
+    }
+
+    #[inline(always)]
+    pub fn index(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+        self.index.as_ref().as_ref()
+    }
+
+    pub fn locking_protocol(&self) -> &LockingStrategy {
+        &self.index.as_ref().as_ref().locking_strategy
+    }
+
+    pub fn clock_type(&self) -> ClockType {
+        self.index.as_ref().as_ref().clock_type()
     }
 
     pub fn disable_gc(&mut self) {
@@ -150,18 +181,24 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    #[inline(always)]
+    pub fn threads(&self) -> usize {
+        self.pool.current_num_threads()
+    }
+
     pub fn enable_gc(&mut self) {
         self.active_tx = Some(Arc::new(Default::default()));
         unsafe {
+            let clone = self.active_tx();
             self.index
                 .as_mut()
                 .as_mut()
                 .block_manager
-                .set_active_tx_for_gc(self.active_tx());
+                .set_active_tx_for_gc(clone);
         }
     }
 
-    pub fn join(self) {
+    pub fn join(&self) {
         self.pool.join(|| {}, || {});
     }
 
@@ -173,7 +210,7 @@ impl<const FAN_OUT: usize,
                 .thread_name(|t| format!("TxRunner{}", t))
                 .build()
                 .unwrap(),
-            index: SafeCell::new(NonNull::new(Box::leak(Box::new(index))).unwrap()),
+            index: SafeCell::new(Box::new(index)),
         }
     }
 
@@ -185,86 +222,103 @@ impl<const FAN_OUT: usize,
                 .thread_name(|t| format!("TxRunner{}", t))
                 .build()
                 .unwrap(),
-            index: SafeCell::new(NonNull::new(Box::leak(Box::new(index))).unwrap()),
+            index: SafeCell::new(Box::new(index)),
         };
 
         unsafe {
+            let clone = manager.active_tx();
             manager
                 .index
                 .as_mut()
                 .as_mut()
                 .block_manager
-                .set_active_tx_for_gc(manager.active_tx());
+                .set_active_tx_for_gc(clone);
         }
 
         manager
+    }
+
+    #[inline(always)]
+    fn enq_bookkeeping(&self, tx: &mut TransactionHolder<FAN_OUT, NUM_RECORDS, Key>) -> bool {
+        if let Some(si) = tx.snapshot() {
+            self.active_tx.as_ref().map(|active_list|
+                active_list.lock().insert(si)
+            ).unwrap_or(false)
+        } else {
+            let curr_si = unsafe { self.index.as_ref().as_ref().current_version() };
+            tx.set_snapshot(curr_si.into());
+
+            self.active_tx.as_ref().map(|active_list|
+                active_list.lock().insert(curr_si)
+            ).unwrap_or(false)
+        }
+    }
+
+    fn deq_bookkeeping(bk: bool, active_tx: Option<ActiveTransactions>, snap_shot: Option<SnapShot>) {
+        // bk.then(|| snap_shot.map(|si| active_tx.as_ref().map(|active_list|
+        //     active_list.lock().remove(&si))));
+        if bk {
+            if let Some(si) = snap_shot {
+                active_tx.as_ref().map(|active_list|
+                    active_list.lock().remove(&si));
+            }
+        }
     }
 
     #[inline]
     pub fn execute_tx<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>>>(&self, tx: Tx)
     -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
     {
-        self.execute_tx_reader_internal(tx.into())
+        let mut tx = tx.into();
+        let bk = self.enq_bookkeeping(&mut tx);
+        self.execute_tx_reader_internal(tx, bk)
     }
 
     #[inline]
     pub fn execute_tx_non_reader<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>>>(&self, tx: Tx) {
-        self.execute_tx_non_reader_internal(tx.into())
+        let mut tx = tx.into();
+        let bk = self.enq_bookkeeping(&mut tx);
+        self.execute_tx_non_reader_internal(tx, bk)
     }
 
     #[inline(always)]
-    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>) {
+    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>, bk: bool) {
         let dispatcher
             = self.tx_dispatcher();
 
-        let active_query
+        let deq_active_query
             = self.active_tx();
 
         self.pool.spawn(move || {
-            let _ = Self::execute_internal(dispatcher, tx, active_query);
+            let si
+                = tx.snapshot();
+
+            let _ = tx.execute(dispatcher);
+            Self::deq_bookkeeping(bk, deq_active_query, si);
         });
     }
 
     #[inline(always)]
-    fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>)
+    fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>, bk: bool)
                                   -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
     {
         let dispatcher
             = self.tx_dispatcher();
 
-        let active_query
+        let deq_active_query
             = self.active_tx();
 
         let (sender, receiver)
             = crossbeam_channel::unbounded();
 
         self.pool.spawn(move || {
-            let _ = sender.send(Self::execute_internal(dispatcher, tx, active_query));
+            let si
+                = tx.snapshot();
+
+            let _ = sender.send(tx.execute(dispatcher));
+            Self::deq_bookkeeping(bk, deq_active_query, si);
         });
 
         receiver
-    }
-
-    #[inline(always)]
-    fn execute_internal(
-        dispatcher: TxDispatcher<FAN_OUT, NUM_RECORDS, Key>,
-        txh: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>,
-        active_list: Option<ActiveTransactions>,
-    ) -> TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key>
-    {
-        let remove_maybe = if let Some(si) = txh.snapshot() {
-            active_list.map(|active_list| {
-                active_list.lock().insert(si);
-                move || { active_list.lock().remove(&si); }
-            })
-        } else {
-            None
-        };
-
-        let result
-            = txh.execute(dispatcher);
-
-        remove_maybe.inspect(|f| f());
-        result
     }
 }

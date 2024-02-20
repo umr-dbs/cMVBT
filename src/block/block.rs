@@ -4,10 +4,11 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
 use crate::block::block_manager::BlockManager;
 
-use crate::page_model::BlockRef;
+use crate::page_model::{BlockRef, node};
 use crate::page_model::leaf_page::LeafPage;
-use crate::page_model::node::Node;
+use crate::page_model::node::{Node, PageType};
 use crate::utils::interval::Interval;
+use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
 
 #[repr(u8)]
@@ -59,16 +60,27 @@ impl<const FAN_OUT: usize,
 // #[repr(align(4096))]
 // #[repr(packed)]
 #[repr(align(4096))]
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct Block<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
 > {
     // pub block_id: BlockID,
-    pub node_data: Node<FAN_OUT, NUM_RECORDS, Key>,
+    pub node_data: SafeCell<Node<FAN_OUT, NUM_RECORDS, Key>>,
 }
 
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display,
+> Clone for Block<FAN_OUT, NUM_RECORDS, Key>
+{
+    fn clone(&self) -> Self {
+        Self {
+            node_data: SafeCell::new(self.node_data.as_ref().clone())
+        }
+    }
+}
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
@@ -77,7 +89,7 @@ impl<const FAN_OUT: usize,
     fn default() -> Self {
         Block {
             // block_id: 0,
-            node_data: Node::Leaf(LeafPage::new()),
+            node_data: SafeCell::new(Node::new_leaf()),
         }
     }
 }
@@ -140,23 +152,22 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub(crate) fn active_count(&self) -> usize {
-        match self.as_ref() {
-            Node::Index(internal_page) =>
-                internal_page.active_count(),
-            Node::Leaf(leaf_page) =>
-                leaf_page.active_count()
+        match self.as_page_ref() {
+            PageType::IndexRef(internal_page) => internal_page.active_count(),
+            PageType::LeafRef(leaf_page) => leaf_page.active_count(),
+            _ => unreachable!()
         }
     }
 
-    #[inline(always)]
-    pub(crate) fn active_dead(&self) -> (usize, usize) {
-        match self.as_ref() {
-            Node::Index(internal_page) =>
-                internal_page.active_dead(),
-            Node::Leaf(leaf_page) =>
-                leaf_page.active_dead()
-        }
-    }
+    // #[inline(always)]
+    // pub(crate) fn active_dead(&self) -> (usize, usize) {
+    //     match self.as_ref() {
+    //         Node::Index(internal_page) =>
+    //             internal_page.active_dead(),
+    //         Node::Leaf(leaf_page) =>
+    //             leaf_page.active_dead()
+    //     }
+    // }
 
     #[inline(always)]
     pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {

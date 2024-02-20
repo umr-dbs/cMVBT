@@ -6,14 +6,18 @@ use chrono::{DateTime, Local};
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+// use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::block::block::Block;
 use crate::tree::mvbplus_tree;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::{CRUDOperation, TxAtomicOperation};
+use crate::crud_model::crud_operation::CRUDOperation::Point;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
-use crate::page_model::internal_page::TimeMatcher;
+use crate::crud_model::query::RangeQueryIter;
+use crate::page_model::internal_page::{InternalPage, TimeMatcher};
+use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
+use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
@@ -49,6 +53,17 @@ pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
 fn main() {
     make_splash();
 
+    // println!("{}", mem::align_of::<Block<FAN_OUT, NUM_RECORDS, Key>>());
+    // println!("InternalPage Align = {}, Size = {}",
+    //          mem::align_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key>>(),
+    //          mem::size_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key>>(),
+    // );
+    //
+    // println!("LeafPage Align = {}, Size = {}",
+    //          mem::align_of::<LeafPage<NUM_RECORDS, Key>>(),
+    //          mem::size_of::<LeafPage<NUM_RECORDS, Key>>(),
+    // );
+
     // let trees = vec![
     //     Arc::new(MVTree::orwc_optimistic_clock()),
     //     Arc::new(MVTree::lhl_optimistic_clock()),
@@ -63,10 +78,10 @@ fn main() {
 
     assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
 
-    // let tree
-    //     = MVTree::orwc();
+    let tree
+        = Arc::new(MVTree::olc_optimistic_clock());
 
-    // let insertions = 1_000_000_u64;
+    let insertions = 10_000_000_u64;
     // let mut last_insert_version = Version::MIN;
     // let mut version_inserts = vec![];
     //
@@ -86,7 +101,7 @@ fn main() {
     //         err => println!("Err at insertion {}", err),
     //     }
     // }
-    //
+
     // match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
     //     CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
     //         // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
@@ -137,54 +152,51 @@ fn main() {
     //     .filter(|(.., v)| v.is_active())
     //     .map(|(k, v)|
     //         format!("{k}, v: {v}")).into_iter().join("\n"));
+
+
+    // let mut insertions_vec = (0..insertions)
+    //     .map(|k| CRUDOperation::Insert(k, mk_payload()))
+    //     .collect_vec();
     //
-    // println!("Height = {}", tree.root.unsafe_borrow().height);
-
-    // let end_time = SystemTime::now().duration_since(start_time).unwrap().as_millis();
-    // println!("Insertions = {}, Time = {}", format_insertions(insertions as _), end_time);
-
-    // let (time, errors) = test::bulk_crud(
+    // insertions_vec.extend((0..insertions).map(|k| Point(k, k)));
+    // let (time, ..) = test::bulk_crud(
     //     num_cpus::get(),
     //     tree.clone(),
-    //     insertions.as_slice());
+    //     insertions_vec.as_slice());
+    // //
+    // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
+    println!("Insertions,Threads,Protocol,Clock,Time");
+    // let insertions = 2_000_000_u64;
 
-    let insertions = 1_000_000_u64;
-
-    let mut insertions_tx = (0u64..insertions)
+    let mut all_tx = (0u64..insertions)
         .map(|key| AtomicTransaction::new_latest_si(TxAtomicOperation::Insert(key, mk_payload())))
         .collect_vec();
 
-    insertions_tx.shuffle(&mut thread_rng());
+    all_tx.extend((0..insertions).map(|key|
+        AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
 
+    all_tx.shuffle(&mut thread_rng());
     let mut tx_manager = TransactionManager::new_with_gc(
-        24, MVTree::orwc_optimistic_clock());
+        num_cpus::get(), MVTree::olc_optimistic_clock());
 
-    tx_manager.disable_gc();
+    // tx_manager.disable_gc();
 
     let start = SystemTime::now();
-    insertions_tx
+
+    all_tx
         .into_iter()
         .for_each(|tx|
             tx_manager.execute_tx_non_reader(tx));
-
-
-    let lookups =
-        (0..insertions).map(|key|
-            AtomicTransaction::from_crud(TxAtomicOperation::Point(key, key)));
-
-    lookups
-        .into_iter()
-        .for_each(|tx|
-            tx_manager.execute_tx_non_reader(tx));
-
 
     tx_manager.join();
 
     let end = SystemTime::now().duration_since(start).unwrap().as_millis();
 
-    println!("Time = {end}");
+    println!("{insertions},{},{},{},{end}",
+             tx_manager.threads(),
+             tx_manager.locking_protocol(),
+             tx_manager.clock_type());
 
-    //
     // let mut insertions_vec = (0u64..insertions)
     //     .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
     //     .collect_vec();

@@ -1,20 +1,59 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
+use std::{mem, ptr};
+use std::arch::x86_64::_mm_mfence;
+use std::mem::ManuallyDrop;
+use std::ops::{Deref, Sub};
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::page_model::BlockRef;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
 use crate::record_model::record_point::{Payload, RecordPoint};
 use crate::record_model::version_info::{Version, VersionInfo};
 use crate::utils::interval::Interval;
+use crate::utils::safe_cell::SafeCell;
 
-#[derive(Clone)]
-pub enum Node<
+// #[derive(Clone)]
+// pub enum Node<
+//     const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Display
+// > {
+//     Index(InternalPage<FAN_OUT, NUM_RECORDS, Key>),
+//     Leaf(LeafPage<NUM_RECORDS, Key>),
+// }
+
+pub struct Node<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display
 > {
-    Index(InternalPage<FAN_OUT, NUM_RECORDS, Key>),
-    Leaf(LeafPage<NUM_RECORDS, Key>),
+    m_type: usize,
+    page: InnerPage<FAN_OUT, NUM_RECORDS, Key>,
+}
+
+pub union InnerPage<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display
+> {
+    internal: ManuallyDrop<InternalPage<FAN_OUT, NUM_RECORDS, Key>>,
+    leaf: ManuallyDrop<LeafPage<NUM_RECORDS, Key>>,
+}
+
+pub const PAGE_TYPE_INTERNAL: usize = 0;
+pub const PAGE_TYPE_LEAF: usize = 1;
+
+pub enum PageType<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display
+> {
+    LeafRef(&'a LeafPage<NUM_RECORDS, Key>),
+    IndexRef(&'a InternalPage<FAN_OUT, NUM_RECORDS, Key>),
+    LeafMut(&'a mut LeafPage<NUM_RECORDS, Key>),
+    IndexMut(&'a mut InternalPage<FAN_OUT, NUM_RECORDS, Key>),
 }
 
 impl<const FAN_OUT: usize,
@@ -22,105 +61,195 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash + Display
 > Node<FAN_OUT, NUM_RECORDS, Key> {
     #[inline(always)]
-    pub const fn is_leaf(&self) -> bool {
-        match self {
-            Node::Index(..) => false,
-            _ => true
+    pub const fn m_type(&self) -> usize {
+        self.m_type
+    }
+
+    #[inline(always)]
+    pub fn as_page_ref(&self) -> PageType<FAN_OUT, NUM_RECORDS, Key> {
+        match self.m_type() {
+            PAGE_TYPE_INTERNAL => PageType::IndexRef(self.as_internal_page_ref()),
+            _ => PageType::LeafRef(self.as_leaf_page_ref())
         }
     }
 
     #[inline(always)]
+    pub fn as_page_mut(&mut self) -> PageType<FAN_OUT, NUM_RECORDS, Key> {
+        match self.m_type() {
+            PAGE_TYPE_INTERNAL => PageType::IndexMut(self.as_internal_page()),
+            _ => PageType::LeafMut(self.as_leaf_page())
+        }
+    }
+
+    #[inline(always)]
+    pub const fn new_leaf() -> Self {
+        Self {
+            m_type: PAGE_TYPE_LEAF,
+            page: InnerPage {
+                leaf: ManuallyDrop::new(LeafPage::new())
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub const fn new_internal() -> Self {
+        Self {
+            m_type: PAGE_TYPE_INTERNAL,
+            page: InnerPage {
+                internal: ManuallyDrop::new(InternalPage::new())
+            },
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_leaf(&self) -> bool {
+        self.m_type() == PAGE_TYPE_LEAF
+    }
+
+    #[inline(always)]
     pub fn as_records(&self) -> &[RecordPoint<Key>] {
-        match self {
-            Node::Leaf(records_page) =>
-                records_page.as_records(),
+        match self.m_type() {
+            PAGE_TYPE_LEAF => unsafe {
+                let deref
+                    = &self.page.leaf;
+
+                deref.as_records()
+            },
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .as_records")
         }
     }
 
     #[inline(always)]
     pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
-        match self {
-            Node::Index(internal_page) =>
-                internal_page.keys_versions(),
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe {
+                let deref
+                    = &self.page.internal;
+
+                deref.keys_versions()
+            },
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions")
         }
     }
 
     #[inline(always)]
     pub unsafe fn keys(&self) -> &[Interval<Key>] {
-        match self {
-            Node::Index(internal_page) =>
-                internal_page.keys(),
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe {
+                let deref
+                    = &self.page.internal;
+
+                deref.keys()
+            },
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys")
         }
     }
 
     #[inline(always)]
     pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
-        match self {
-            Node::Index(internal_page) =>
-                internal_page.children(),
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe {
+                let deref
+                    = &self.page.internal;
+
+                deref.children()
+            },
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .children")
         }
     }
 
     #[inline(always)]
     pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
-        match self {
-            Node::Index(internal_page) =>
-                internal_page.keys_versions_pointers(),
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe {
+                let deref
+                    = &self.page.internal;
+
+                deref.keys_versions_pointers()
+            },
             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions_pointers")
         }
     }
 
     #[inline]
     pub fn delete_key(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
-        match self {
-            Node::Leaf(records) =>
-                records.delete(key, del),
+        match self.m_type()  {
+            PAGE_TYPE_LEAF => unsafe {
+                let derefmut
+                    = &mut self.page.leaf;
+
+                derefmut.delete(key, del)
+            },
             _ => None
         }
     }
 
     #[inline(always)]
     pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key> {
-        match self {
-            Node::Leaf(records_page) => records_page,
+        match self.m_type()  {
+            PAGE_TYPE_LEAF => unsafe { &mut self.page.leaf },
+            _ => unreachable!()
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_leaf_page_ref(&self) -> &LeafPage<NUM_RECORDS, Key> {
+        match self.m_type()  {
+            PAGE_TYPE_LEAF => unsafe { &self.page.leaf },
             _ => unreachable!()
         }
     }
 
     #[inline(always)]
     pub fn on_reuse(&mut self) {
-        match self {
-            Node::Index(internal_page) => internal_page.on_reuse(),
-            Node::Leaf(leaf_page) => leaf_page.on_reuse()
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe {
+                let derefmut
+                    = &mut self.page.internal;
+
+                derefmut.on_reuse()
+            },
+            _ => unsafe {
+                let derefmut
+                    = &mut self.page.leaf;
+
+                derefmut.on_reuse()
+            },
         }
     }
 
     #[inline(always)]
-    pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key>{
-        match self {
-            Node::Index(internal_page) => internal_page,
+    pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe { &mut self.page.internal },
             _ => unreachable!()
         }
     }
 
     #[inline(always)]
-    pub fn as_internal_page_ref(&self) -> & InternalPage<FAN_OUT, NUM_RECORDS, Key>{
-        match self {
-            Node::Index(internal_page) => internal_page,
+    pub fn as_internal_page_ref(&self) -> &InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe { &self.page.internal },
             _ => unreachable!()
         }
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        match self {
-            Node::Index(index_page) => index_page.len(),
-            Node::Leaf(records_page) => records_page.len(),
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe { self.page.internal.len() },
+            _ => unsafe { self.page.leaf.len() },
         }
+    }
+
+    #[inline(always)]
+    pub fn mark_leaf(&mut self) {
+        self.m_type = PAGE_TYPE_LEAF;
+    }
+
+    #[inline]
+    pub fn mark_internal(&mut self) {
+        self.m_type = PAGE_TYPE_INTERNAL
     }
 }
 
@@ -138,6 +267,188 @@ impl<const FAN_OUT: usize,
     Key: Default + Ord + Copy + Hash + Display
 > Default for Node<FAN_OUT, NUM_RECORDS, Key> {
     fn default() -> Self {
-        Self::Leaf(LeafPage::default())
+        Self {
+            m_type: PAGE_TYPE_LEAF,
+            page: InnerPage { leaf: ManuallyDrop::new(LeafPage::new()) },
+        }
     }
 }
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display
+> Clone for Node<FAN_OUT, NUM_RECORDS, Key> {
+    fn clone(&self) -> Self {
+        if self.is_leaf() {
+            Self {
+                m_type: PAGE_TYPE_LEAF,
+                page: InnerPage {
+                    leaf: unsafe { self.page.leaf.clone() }
+                },
+            }
+        } else {
+            Self {
+                m_type: PAGE_TYPE_INTERNAL,
+                page: InnerPage {
+                    internal: unsafe { self.page.internal.clone() }
+                },
+            }
+
+        }
+    }
+}
+
+// impl<const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Display
+// > Node<FAN_OUT, NUM_RECORDS, Key> {
+//     #[inline(always)]
+//     pub const fn is_leaf(&self) -> bool {
+//         match self {
+//             Node::Index(..) => false,
+//             _ => true
+//         }
+//     }
+//
+//     #[inline]
+//     pub fn mark_leaf(&mut self) {
+//         unsafe {
+//             ptr::write(self as *mut _ as *mut _, 1_usize)
+//         }
+//         // match self {
+//         //     Node::Index(internal_page) => unsafe {
+//         //         let as_leaf
+//         //             = internal_page as *mut _ as *mut LeafPage< NUM_RECORDS, Key>;
+//         //         *self = Node::Leaf(as_leaf.read())
+//         //     }
+//         //     _ => {}
+//         // }
+//     }
+//
+//     #[inline]
+//     pub fn mark_internal(&mut self) {
+//         unsafe {
+//             ptr::write(self as *mut _ as *mut _, 0_usize)
+//         }
+//         // match self {
+//         //     Node::Leaf(leaf_page) => unsafe {
+//                 // let as_internal
+//                 //     = leaf_page as *mut _ as *mut InternalPage<FAN_OUT, NUM_RECORDS, Key>;
+//                 // *self = Node::Index(as_internal.read());
+//         //     }
+//         //     _ => {}
+//         // }
+//     }
+//
+//     #[inline(always)]
+//     pub fn as_records(&self) -> &[RecordPoint<Key>] {
+//         match self {
+//             Node::Leaf(records_page) =>
+//                 records_page.as_records(),
+//             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .as_records")
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
+//         match self {
+//             Node::Index(internal_page) =>
+//                 internal_page.keys_versions(),
+//             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions")
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub unsafe fn keys(&self) -> &[Interval<Key>] {
+//         match self {
+//             Node::Index(internal_page) =>
+//                 internal_page.keys(),
+//             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys")
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
+//         match self {
+//             Node::Index(internal_page) =>
+//                 internal_page.children(),
+//             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .children")
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
+//         match self {
+//             Node::Index(internal_page) =>
+//                 internal_page.keys_versions_pointers(),
+//             _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions_pointers")
+//         }
+//     }
+//
+//     #[inline]
+//     pub fn delete_key(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
+//         match self {
+//             Node::Leaf(records) =>
+//                 records.delete(key, del),
+//             _ => None
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key> {
+//         match self {
+//             Node::Leaf(records_page) => records_page,
+//             _ => unreachable!()
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn on_reuse(&mut self) {
+//         match self {
+//             Node::Index(internal_page) => internal_page.on_reuse(),
+//             Node::Leaf(leaf_page) => leaf_page.on_reuse()
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+//         match self {
+//             Node::Index(internal_page) => internal_page,
+//             _ => unreachable!()
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn as_internal_page_ref(&self) -> &InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+//         match self {
+//             Node::Index(internal_page) => internal_page,
+//             _ => unreachable!()
+//         }
+//     }
+//
+//     #[inline(always)]
+//     pub fn len(&self) -> usize {
+//         match self {
+//             Node::Index(index_page) => index_page.len(),
+//             Node::Leaf(records_page) => records_page.len(),
+//         }
+//     }
+// }
+//
+// impl<const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Display
+// > AsRef<Node<FAN_OUT, NUM_RECORDS, Key>> for Node<FAN_OUT, NUM_RECORDS, Key> {
+//     fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key> {
+//         &self
+//     }
+// }
+//
+// impl<const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Display
+// > Default for Node<FAN_OUT, NUM_RECORDS, Key> {
+//     fn default() -> Self {
+//         Self::Leaf(LeafPage::default())
+//     }
+// }

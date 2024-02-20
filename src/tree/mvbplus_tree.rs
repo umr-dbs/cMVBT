@@ -10,7 +10,7 @@ use crate::block::block_manager::BlockManager;
 use crate::tree::root::Root;
 use crate::page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::page_model::internal_page::{InternalPage, TimeMatcher};
-use crate::page_model::node::Node;
+use crate::page_model::node::{Node, PageType};
 use crate::record_model::version_info::Version;
 use crate::tree::global_clock::GlobalClock;
 use crate::tree::locking_strategy::{hybrid_lock, LHL_read, LHL_read_write, LockingStrategy, OLC, orwc, orwc_attempts};
@@ -243,12 +243,12 @@ impl<const FAN_OUT: usize,
         let mut compute_candidate = ||
             match all_candidates.binary_search_by_key(&simba_fence.lower, |(.., f)| f.lower) {
                 Ok(index) => Ok(all_candidates.remove(index)),
-                Err(index) => if index < all_candidates.len() {
+                Err(index) => if index >= 0 && index < all_candidates.len() {
                     Ok(all_candidates.remove(index))
                 } else if !all_candidates.is_empty() {
-                    return Ok(all_candidates.pop().unwrap())
+                    return Ok(all_candidates.pop().unwrap());
                 } else {
-                    return Err(())
+                    return Err(());
                 },
             };
 
@@ -257,14 +257,11 @@ impl<const FAN_OUT: usize,
             _candidate_block,
             candidate_active_count,
             candidate_fence
-        ) = loop {
-            match compute_candidate() {
-                Ok((_, candidate_guard, ..))
-                    if !candidate_guard.is_valid() => return MergeResult::Error,
-                Ok(r) => {}
-                    Ok(r) => break r,
-                _ => return MergeResult::Error
-            }
+        ) = match compute_candidate() {
+            Ok((_, candidate_guard, ..)) if !candidate_guard.is_valid() =>
+                return MergeResult::Error,
+            Ok(r) => r,
+            _ => return MergeResult::Error
         };
 
         all_candidates.clear();
@@ -491,7 +488,7 @@ impl<const FAN_OUT: usize,
                         fence.lower,
                         (self.dec_key)(second.get_unchecked(0).key));
 
-                    if let Node::Leaf(leaf_page) = left.unsafe_borrow_mut().as_mut() {
+                    if let PageType::LeafMut(leaf_page) = left.unsafe_borrow_mut().as_page_mut() {
                         first.sort_by_key(|r| r.version().insertion_version());
                         leaf_page.bulk_push_from_slice_ref(first);
                     }
@@ -500,7 +497,7 @@ impl<const FAN_OUT: usize,
                         second.get_unchecked(0).key,
                         fence.upper);
 
-                    if let Node::Leaf(leaf_page) = right.unsafe_borrow_mut().as_mut() {
+                    if let PageType::LeafMut(leaf_page) = right.unsafe_borrow_mut().as_page_mut() {
                         second.sort_by_key(|r| r.version().insertion_version());
                         leaf_page.bulk_push_from_slice_ref(second)
                     }
@@ -522,7 +519,7 @@ impl<const FAN_OUT: usize,
                         .zip(versions.iter())
                         .zip(pointers.iter())
                         .filter(|((.., v), ..)| v.is_active())
-                        .sorted_by_key(|((i, ..), ..)| *i)
+                        .sorted_by_key(|((i, ..), ..)| i.lower)
                         .collect_vec();
 
                     let middle = filtered.len() / 2;
@@ -535,7 +532,7 @@ impl<const FAN_OUT: usize,
                         fence.lower,
                         (self.dec_key)(second.get_unchecked(0).0.0.lower));
 
-                    if let Node::Index(internal_page) = left.unsafe_borrow_mut().as_mut() {
+                    if let PageType::IndexMut(internal_page) = left.unsafe_borrow_mut().as_page_mut() {
                         first.sort_by_key(|((.., v), ..)| **v);
                         internal_page.bulk_push_from_slice(first)
                     }
@@ -544,7 +541,7 @@ impl<const FAN_OUT: usize,
                         second.get_unchecked(0).0.0.lower,
                         fence.upper);
 
-                    if let Node::Index(internal_page) = right.unsafe_borrow_mut().as_mut() {
+                    if let PageType::IndexMut(internal_page) = right.unsafe_borrow_mut().as_page_mut() {
                         second.sort_by_key(|((.., v), ..)| **v);
                         internal_page.bulk_push_from_slice(second)
                     }
@@ -566,7 +563,7 @@ impl<const FAN_OUT: usize,
                         .collect_vec();
 
                     debug_assert!(!active_records.is_empty());
-                    if let Node::Leaf(leaf_page) = new_leaf.unsafe_borrow_mut().as_mut() {
+                    if let PageType::LeafMut(leaf_page) = new_leaf.unsafe_borrow_mut().as_page_mut() {
                         leaf_page.bulk_push(active_records);
                     }
 
@@ -587,7 +584,7 @@ impl<const FAN_OUT: usize,
                         .collect_vec();
 
                     debug_assert!(!active_entries.is_empty());
-                    if let Node::Index(internal_page) = new_internal_page.unsafe_borrow_mut().as_mut() {
+                    if let PageType::IndexMut(internal_page) = new_internal_page.unsafe_borrow_mut().as_page_mut() {
                         internal_page.bulk_push(active_entries)
                     }
 

@@ -3,17 +3,18 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use itertools::Itertools;
-use crate::block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
+use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
 use crate::page_model::{Attempts, BlockRef, Height, Level};
 use crate::page_model::internal_page::TimeMatcher;
-use crate::page_model::node::Node;
+use crate::page_model::node::PageType;
 use crate::record_model::record_point::RecordPointResult;
 use crate::record_model::version_info::Version;
 use crate::tree::mvbplus_tree::{MVBPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
+use crate::tx_model::transaction::SnapShot;
 use crate::tx_model::tx_api::IsolatedSnapShot;
 use crate::utils::interval::Interval;
-use crate::utils::smart_cell::sched_yield;
+use crate::utils::smart_cell::{sched_yield, SmartCell};
 
 pub struct RangeQueryIter<
     'a,
@@ -41,6 +42,21 @@ impl<'a,
             buff: VecDeque::new(),
         }
     }
+
+    #[inline(always)]
+    pub const fn si(&self) -> &IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key> {
+        &self.isolated_snapshot
+    }
+
+    #[inline(always)]
+    pub const fn snapshot(&self) -> SnapShot {
+        self.si().snapshot()
+    }
+
+    #[inline(always)]
+    pub const fn mv_tree(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+        self.si().mv_tree()
+    }
 }
 
 impl<'a,
@@ -61,13 +77,12 @@ impl<'a,
 
         if self.path.is_empty() {
             let smart_root = self
-                .isolated_snapshot
                 .mv_tree()
-                .retrieve_root_for(self.isolated_snapshot.snapshot());
+                .retrieve_root_for(self.snapshot());
 
             self.path.push((
-                Interval::new(self.isolated_snapshot.mv_tree().min_key,
-                              self.isolated_snapshot.mv_tree().max_key),
+                Interval::new(self.mv_tree().min_key,
+                              self.mv_tree().max_key),
                 smart_root.unsafe_borrow().block())
             );
         }
@@ -87,32 +102,36 @@ impl<'a,
             }
 
             self.path.push((fence.clone(), block.clone()));
-            match block.unsafe_borrow().as_ref() {
-                Node::Index(internal_page) => {
+            match block.unsafe_borrow().as_ref().as_page_ref() {
+                PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    self.path.push(versions_page
+                    match versions_page
                         .iter()
                         .enumerate()
                         .rev()
                         .zip(keys_page
                             .iter()
                             .rev())
-                        .skip_while(|((.., v), ..)| !v.match_version(self.isolated_snapshot.snapshot()))
+                        .filter(|((.., v), ..)| self
+                            .snapshot()
+                            .match_version_any(**v))
                         .find(|(.., range)| range.contains(self.range.lower))
                         .map(|((pos, ..), key)| (key.clone(), internal_page
                             .get_pointer(pos)
                             .clone()))
-                        .unwrap()
-                    );
+                    {
+                        Some(next) => self.path.push(next),
+                        _ => self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(fence.upper)
+                    }
                 }
-                Node::Leaf(leaf_page) => {
+                PageType::LeafRef(leaf_page) => {
                     self.buff.extend(leaf_page
                         .as_records()
                         .iter()
                         .rev()
-                        .filter(|r| r.version().matches(self.isolated_snapshot.snapshot()))
+                        .filter(|r| r.version().matches(self.snapshot()))
                         .filter(|r| self.range.contains(r.key()))
                         .sorted_by_key(|r| r.key())
                         .map(|r| RecordPointResult::from(r)));
@@ -121,6 +140,7 @@ impl<'a,
                     self.path.pop();
                     break;
                 }
+                _ => unreachable!()
             }
         }
 
@@ -141,7 +161,7 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_anker.unsafe_borrow();
 
-            if root_item.version().match_version(lookup_version) {
+            if root_item.version().match_version_any(lookup_version) {
                 break root_anker;
             } else {
                 root_anker = match root_item.prev {
@@ -152,47 +172,43 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn retrieve_root_latest(&self) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
-        self.retrieve_root_for(Version::MAX)
-    }
+    // pub(crate) fn retrieve_root_latest(&self) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
+    //     self.retrieve_root_for(Version::MAX)
+    // }
 
     fn traverse_read_key(
         mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
         key: Key,
-        version: Version)
-        -> BlockRef<FAN_OUT, NUM_RECORDS, Key>
+        lookup_version: Version)
+        -> Result<BlockRef<FAN_OUT, NUM_RECORDS, Key>, ()>
     {
-        while let Node::Index(internal_page) = curr
+        while let PageType::IndexRef(internal_page) = curr
             .unsafe_borrow()
-            .as_ref()
+            .as_page_ref()
         {
             let (keys_page, versions_page) = internal_page
                 .keys_versions();
 
-            // assert_eq!(versions_page.len(), keys_page.len());
-
             curr = versions_page
                 .iter()
+                .zip(keys_page)
                 .enumerate()
                 .rev()
-                .zip(keys_page
-                    .iter()
-                    .rev())
-                .skip_while(|((.., v), ..)| !v.match_version(version))
-                .find(|(.., range)| range.contains(key))
-                .map(|((pos, ..), ..)| internal_page.get_pointer(pos))
-                .unwrap()
-                .clone();
+                .filter(|(.., (v, ..))| lookup_version.match_version_any(**v))
+                .find(|(.., (.., range))| range.contains(key))
+                .map(|(pos, ..)| internal_page.get_pointer(pos))
+                .cloned()
+                .ok_or(())?
         }
 
-        curr
+        Ok(curr)
     }
 
     #[inline]
     fn traverse_read_key_range(
         mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
         lookup_range: &Interval<Key>,
-        version: Version)
+        lookup_version: Version)
         -> Vec<BlockRef<FAN_OUT, NUM_RECORDS, Key>>
     {
         let mut blocks
@@ -206,8 +222,8 @@ impl<const FAN_OUT: usize,
         while !blocks.is_empty() {
             curr = blocks.pop_front().unwrap();
 
-            match curr.unsafe_borrow().as_ref() {
-                Node::Index(internal_page) => {
+            match curr.unsafe_borrow().as_page_ref() {
+                PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
@@ -218,7 +234,7 @@ impl<const FAN_OUT: usize,
                         .zip(keys_page
                             .iter()
                             .rev())
-                        .skip_while(|((.., v), ..)| !v.match_version(version))
+                        .filter(|((.., v), ..)| lookup_version.match_version_any(**v))
                         .filter(|(.., range)| lookup_range.overlap(range))
                         .unique_by(|(.., range)| range.lower())
                         .map(|((pos, ..), ..)| internal_page
@@ -237,47 +253,41 @@ impl<const FAN_OUT: usize,
     pub(crate) fn key_point_read_from_root(
         root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
         key: Key,
-        version: Version)
+        lookup_version: Version)
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
     {
-        let leaf = Self::traverse_read_key(
+        match Self::traverse_read_key(
             root.unsafe_borrow().block(),
             key,
-            version);
-
-        match leaf
-            .unsafe_borrow()
-            .as_records()
-            .iter()
-            .rev()
-            .skip_while(|r| !r.version().matches(version))
-            .find(|r| r.key() == key)
+            lookup_version)
         {
-            None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
-            Some(result) => CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
+            Ok(leaf) => match leaf
+                .unsafe_borrow()
+                .as_records()
+                .iter()
+                .rev()
+                .filter(|r| r.key() == key)
+                .find(|r| r.version().matches(lookup_version))
+            {
+                None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
+                Some(result) => CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
+            },
+            Err(..) => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0))
         }
+
     }
-
-    // #[inline(always)]
-    // pub(crate) fn snapshot(&self, version: Version) -> CRUDOperationResult<Key> {
-    //     Self::key_range_read_from_root(
-    //         self.retrieve_root_for(version),
-    //         &Interval::new(self.min_key, self.max_key),
-    //         version)
-    // }
-
 
     #[inline]
     pub(crate) fn key_range_read_from_root(
         root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
-        range: Interval<Key>,
-        version: Version)
+        lookup_range: Interval<Key>,
+        lookup_version: Version)
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
     {
         let blocks = Self::traverse_read_key_range(
             root.unsafe_borrow().block(),
-            &range,
-            version);
+            &lookup_range,
+            lookup_version);
 
         CRUDOperationResult::MatchedRecords(blocks
             .into_iter()
@@ -286,9 +296,8 @@ impl<const FAN_OUT: usize,
                 .as_records()
                 .iter()
                 .rev()
-                .skip_while(|r| !r.version().matches(version))
-                .take_while(|r| r.version().matches(version))
-                .filter(|r| range.contains(r.key()))
+                .filter(|r| lookup_range.contains(r.key()))
+                .filter(|r| r.version().matches(lookup_version))
                 .sorted_by_key(|r| r.key())
                 .map(|r| RecordPointResult::from(r))
                 .collect::<Vec<_>>())
@@ -507,7 +516,7 @@ impl<const FAN_OUT: usize,
             }
             false if !self.locking_strategy.is_mono_writer() => {
                 let mut master_guard
-                    = self.root.borrow_read();
+                    = self.root.borrow_mut();
 
                 let root_block
                     = master_guard.deref().unwrap().block();
@@ -517,7 +526,7 @@ impl<const FAN_OUT: usize,
 
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow
-                    if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
+                    if root_guard.upgrade_write_lock() =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
                     _ => Ok((master_guard, root_block, root_guard, height))
@@ -556,8 +565,8 @@ impl<const FAN_OUT: usize,
             = 1 as Height;
 
         loop {
-            match curr_guard.deref().unwrap().as_ref() {
-                Node::Index(internal_page) => {
+            match curr_guard.deref().unwrap().as_page_ref() {
+                PageType::IndexRef(internal_page) => {
                     let keys_page = internal_page
                         .keys();
 
@@ -601,7 +610,7 @@ impl<const FAN_OUT: usize,
                         _ => return Err((curr_level, attempts + 1))
                     }
                 }
-                _ => return Ok(curr_guard) // cant have it both ways in non optimistic latching protocol
+                _ => return Ok(curr_guard) // cant have it both ways in non-optimistic latching protocol
             }
         }
     }
@@ -708,7 +717,7 @@ impl<const FAN_OUT: usize,
         }
 
         self.block_manager.register_dead(
-            (internal_page.get_version_ptr(child_index),
+            (internal_page.get_version(child_index),
              internal_page.get_pointer(child_index).clone()));
 
         mufasa
@@ -782,9 +791,9 @@ impl<const FAN_OUT: usize,
                     .commit_until(mufasa_len);
 
                 self.block_manager.register_dead_col([
-                    (mufasa_internal_page.get_version_ptr(index_simba),
+                    (mufasa_internal_page.get_version(index_simba),
                     mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (mufasa_internal_page.get_version_ptr(index_sibling),
+                    (mufasa_internal_page.get_version(index_sibling),
                      mufasa_internal_page.get_pointer(index_sibling).clone())
                 ]);
 
@@ -852,9 +861,9 @@ impl<const FAN_OUT: usize,
                     .commit_until(mufasa_len + 1);
 
                 self.block_manager.register_dead_col([
-                    (mufasa_internal_page.get_version_ptr(index_simba),
+                    (mufasa_internal_page.get_version(index_simba),
                      mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (mufasa_internal_page.get_version_ptr(index_sibling),
+                    (mufasa_internal_page.get_version(index_sibling),
                      mufasa_internal_page.get_pointer(index_sibling).clone())
                 ]);
 

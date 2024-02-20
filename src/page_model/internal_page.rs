@@ -13,10 +13,13 @@ use crate::utils::interval::Interval;
 type Len = AtomicU16;
 
 const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
-pub const OOO_REUSED_VERSION_MARK: Version = 0x40_00000000000000;
+// pub const OOO_REUSED_VERSION_MARK: Version = 0x40_00000000000000;
 
 pub trait TimeMatcher {
-    fn match_version(self, other: Version) -> bool;
+    fn match_version_any(self, other: Version) -> bool;
+
+    fn match_version_active(self, other: Version) -> bool;
+
     fn lt(self, other: Version) -> bool;
 
     fn is_obsolete(&self) -> bool;
@@ -26,8 +29,13 @@ pub trait TimeMatcher {
 
 impl TimeMatcher for Version {
     #[inline(always)]
-    fn match_version(self, other: Version) -> bool {
-        self & !OBSOLETE_VERSION_MARK <= other
+    fn match_version_any(self, other: Version) -> bool {
+        self <= other & !OBSOLETE_VERSION_MARK
+    }
+
+    #[inline(always)]
+    fn match_version_active(self, other: Version) -> bool {
+        self <= other
     }
 
     #[inline(always)]
@@ -46,13 +54,12 @@ impl TimeMatcher for Version {
     }
 }
 
-// #[repr(align(16))]
 pub struct InternalPage<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display
 > {
-    len: Len,
+    pub(crate) len: Len,
     key_interval_region: [MaybeUninit<Interval<Key>>; FAN_OUT],
     version_region: [MaybeUninit<Version>; FAN_OUT],
     pointer_region: [MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key>>; FAN_OUT],

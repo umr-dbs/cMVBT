@@ -4,15 +4,18 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr};
 use std::sync::Arc;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::{Release, SeqCst};
 use parking_lot::Mutex;
 use crate::block::block::Block;
-use crate::page_model::internal_page::{InternalPage, OOO_REUSED_VERSION_MARK, TimeMatcher};
+use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::page_model::{BlockRef, ObjectCount};
 use crate::record_model::version_info::Version;
 use crate::tx_model::transaction::SnapShot;
 use crate::tx_model::tx_manager::ActiveTransactions;
+use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, SmartCell, SmartFlavor};
 
 const ENABLE_SMALL_BLOCK: bool = false;
@@ -58,7 +61,7 @@ pub struct BlockManager<
     Key: Default + Ord + Copy + Hash + Display
 > {
     active_tx: Option<ActiveTransactions>,
-    dead_pages: Option<Arc<Mutex<LinkedList<(*mut Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)>>>>,
+    dead_pages: Option<Arc<Mutex<LinkedList<(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)>>>>,
     _marker: PhantomData<Key>,
     // block_id_counter: AtomicBlockID,
 }
@@ -172,57 +175,59 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead_col(&self, dead: [(*mut Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>); 2]) {
+    pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>); 2]) {
         if let Some(ref dead_pages) = self.dead_pages {
             dead_pages.lock().extend(dead);
         }
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead(&self, dead: (*mut Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)) {
+    pub(crate) fn register_dead(&self, dead: (Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)) {
         if let Some(ref dead_pages) = self.dead_pages {
             dead_pages.lock().push_back(dead);
         }
     }
 
-    #[inline]
-    pub fn mark_version_ooo(v: *mut Version) {
-        unsafe {
-            *v = *v | OOO_REUSED_VERSION_MARK;
-        }
-    }
+    // #[inline]
+    // pub fn mark_version_ooo(v: *mut Version) {
+    //     unsafe {
+    //         *v = *v | OOO_REUSED_VERSION_MARK;
+    //     }
+    // }
 
     #[inline(always)]
     pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
         if let (Some(active_tx), Some(dead_pages))
             = (self.active_tx.as_ref(), self.dead_pages.as_ref())
         {
-            if let Some((version, page)) = dead_pages.lock().pop_front() {
-                if let Some(smallest_si) = active_tx.lock().peek().cloned() {
-                    if unsafe { *version }.lt(smallest_si) {
+            let mut handle = dead_pages.lock();
+            let front = handle.pop_front();
+            mem::drop(handle);
+
+            if let Some((version, page)) = front {
+                let handle = active_tx.lock();
+                let front = handle.peek().cloned();
+                mem::drop(handle);
+
+                if let Some(smallest_si) = front {
+                    if version.lt(smallest_si) {
                         let m_page
-                            = &mut page.unsafe_borrow_mut().node_data;
+                            = page.unsafe_borrow_mut().node_data.get_mut();
 
-                        Self::mark_version_ooo(version);
                         m_page.on_reuse();
-                        unsafe {
-                            ptr::write(m_page as *mut _ as *mut usize, 1usize);
-                        }
+                        m_page.mark_leaf();
 
-                        // println!("Reuse Leaf");
+                        assert!(m_page.is_leaf());
                         return page;
                     }
                 } else {
                     let m_page
-                        = &mut page.unsafe_borrow_mut().node_data;
+                        = page.unsafe_borrow_mut().node_data.get_mut();
 
-                    Self::mark_version_ooo(version);
                     m_page.on_reuse();
-                    unsafe {
-                        ptr::write(m_page as *mut _ as *mut usize, 1usize);
-                    }
+                    m_page.mark_leaf();
 
-                    // println!("Reuse Leaf");
+                    assert!(m_page.is_leaf());
                     return page;
                 }
                 dead_pages.lock().push_back((version, page));
@@ -231,7 +236,7 @@ impl<const FAN_OUT: usize,
 
         Block {
             // block_id: self.next_block_id(),
-            node_data: Node::Leaf(LeafPage::new())
+            node_data: SafeCell::new(Node::new_leaf())
         }.into_cell(latch_type)
     }
 
@@ -241,37 +246,46 @@ impl<const FAN_OUT: usize,
         if let (Some(active_tx), Some(dead_pages))
             = (self.active_tx.as_ref(), self.dead_pages.as_ref())
         {
-            if let Some((version, page)) = dead_pages.lock().pop_front() {
-                if let Some(smallest_si) = active_tx.lock().peek().cloned() {
-                    if unsafe { *version }.lt(smallest_si) {
-                        let m_page = &mut page.unsafe_borrow_mut().node_data;
+            let mut handle = dead_pages.lock();
+            let front = handle.pop_front();
+            mem::drop(handle);
 
-                        Self::mark_version_ooo(version);
+            if let Some((version, page)) = front {
+                let mut handle = active_tx.lock();
+                let front = handle.peek().cloned();
+                mem::drop(handle);
+
+                if let Some(smallest_si) = front {
+                    if version.lt(smallest_si) {
+                        let m_page
+                            = &mut page.unsafe_borrow_mut().node_data;
+
                         m_page.on_reuse();
-                        unsafe {
-                            ptr::write(m_page as *mut _ as *mut usize, 0usize);
-                        }
-                        // println!("Reuse Internal");
+                        m_page.mark_internal();
+
+                        assert!(!m_page.is_leaf());
                         return page
                     }
-                } else {
-                    let m_page = &mut page.unsafe_borrow_mut().node_data;
-
-                    Self::mark_version_ooo(version);
-                    m_page.on_reuse();
-                    unsafe {
-                        ptr::write(m_page as *mut _ as *mut usize, 0usize);
+                    else {
+                        dead_pages.lock().push_front((version, page));
                     }
-                    // println!("Reuse Internal");
+                } else {
+                    let m_page
+                        = &mut page.unsafe_borrow_mut().node_data;
+
+                    m_page.on_reuse();
+                    m_page.mark_internal();
+
+                    assert!(!m_page.is_leaf());
                     return page
                 }
-                dead_pages.lock().push_back((version, page));
             }
         }
 
+        // println!("End Alloc Index");
         Block {
             // block_id: self.next_block_id(),
-            node_data: Node::Index(InternalPage::new())
+            node_data: SafeCell::new(Node::new_internal())
         }.into_cell(latch_type)
     }
 }

@@ -1,9 +1,9 @@
 # Multi Version B+Tree
-- Release Date: 14.02.2024
-- Latest Version: 0.0.20 (Beta)
+- Release Date: 20.02.2024
+- Latest Version: 0.0.21 (Beta)
 #### Requirements:
 - OS:          Linux/Windows
-- Rustc:       >= 1.60.0 (2021 Edition)
+- Rustc:       >= 1.63.0 (2021 Edition)
 
 #### Build:
 - Standalone as `cargo build --release`.
@@ -26,7 +26,7 @@
 - ### Snapshot Isolation
   - Atomic Transaction: A single CRUD Operation on a Snapshot.
   - Transaction: Collection of CRUD on a Snapshot.
-# Transaction Manager
+# Transaction Manager with Basic GC
   - Execute Transactions
   - Execute AtomicTransactions
   - Execute Non-reader Transactions

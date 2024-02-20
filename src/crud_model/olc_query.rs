@@ -3,7 +3,8 @@ use std::hash::Hash;
 use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::page_model::{Attempts, BlockRef, Height, Level};
-use crate::page_model::node::Node;
+use crate::page_model::internal_page::TimeMatcher;
+use crate::page_model::node::{Node, PageType};
 use crate::tree::mvbplus_tree::{MVBPlusTree, LockLevel, MAX_TREE_HEIGHT, RootItemGuard};
 use crate::utils::smart_cell::sched_yield;
 
@@ -150,8 +151,8 @@ impl<const FAN_OUT: usize,
                 return Err((curr_level, attempts + 1));
             }
 
-            match curr_guard_result.unwrap().as_ref() {
-                Node::Index(internal_page) => {
+            match curr_guard_result.unwrap().as_page_ref() {
+                PageType::IndexRef(internal_page) => {
                     let keys_page = internal_page
                         .keys();
 
