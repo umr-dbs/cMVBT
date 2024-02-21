@@ -34,7 +34,8 @@ impl<const FAN_OUT: usize,
     fn retrieve_root_write_olc(
         &self,
         mut attempts: Attempts,
-    ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
+    ) -> (
+        //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
           Height,
@@ -42,8 +43,8 @@ impl<const FAN_OUT: usize,
     {
         loop {
             match self.retrieve_root_write_internal_olc(attempts) {
-                Ok((master, block, guard, height)) =>
-                    break (master, block, guard, height, attempts),
+                Ok((block, guard, height)) =>
+                    break (block, guard, height, attempts),
                 _ => {
                     attempts += 1;
                     sched_yield(attempts);
@@ -54,7 +55,8 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root_write_internal_olc(&self, attempts: Attempts) -> Result<
-        (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
+        (
+            //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
          Height), ()>
@@ -84,7 +86,7 @@ impl<const FAN_OUT: usize,
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
-                    _ => Ok((master_guard, root_block, root_guard, height))
+                    _ => Ok((root_block, root_guard, height))
                 }
             }
             false => {
@@ -124,7 +126,7 @@ impl<const FAN_OUT: usize,
                         root_guard.deref().unwrap().len() == curr_len
                     => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
-                    _ => Ok((master_guard, root_block, root_guard, height))
+                    _ => Ok((root_block, root_guard, height))
                 }
             }
         }
@@ -134,8 +136,7 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal_olc(&self, key: Key, attempts: Attempts, max_level: Level)
                                     -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
     {
-        let (_master,
-            mut curr_block,
+        let (mut curr_block,
             mut curr_guard,
             height,
             attempts) = self.retrieve_root_write_olc(attempts);

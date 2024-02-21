@@ -181,9 +181,12 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
     pub fn threads(&self) -> usize {
         self.pool.current_num_threads()
+    }
+
+    pub const fn is_gc_enabled(&self) -> bool {
+        self.active_tx.is_some()
     }
 
     pub fn enable_gc(&mut self) {
@@ -211,6 +214,15 @@ impl<const FAN_OUT: usize,
                 .build()
                 .unwrap(),
             index: SafeCell::new(Box::new(index)),
+        }
+    }
+
+    pub fn new_with(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>, gc: bool) -> Self {
+        if gc {
+            Self::new_with_gc(threads, index)
+        }
+        else {
+            Self::new(threads, index)
         }
     }
 

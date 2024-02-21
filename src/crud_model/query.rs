@@ -324,7 +324,8 @@ impl<const FAN_OUT: usize,
     fn retrieve_root_write(
         &self,
         mut attempts: Attempts,
-    ) -> (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
+    ) -> (
+        //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
           Height,
@@ -332,8 +333,8 @@ impl<const FAN_OUT: usize,
     {
         loop {
             match self.retrieve_root_write_internal(attempts) {
-                Ok((master, block, guard, height)) =>
-                    break (master, block, guard, height, attempts),
+                Ok((block, guard, height)) =>
+                    break (block, guard, height, attempts),
                 _ => attempts += 1
             }
         }
@@ -344,7 +345,8 @@ impl<const FAN_OUT: usize,
         mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         mut height: Height,
-    ) -> (RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+    ) -> (
+        //RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
           Height)
@@ -484,12 +486,13 @@ impl<const FAN_OUT: usize,
             }
         };
 
-        (master_guard, root_block, root_guard, height)
+        (root_block, root_guard, height)
     }
 
     #[inline]
     fn retrieve_root_write_internal(&self, attempts: Attempts) -> Result<
-        (RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
+        (
+            //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
          Height), ()>
@@ -511,7 +514,7 @@ impl<const FAN_OUT: usize,
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
-                    _ => Ok((master_guard, root_block, root_guard, height))
+                    _ => Ok((root_block, root_guard, height))
                 }
             }
             false if !self.locking_strategy.is_mono_writer() => {
@@ -529,7 +532,7 @@ impl<const FAN_OUT: usize,
                     if root_guard.upgrade_write_lock() =>
                         Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
-                    _ => Ok((master_guard, root_block, root_guard, height))
+                    _ => Ok((root_block, root_guard, height))
                 }
             }
             _ => {
@@ -545,7 +548,7 @@ impl<const FAN_OUT: usize,
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow =>
                         Ok(self.split_root(master_guard, root_guard, height)),
-                    _ => Ok((master_guard, root_block, root_guard, height)),
+                    _ => Ok((root_block, root_guard, height)),
                 }
             }
         }
@@ -555,8 +558,7 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
                                 -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
     {
-        let (_master,
-            mut curr_block,
+        let (mut curr_block,
             mut curr_guard,
             height,
             attempts) = self.retrieve_root_write(attempts);
@@ -602,7 +604,7 @@ impl<const FAN_OUT: usize,
                             && curr_len == curr_guard.deref().unwrap().len() =>
                             curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
                                 .unwrap(),
-                        BlockUnsafeDegree::Ok => {
+                        BlockUnsafeDegree::Ok if curr_guard.deref().unwrap().len() == curr_len => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
                             curr_block = next_curr_block;

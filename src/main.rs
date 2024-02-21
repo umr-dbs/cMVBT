@@ -165,38 +165,43 @@ fn main() {
     //     insertions_vec.as_slice());
     // //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    println!("Insertions,Threads,Protocol,Clock,Time");
+    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
     // let insertions = 2_000_000_u64;
 
     let mut all_tx = (0u64..insertions)
         .map(|key| AtomicTransaction::new_latest_si(TxAtomicOperation::Insert(key, mk_payload())))
         .collect_vec();
 
-    all_tx.extend((0..insertions).map(|key|
+    let points = insertions;
+    all_tx.extend((0..points).map(|key|
         AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
 
     all_tx.shuffle(&mut thread_rng());
-    let mut tx_manager = TransactionManager::new_with_gc(
-        num_cpus::get(), MVTree::olc_optimistic_clock());
+    for threads in [1, 2, 4, 8, 16, 24, 32, 64, 128] {
+        for tree in [MVTree::orwc_optimistic_clock(), MVTree::olc_optimistic_clock(), ] {
+            for gc in [true, false] {
+                let mut tx_manager = TransactionManager::new_with(
+                    threads,
+                    tree.make_empty_copy(),
+                    gc);
 
-    // tx_manager.disable_gc();
+                let start = SystemTime::now();
 
-    let start = SystemTime::now();
+                all_tx.iter()
+                    .for_each(|tx| tx_manager.execute_tx_non_reader(tx.clone()));
 
-    all_tx
-        .into_iter()
-        .for_each(|tx|
-            tx_manager.execute_tx_non_reader(tx));
+                tx_manager.join();
 
-    tx_manager.join();
+                let end = SystemTime::now().duration_since(start).unwrap().as_millis();
 
-    let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-
-    println!("{insertions},{},{},{},{end}",
-             tx_manager.threads(),
-             tx_manager.locking_protocol(),
-             tx_manager.clock_type());
-
+                println!("{insertions},{points},{},{},{},{end},{}",
+                         tx_manager.threads(),
+                         tx_manager.locking_protocol(),
+                         tx_manager.clock_type(),
+                         tx_manager.is_gc_enabled());
+            }
+        }
+    }
     // let mut insertions_vec = (0u64..insertions)
     //     .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
     //     .collect_vec();
