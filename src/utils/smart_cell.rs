@@ -3,7 +3,7 @@ use std::{hint, mem, ptr};
 use std::mem::{transmute, transmute_copy};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, fence};
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
 use parking_lot::lock_api::{MutexGuard, RwLockReadGuard, RwLockWriteGuard};
 use parking_lot::{Mutex, RawMutex, RawRwLock, RwLock};
@@ -842,6 +842,7 @@ impl<E: Default> SmartCell<E> {
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         match self {
+            RwReaderFree(..) => fence(Release),
             OLCWriter(cell, write_version) =>
                 if let LightWeightHybridCell(opt) = cell.0.as_ref() {
                     if *write_version != ZEROED_FLAG_VERSION {

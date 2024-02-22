@@ -6,7 +6,9 @@ use std::{mem, ptr};
 use std::sync::Arc;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::{Release, SeqCst};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RawMutex};
+use parking_lot::lock_api::MutexGuard;
+use rb_tree::RBTree;
 use crate::block::block::Block;
 use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::leaf_page::LeafPage;
@@ -167,8 +169,7 @@ impl<const FAN_OUT: usize,
         if active_tx.is_some() {
             self.active_tx = active_tx;
             self.dead_pages = Some(Arc::new(Default::default()))
-        }
-        else {
+        } else {
             self.active_tx.take();
             self.dead_pages.take();
         }
@@ -196,96 +197,66 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
         if let (Some(active_tx), Some(dead_pages))
             = (self.active_tx.as_ref(), self.dead_pages.as_ref())
         {
-            let mut handle = dead_pages.lock();
-            let front = handle.pop_front();
-            mem::drop(handle);
+            match dead_pages.try_lock() {
+                Some(mut guard) => {
+                    let front
+                        = guard.pop_front();
 
-            if let Some((version, page)) = front {
-                let handle = active_tx.lock();
-                let front = handle.peek().cloned();
-                mem::drop(handle);
+                    mem::drop(guard);
 
-                if let Some(smallest_si) = front {
-                    if version.lt(smallest_si) {
-                        let m_page
-                            = page.unsafe_borrow_mut().node_data.get_mut();
+                    match front {
+                        Some((m_version, page)) => match active_tx.try_lock() {
+                            Some(guard_tx_si) => {
+                                let smallest_si = guard_tx_si
+                                    .peek()
+                                    .cloned();
 
-                        m_page.on_reuse();
-                        m_page.mark_leaf();
+                                mem::drop(guard_tx_si);
 
-                        assert!(m_page.is_leaf());
-                        return page;
+                                if smallest_si.is_none() || m_version.lt(smallest_si.unwrap()) {
+                                    let m_page
+                                        = page.unsafe_borrow_mut().node_data.get_mut();
+
+                                    m_page.on_reuse();
+
+                                    if leaf {
+                                        m_page.mark_leaf()
+                                    } else {
+                                        m_page.mark_internal()
+                                    }
+
+                                    return page;
+                                } else {
+                                    dead_pages.lock().push_back((m_version, page))
+                                }
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
-                } else {
-                    let m_page
-                        = page.unsafe_borrow_mut().node_data.get_mut();
-
-                    m_page.on_reuse();
-                    m_page.mark_leaf();
-
-                    assert!(m_page.is_leaf());
-                    return page;
                 }
-                dead_pages.lock().push_back((version, page));
+                _ => {}
             }
         }
 
         Block {
             // block_id: self.next_block_id(),
-            node_data: SafeCell::new(Node::new_leaf())
+            node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
         }.into_cell(latch_type)
     }
 
+    #[inline]
+    pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+        self.alloc_block(latch_type, true)
+    }
+
     /// Crafts a new aligned Index-Block.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn new_empty_index_block(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
-        if let (Some(active_tx), Some(dead_pages))
-            = (self.active_tx.as_ref(), self.dead_pages.as_ref())
-        {
-            let mut handle = dead_pages.lock();
-            let front = handle.pop_front();
-            mem::drop(handle);
-
-            if let Some((version, page)) = front {
-                let mut handle = active_tx.lock();
-                let front = handle.peek().cloned();
-                mem::drop(handle);
-
-                if let Some(smallest_si) = front {
-                    if version.lt(smallest_si) {
-                        let m_page
-                            = &mut page.unsafe_borrow_mut().node_data;
-
-                        m_page.on_reuse();
-                        m_page.mark_internal();
-
-                        assert!(!m_page.is_leaf());
-                        return page
-                    }
-                    else {
-                        dead_pages.lock().push_front((version, page));
-                    }
-                } else {
-                    let m_page
-                        = &mut page.unsafe_borrow_mut().node_data;
-
-                    m_page.on_reuse();
-                    m_page.mark_internal();
-
-                    assert!(!m_page.is_leaf());
-                    return page
-                }
-            }
-        }
-
-        // println!("End Alloc Index");
-        Block {
-            // block_id: self.next_block_id(),
-            node_data: SafeCell::new(Node::new_internal())
-        }.into_cell(latch_type)
+        self.alloc_block(latch_type, false)
     }
 }

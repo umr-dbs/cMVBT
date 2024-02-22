@@ -125,8 +125,8 @@ impl<const FAN_OUT: usize,
                         root_guard.upgrade_write_lock() &&
                         root_guard.deref().unwrap().len() == curr_len
                     => Ok(self.split_root(master_guard, root_guard, height)),
-                    BlockUnsafeDegree::Overflow => Err(()),
-                    _ => Ok((root_block, root_guard, height))
+                    _ if master_guard.is_valid() => Ok((root_block, root_guard, height)),
+                    _ => Err(()),
                 }
             }
         }
@@ -169,10 +169,6 @@ impl<const FAN_OUT: usize,
                         .get_pointer(index)
                         .clone();
 
-                    if !curr_guard.is_valid() {
-                        return Err((curr_level, attempts + 1));
-                    }
-
                     let mut next_curr_guard = self.apply_for_ref(
                         &next_curr_block,
                         height,
@@ -202,7 +198,7 @@ impl<const FAN_OUT: usize,
                                 Ok(guard) => curr_guard = guard,
                                 Err(..) => return Err((curr_level - 1, attempts + 1))
                             },
-                        BlockUnsafeDegree::Ok => {
+                        BlockUnsafeDegree::Ok if curr_guard.is_valid() => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
                             curr_block = next_curr_block;

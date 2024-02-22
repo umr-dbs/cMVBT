@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::Acquire;
 use itertools::Itertools;
 use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -519,7 +521,10 @@ impl<const FAN_OUT: usize,
             }
             false if !self.locking_strategy.is_mono_writer() => {
                 let mut master_guard
-                    = self.root.borrow_mut();
+                    = self.root.borrow_read();
+
+                let master_v
+                    = master_guard.deref().unwrap().version();
 
                 let root_block
                     = master_guard.deref().unwrap().block();
@@ -527,10 +532,14 @@ impl<const FAN_OUT: usize,
                 let mut root_guard
                     = root_block.borrow_read();
 
+                let len = root_guard.deref().unwrap().len();
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow
-                    if root_guard.upgrade_write_lock() =>
-                        Ok(self.split_root(master_guard, root_guard, height)),
+                    if master_guard.upgrade_write_lock() &&
+                        root_guard.upgrade_write_lock() &&
+                        len == root_guard.deref().unwrap().len() &&
+                        master_v == master_guard.deref().unwrap().version()
+                    => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
                     _ => Ok((root_block, root_guard, height))
                 }
@@ -594,6 +603,7 @@ impl<const FAN_OUT: usize,
                     let curr_len
                         = keys_page.len();
 
+                    fence(Acquire);
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()

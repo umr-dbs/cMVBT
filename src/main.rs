@@ -177,12 +177,15 @@ fn main() {
         AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
 
     all_tx.shuffle(&mut thread_rng());
-    for threads in [1, 2, 4, 8, 16, 24, 32, 64, 128] {
-        for tree in [MVTree::orwc_optimistic_clock(), MVTree::olc_optimistic_clock(), ] {
-            for gc in [true, false] {
+    for threads in [1, 2, 4, 8, 16, 24, 32, 64] {
+        for gc in [true, false] {
+            for tree in [MVTree::standard(), MVTree::orwc_optimistic_clock(), MVTree::olc_optimistic_clock()] {
+                if tree.locking_strategy().is_mono_writer() && threads > 1 {
+                    continue;
+                }
                 let mut tx_manager = TransactionManager::new_with(
                     threads,
-                    tree.make_empty_copy(),
+                    tree,
                     gc);
 
                 let start = SystemTime::now();
