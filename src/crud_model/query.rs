@@ -116,9 +116,7 @@ impl<'a,
                         .zip(keys_page
                             .iter()
                             .rev())
-                        .filter(|((.., v), ..)| self
-                            .snapshot()
-                            .match_version_any(**v))
+                        .filter(|((.., v), ..)| v.matched(self.snapshot()))
                         .find(|(.., range)| range.contains(self.range.lower))
                         .map(|((pos, ..), key)| (key.clone(), internal_page
                             .get_pointer(pos)
@@ -163,7 +161,7 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_anker.unsafe_borrow();
 
-            if root_item.version().match_version_any(lookup_version) {
+            if root_item.version().le_other_any(lookup_version) {
                 break root_anker;
             } else {
                 root_anker = match root_item.prev {
@@ -196,7 +194,7 @@ impl<const FAN_OUT: usize,
                 .zip(keys_page)
                 .enumerate()
                 .rev()
-                .filter(|(.., (v, ..))| lookup_version.match_version_any(**v))
+                .filter(|(.., (v, ..))| v.matched(lookup_version))
                 .find(|(.., (.., range))| range.contains(key))
                 .map(|(pos, ..)| internal_page.get_pointer(pos))
                 .cloned()
@@ -236,7 +234,7 @@ impl<const FAN_OUT: usize,
                         .zip(keys_page
                             .iter()
                             .rev())
-                        .filter(|((.., v), ..)| lookup_version.match_version_any(**v))
+                        .filter(|((.., v), ..)| v.matched(lookup_version))
                         .filter(|(.., range)| lookup_range.overlap(range))
                         .unique_by(|(.., range)| range.lower())
                         .map(|((pos, ..), ..)| internal_page

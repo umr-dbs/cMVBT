@@ -237,7 +237,7 @@ impl<const FAN_OUT: usize,
             // .filter(|((.., version), ..)| version.is_active())
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
-                (index, bro.borrow_mut(), bro, bro.unsafe_borrow().active_count(), fence))
+                (index, bro.borrow_read(), bro, bro.unsafe_borrow().active_count(), fence))
             .collect_vec();
 
         let mut compute_candidate = ||
@@ -258,9 +258,17 @@ impl<const FAN_OUT: usize,
             candidate_active_count,
             candidate_fence
         ) = match compute_candidate() {
-            Ok((_, candidate_guard, ..)) if !candidate_guard.is_valid() =>
-                return MergeResult::Error,
-            Ok(r) => r,
+            Ok((index,
+                   mut candidate_guard,
+                   block,
+                   cac,
+                   cf)
+            ) => if !candidate_guard.upgrade_write_lock() {
+                return MergeResult::Error
+            }
+            else {
+                (index, candidate_guard, block, cac, cf)
+            }
             _ => return MergeResult::Error
         };
 

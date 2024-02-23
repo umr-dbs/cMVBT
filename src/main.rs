@@ -2,6 +2,7 @@ use std::{env, fs, mem, thread};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+// use cc_bplustree::tree::bplus_tree::BPlusTree;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use rand::prelude::SliceRandom;
@@ -21,7 +22,7 @@ use crate::record_model::version_info::Version;
 use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
-use crate::tx_model::transaction::AtomicTransaction;
+use crate::tx_model::transaction::{AtomicTransaction, SnapShot};
 use crate::tx_model::tx_manager::TransactionManager;
 use crate::utils::interval::Interval;
 use crate::utils::smart_cell::ENABLE_YIELD;
@@ -53,6 +54,18 @@ pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
 fn main() {
     make_splash();
 
+    // const F: usize = 250;
+    // const R: usize = 499;
+    // let internal_cc
+    //     = mem::size_of::<cc_bplustree::page_model::internal_page::InternalPage<F, R, SnapShot, ()>>();
+    //
+    // let leaf_cc
+    //     = mem::size_of::<cc_bplustree::page_model::leaf_page::LeafPage<R, SnapShot, ()>>();
+    //
+    // let block_cc
+    //     = mem::size_of::<cc_bplustree::block::block::Block<F, R, SnapShot, ()>>();
+    // println!("Fanout = {F}, Records = {R}, Internal = {internal_cc}, Leaf = {leaf_cc}, Block = {block_cc}");
+
     // println!("{}", mem::align_of::<Block<FAN_OUT, NUM_RECORDS, Key>>());
     // println!("InternalPage Align = {}, Size = {}",
     //          mem::align_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key>>(),
@@ -81,68 +94,71 @@ fn main() {
     let tree
         = Arc::new(MVTree::olc_optimistic_clock());
 
-    let insertions = 10_000_000_u64;
-    // let mut last_insert_version = Version::MIN;
-    // let mut version_inserts = vec![];
-    //
-    // for key in 0u64..insertions {
-    //     match tree.dispatch(CRUDOperation::Insert(key, mk_payload())) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             last_insert_version = ver;
-    //             version_inserts.push(ver);
-    //             // println!("Inserted at version {}", ver);
-    //             match tree.dispatch(CRUDOperation::Point(key, ver)) {
-    //                 CRUDOperationResult::MatchedRecords(found)
-    //                 if found.last().unwrap().key == key => {}
-    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //                 err => println!("Err at insertion {}", err),
-    //             }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
+    let insertions = 1_000_000_u64;
+    let mut last_insert_version = Version::MIN;
+    let mut version_inserts = vec![];
 
-    // match tree.dispatch(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-    //     CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
-    //         // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-    //     _ => println!("Error Range")
-    // }
-    //
-    // let lazy_range = RangeQueryIter::new(
-    //     &tree,
-    //     last_insert_version,
-    //     Interval::new(0, insertions));
-    //
-    // println!("Height = {}", tree.root.unsafe_borrow().height());
-    // println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
-    //
-    // println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
-    // for key in 0u64..insertions{
-    //     match tree.dispatch(CRUDOperation::Delete(key)) {
-    //         CRUDOperationResult::Deleted(v) => {}
-    //             // println!("Key = {}, v = {} deleted", key, v),
-    //         _ => println!("Error delete key = {}", key)
-    //     }
-    // }
-    // for key in 0u64..insertions {
-    //     // println!("Verified key = {key}");
-    //     let r = tree
-    //         .dispatch(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
-    //     if let CRUDOperationResult::MatchedRecords(v) = r {
-    //         if v.last().unwrap().key != key {
-    //             println!("ERR")
-    //         }
-    //     }
-    // }
-    //
-    // for key in 0u64..insertions as u64 {
-    //     match tree.dispatch(CRUDOperation::Point(key, last_insert_version)) {
-    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-    //             // println!("Found Point  {}", v.pop().unwrap()),
-    //         err => panic!("Point failed: {}, key = {}", err, key)
-    //     }
-    // }
-    //
+    for key in 0u64..insertions {
+        match tree.dispatch_crud(CRUDOperation::Insert(key, mk_payload())) {
+            CRUDOperationResult::Inserted(ver) => {
+                last_insert_version = ver;
+                version_inserts.push(ver);
+                // println!("Inserted at version {}", ver);
+                match tree.dispatch_crud(CRUDOperation::Point(key, ver)) {
+                    CRUDOperationResult::MatchedRecords(found)
+                    if found.last().unwrap().key == key => {}
+                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+                    err => println!("Err at insertion {}", err),
+                }
+            }
+            err => println!("Err at insertion {}", err),
+        }
+    }
+
+    match tree.dispatch_crud(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+        CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
+            // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+        x => println!("Error Range: {x}")
+    }
+
+    let lazy_range = RangeQueryIter::new(
+        &tree,
+        last_insert_version,
+        Interval::new(0, insertions));
+
+    println!("Height = {}", tree.root.unsafe_borrow().height());
+    println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
+
+    println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
+    for key in 0u64..insertions{
+        if key == insertions - 1 {
+            let s = "asdas".to_string();
+        }
+        match tree.dispatch_crud(CRUDOperation::Delete(key)) {
+            CRUDOperationResult::Deleted(v) => {}
+                // println!("Key = {}, v = {} deleted", key, v),
+            _ => println!("Error delete key = {}", key)
+        }
+    }
+    for key in 0u64..insertions {
+        // println!("Verified key = {key}");
+        let r = tree
+            .dispatch_crud(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
+        if let CRUDOperationResult::MatchedRecords(v) = r {
+            if v.last().unwrap().key != key {
+                println!("ERR expected = {key}, found = {}", v.last().unwrap().key)
+            }
+        }
+    }
+
+    for key in 0u64..insertions as u64 {
+        match tree.dispatch_crud(CRUDOperation::Point(key, last_insert_version)) {
+            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+                // println!("Found Point  {}", v.pop().unwrap()),
+            err => panic!("Point failed: {}, key = {}", err, key)
+        }
+    }
+
     // let (keys, versions) = tree.root.unsafe_borrow()
     //     .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
     //

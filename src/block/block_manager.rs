@@ -217,7 +217,7 @@ impl<const FAN_OUT: usize,
 
                                 mem::drop(guard_tx_si);
 
-                                if smallest_si.is_none() || m_version.lt(smallest_si.unwrap()) {
+                                if smallest_si.is_none() || m_version.lt_self_any(smallest_si.unwrap()) {
                                     let m_page
                                         = page.unsafe_borrow_mut().node_data.get_mut();
 

@@ -116,14 +116,14 @@ impl<const FAN_OUT: usize,
                 let guard_deref_ref
                     = root_guard_result.unwrap();
 
-                let curr_len = guard_deref_ref
-                    .len();
+                // let curr_len = guard_deref_ref
+                //     .len();
 
                 match guard_deref_ref.unsafe_degree() {
                     BlockUnsafeDegree::Overflow
-                    if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking; orwc fails here
-                        root_guard.upgrade_write_lock() &&
-                        root_guard.deref().unwrap().len() == curr_len
+                    if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking
+                        root_guard.upgrade_write_lock()
+                        // && root_guard.deref().unwrap().len() == curr_len
                     => Ok(self.split_root(master_guard, root_guard, height)),
                     _ if master_guard.is_valid() => Ok((root_block, root_guard, height)),
                     _ => Err(()),
@@ -183,17 +183,17 @@ impl<const FAN_OUT: usize,
                         return Err((curr_level, attempts + 1));
                     }
 
-                    let curr_len
-                        = keys_page.len();
+                    // let curr_len
+                    //     = keys_page.len();
 
                     match next_curr_guard_result.unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
-                            && curr_len == curr_guard.deref().unwrap().len() =>
+                            /*&& curr_len == curr_guard.deref().unwrap().len()*/ =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
-                            && curr_len == curr_guard.deref().unwrap().len() =>
+                        /*&& curr_len == curr_guard.deref().unwrap().len()*/ =>
                             match self.on_underflow_node(curr_guard, next_curr_guard, index) {
                                 Ok(guard) => curr_guard = guard,
                                 Err(..) => return Err((curr_level - 1, attempts + 1))
