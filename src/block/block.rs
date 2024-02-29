@@ -96,7 +96,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display + 'static
 > Block<FAN_OUT, NUM_RECORDS, Key>
 { // #[inline(always)]
     // pub const fn block_id(&self) -> BlockID {

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
 use parking_lot::lock_api::{Mutex, RwLock};
@@ -22,6 +22,15 @@ pub type BlockRef<
     const NUM_RECORDS: usize,
     Key
 > = SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>>;
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    E: Default + Ord + Copy + Hash + Display
+> Display for BlockRef<FAN_OUT, NUM_RECORDS, E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IsLeaf: {}, Len: {}", self.unsafe_borrow().is_leaf(), self.unsafe_borrow().len())
+    }
+}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,

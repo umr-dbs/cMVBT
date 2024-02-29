@@ -64,7 +64,7 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display + 'static
 > RootItem<FAN_OUT, NUM_RECORDS, Key> {
     pub(crate) fn deep_clone(&self, latch_type: LatchType) -> Self {
         Self {
@@ -187,7 +187,7 @@ pub(crate) enum MergeResult<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Key: Default + Ord + Copy + Hash + Display,
 > {
     Merged(usize,
            Interval<Key>,

@@ -26,7 +26,7 @@ pub struct IsolatedSnapShot<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display>
+    Key: Default + Hash + Copy + Ord + Display + 'static>
 (
     pub SnapShot,
     pub &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>,

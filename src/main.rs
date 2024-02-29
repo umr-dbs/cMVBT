@@ -91,73 +91,73 @@ fn main() {
 
     assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
 
-    let tree
-        = Arc::new(MVTree::olc_optimistic_clock());
-
-    let insertions = 1_000_000_u64;
-    let mut last_insert_version = Version::MIN;
-    let mut version_inserts = vec![];
-
-    for key in 0u64..insertions {
-        match tree.dispatch_crud(CRUDOperation::Insert(key, mk_payload())) {
-            CRUDOperationResult::Inserted(ver) => {
-                last_insert_version = ver;
-                version_inserts.push(ver);
-                // println!("Inserted at version {}", ver);
-                match tree.dispatch_crud(CRUDOperation::Point(key, ver)) {
-                    CRUDOperationResult::MatchedRecords(found)
-                    if found.last().unwrap().key == key => {}
-                        // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-                    err => println!("Err at insertion {}", err),
-                }
-            }
-            err => println!("Err at insertion {}", err),
-        }
-    }
-
-    match tree.dispatch_crud(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-        CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
-            // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-        x => println!("Error Range: {x}")
-    }
-
-    let lazy_range = RangeQueryIter::new(
-        &tree,
-        last_insert_version,
-        Interval::new(0, insertions));
-
-    println!("Height = {}", tree.root.unsafe_borrow().height());
-    println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
-
-    println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
-    for key in 0u64..insertions{
-        if key == insertions - 1 {
-            let s = "asdas".to_string();
-        }
-        match tree.dispatch_crud(CRUDOperation::Delete(key)) {
-            CRUDOperationResult::Deleted(v) => {}
-                // println!("Key = {}, v = {} deleted", key, v),
-            _ => println!("Error delete key = {}", key)
-        }
-    }
-    for key in 0u64..insertions {
-        // println!("Verified key = {key}");
-        let r = tree
-            .dispatch_crud(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
-        if let CRUDOperationResult::MatchedRecords(v) = r {
-            if v.last().unwrap().key != key {
-                println!("ERR expected = {key}, found = {}", v.last().unwrap().key)
-            }
-        }
-    }
-
-    for key in 0u64..insertions as u64 {
-        match tree.dispatch_crud(CRUDOperation::Point(key, last_insert_version)) {
-            CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-                // println!("Found Point  {}", v.pop().unwrap()),
-            err => panic!("Point failed: {}, key = {}", err, key)
-        }
-    }
+    // let tree
+    //     = Arc::new(MVTree::olc_optimistic_clock());
+    //
+    // let insertions = 1000_u64;
+    // let mut last_insert_version = Version::MIN;
+    // let mut version_inserts = vec![];
+    //
+    // for key in 0u64..insertions {
+    //     match tree.dispatch_crud(CRUDOperation::Insert(key, mk_payload())) {
+    //         CRUDOperationResult::Inserted(ver) => {
+    //             last_insert_version = ver;
+    //             version_inserts.push(ver);
+    //             // println!("Inserted at version {}", ver);
+    //             match tree.dispatch_crud(CRUDOperation::Point(key, ver)) {
+    //                 CRUDOperationResult::MatchedRecords(found)
+    //                 if found.last().unwrap().key == key => {}
+    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
+    //                 err => println!("Err at insertion {}", err),
+    //             }
+    //         }
+    //         err => println!("Err at insertion {}", err),
+    //     }
+    // }
+    //
+    // match tree.dispatch_crud(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
+    //     CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
+    //         // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
+    //     x => println!("Error Range: {x}")
+    // }
+    //
+    // let lazy_range = RangeQueryIter::new(
+    //     &tree,
+    //     last_insert_version,
+    //     Interval::new(0, insertions));
+    //
+    // println!("Height = {}", tree.root.unsafe_borrow().height());
+    // println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
+    //
+    // println!("Before Delete Height = {}", tree.root.unsafe_borrow().height);
+    // for key in 0u64..insertions{
+    //     if key == insertions - 1 {
+    //         let s = "asdas".to_string();
+    //     }
+    //     match tree.dispatch_crud(CRUDOperation::Delete(key)) {
+    //         CRUDOperationResult::Deleted(v) => {}
+    //             // println!("Key = {}, v = {} deleted", key, v),
+    //         _ => println!("Error delete key = {}", key)
+    //     }
+    // }
+    // for key in 0u64..insertions {
+    //     // println!("Verified key = {key}");
+    //     let r = tree
+    //         .dispatch_crud(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
+    //     if let CRUDOperationResult::MatchedRecords(v) = r {
+    //         if v.last().unwrap().key != key {
+    //             println!("ERR expected = {key}, found = {}", v.last().unwrap().key)
+    //         }
+    //     }
+    // }
+    //
+    // for key in 0u64..insertions as u64 {
+    //     match tree.dispatch_crud(CRUDOperation::Point(key, last_insert_version)) {
+    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
+    //             // println!("Found Point  {}", v.pop().unwrap()),
+    //         err => panic!("Point failed: {}, key = {}", err, key)
+    //     }
+    // }
 
     // let (keys, versions) = tree.root.unsafe_borrow()
     //     .root.block.unsafe_borrow().as_internal_page_ref().keys_versions();
@@ -182,27 +182,27 @@ fn main() {
     // //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
-    // let insertions = 2_000_000_u64;
+    let insertions = 10_000_000_u64;
 
     let mut all_tx = (0u64..insertions)
         .map(|key| AtomicTransaction::new_latest_si(TxAtomicOperation::Insert(key, mk_payload())))
         .collect_vec();
 
     let points = insertions;
-    all_tx.extend((0..points).map(|key|
-        AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
+    // all_tx.extend((0..points).map(|key|
+    //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
 
     all_tx.shuffle(&mut thread_rng());
-    for threads in [1, 2, 4, 8, 16, 24, 32, 64] {
+    for threads in [1, 2, 4, 8, 16, 24,  32, 64] {
         for gc in [true, false] {
-            for tree in [MVTree::standard(), MVTree::orwc_optimistic_clock(), MVTree::olc_optimistic_clock()] {
+            for tree in [MVTree::standard(), MVTree::olc_optimistic_clock(), MVTree::orwc_optimistic_clock()] {
                 if tree.locking_strategy().is_mono_writer() && threads > 1 {
                     continue;
                 }
-                let mut tx_manager = TransactionManager::new_with(
+                let mut tx_manager = Box::new(TransactionManager::new_with(
                     threads,
                     tree,
-                    gc);
+                    gc));
 
                 let start = SystemTime::now();
 
