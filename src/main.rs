@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime};
 // use cc_bplustree::tree::bplus_tree::BPlusTree;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use rand::prelude::SliceRandom;
-use rand::thread_rng;
+use rand::prelude::{SliceRandom, StdRng};
+use rand::{SeedableRng, thread_rng};
 // use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::block::block::Block;
 use crate::tree::mvbplus_tree;
@@ -181,18 +181,24 @@ fn main() {
     //     insertions_vec.as_slice());
     // //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
     let insertions = 10_000_000_u64;
 
-    let mut all_tx = (0u64..insertions)
-        .map(|key| AtomicTransaction::new_latest_si(TxAtomicOperation::Insert(key, mk_payload())))
-        .collect_vec();
+    println!("> Generating {insertions} keys..");
+    let mut rnd = StdRng::seed_from_u64(90501960);
+    let mut all_tx: Vec<AtomicTransaction<Key>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
+        .into_iter()
+        .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
+        .collect::<Vec<_>>();
 
     let points = insertions;
-    // all_tx.extend((0..points).map(|key|
-    //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(key))));
+    all_tx.extend((0..points).map(|key|
+        AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
+            test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
 
     all_tx.shuffle(&mut thread_rng());
+    println!("> Finished generating {insertions} keys!");
+    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
+
     for threads in [1, 2, 4, 8, 16, 24,  32, 64] {
         for gc in [true, false] {
             for tree in [MVTree::standard(), MVTree::olc_optimistic_clock(), MVTree::orwc_optimistic_clock()] {

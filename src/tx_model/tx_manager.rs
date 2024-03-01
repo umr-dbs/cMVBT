@@ -1,22 +1,16 @@
-use std::collections::LinkedList;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::mem;
-use std::ptr::NonNull;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use cc_bplustree::crud_model::crud_api::{CRUDDispatcher, NodeVisits};
+use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::Ordering::Relaxed;
+use cc_bplustree::crud_model::crud_api::CRUDDispatcher;
 use cc_bplustree::crud_model::crud_operation::CRUDOperation;
 use cc_bplustree::crud_model::crud_operation_result::CRUDOperationResult;
 use cc_bplustree::locking::locking_strategy::LockingStrategy::OLC;
-use cc_bplustree::locking::locking_strategy::orwc;
 use cc_bplustree::tree::bplus_tree::BPlusTree;
-use crossbeam_channel::{at, Receiver};
-use parking_lot::Mutex;
+use crossbeam_channel::Receiver;
 use rayon::ThreadPool;
-use rb_tree::RBTree;
-use crate::record_model::version_info::Version;
 use crate::test::{dec_key, inc_key};
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::mvbplus_tree::{ClockType, MVBPlusTree};
@@ -120,18 +114,20 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn set_snapshot(&mut self, si: Option<SnapShot>) {
+    pub fn is_read(&self) -> bool {
         match self {
-            TransactionHolder::Atomic(atomic) => atomic.snapshot = si,
-            TransactionHolder::Multi(tx) => tx.snapshot = si
+            TransactionHolder::Atomic(atomic) => atomic.crud.is_read(),
+            TransactionHolder::Multi(mul) => mul.crud
+                .iter()
+                .all(|crud| crud.is_read())
         }
     }
 
     #[inline(always)]
-    fn snapshot_version(&self) -> SnapShot {
+    pub fn set_snapshot(&mut self, si: Option<SnapShot>) {
         match self {
-            TransactionHolder::Atomic(atomic) => atomic.snapshot(),
-            TransactionHolder::Multi(tx) => tx.snapshot()
+            TransactionHolder::Atomic(atomic) => atomic.snapshot = si,
+            TransactionHolder::Multi(tx) => tx.snapshot = si
         }
     }
 
@@ -144,12 +140,20 @@ impl<const FAN_OUT: usize,
 }
 
 // pub type ActiveTransactions = Arc<Mutex<RBTree<SnapShot>>>;
-pub type ActiveTransactions = Arc<SafeCell<BPlusTree<250, 499, SnapShot, DummyStruct>>>;
+
+const AUX_ATX_FAN_OUT: usize = 250;
+const AUX_ATX_LEAF_SIZE: usize = 499;
+
+pub type ActiveTransactions
+= Arc<SafeCell<BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, SnapShot, NullValue>>>;
+
+type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
+= AtomicPtr<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>;
 
 #[derive(Default, Clone)]
-pub struct DummyStruct;
+pub struct NullValue;
 
-impl Display for DummyStruct {
+impl Display for NullValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "()")
     }
@@ -165,7 +169,7 @@ pub struct TransactionManager<
 > {
     active_tx: Option<ActiveTransactions>,
     pool: ThreadPool,
-    index: SafeCell<Box<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>>,
+    index: Dispatcher<FAN_OUT, NUM_RECORDS, Key>,
 }
 
 impl<const FAN_OUT: usize,
@@ -185,23 +189,30 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn index(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
-        self.index.as_ref().as_ref()
+        unsafe {
+            self.index.load(Relaxed).as_ref().unwrap()
+        }
+    }
+
+    #[inline(always)]
+    pub fn index_mut(&self) -> &mut MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+        unsafe {
+            self.index.load(Relaxed).as_mut().unwrap()
+        }
     }
 
     pub fn locking_protocol(&self) -> &LockingStrategy {
-        &self.index.as_ref().as_ref().locking_strategy
+        &self.index().locking_strategy
     }
 
     pub fn clock_type(&self) -> ClockType {
-        self.index.as_ref().as_ref().clock_type()
+        self.index().clock_type()
     }
 
     pub fn disable_gc(&mut self) {
         self.active_tx.take();
         unsafe {
-            self.index
-                .as_mut()
-                .as_mut()
+            self.index_mut()
                 .block_manager
                 .set_active_tx_for_gc(None);
         }
@@ -216,7 +227,6 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn enable_gc(&mut self) {
-        // self.active_tx = Some(Arc::new(Default::default()));
         self.active_tx = Some(Arc::new(SafeCell::new(BPlusTree::new_with(
             OLC,
             SnapShot::MIN,
@@ -224,14 +234,11 @@ impl<const FAN_OUT: usize,
             inc_key,
             dec_key,
         ))));
-        unsafe {
-            let clone = self.active_tx();
-            self.index
-                .as_mut()
-                .as_mut()
-                .block_manager
-                .set_active_tx_for_gc(clone);
-        }
+
+        let clone = self.active_tx();
+        self.index_mut()
+            .block_manager
+            .set_active_tx_for_gc(clone);
     }
 
     pub fn join(&self) {
@@ -246,7 +253,7 @@ impl<const FAN_OUT: usize,
                 .thread_name(|t| format!("TxRunner{}", t))
                 .build()
                 .unwrap(),
-            index: SafeCell::new(Box::new(index)),
+            index: AtomicPtr::new(Box::leak(Box::new(index))),
         }
     }
 
@@ -267,21 +274,18 @@ impl<const FAN_OUT: usize,
                 inc_key,
                 dec_key,
             )))),
-            // active_tx: Some(Arc::new(Mutex::new(RBTree::new()))),
             pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .thread_name(|t| format!("TxRunner{}", t))
                 .build()
                 .unwrap(),
-            index: SafeCell::new(Box::new(index)),
+            index: AtomicPtr::new(Box::leak(Box::new(index))),
         };
 
         unsafe {
             let clone = manager.active_tx();
             manager
-                .index
-                .as_mut()
-                .as_mut()
+                .index_mut()
                 .block_manager
                 .set_active_tx_for_gc(clone);
         }
@@ -291,47 +295,29 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn enq_bookkeeping(&self, tx: &mut TransactionHolder<FAN_OUT, NUM_RECORDS, Key>) -> bool {
-        if tx.snapshot().is_none() {
-            // let curr_si = unsafe { self.index.as_ref().as_ref().current_version() };
-            // tx.set_snapshot(curr_si.into());
-            tx.set_snapshot(Version::MAX.into())
-            // self.active_tx.as_ref().map(|active_list|
-            //     active_list.lock().insert(curr_si)
-            // ).unwrap_or(false)
-        }
+        if tx.is_read() {
+            let snapshot = tx
+                .snapshot()
+                .unwrap_or(self.tx_dispatcher().current_version());
 
-        // if let Some(si) = tx.snapshot() {
-        //     self.active_tx.as_ref().map(|active_list|
-        //         active_list.lock().insert(si)
-        //     ).unwrap_or(false)
-        // }
-        // else {
-        //     let curr_si = unsafe { self.index.as_ref().as_ref().current_version() };
-        //     tx.set_snapshot(curr_si.into());
-        //
-        //     self.active_tx.as_ref().map(|active_list|
-        //         active_list.lock().insert(curr_si)
-        //     ).unwrap_or(false)
-        // }
-        self.active_tx.as_ref()
-            .map(|active_list| match active_list.dispatch(CRUDOperation::Insert(tx.snapshot().unwrap(), DummyStruct)) {
-                (.., CRUDOperationResult::Inserted(..)) => true,
-                _ => false
-            }).unwrap_or(false)
+            self.active_tx.as_ref()
+                .map(|active_list|
+                    match active_list.dispatch(CRUDOperation::Insert(snapshot, NullValue))
+                    {
+                        (.., CRUDOperationResult::Inserted(..)) => true,
+                        _ => false
+                    }
+                ).unwrap_or(false)
+        } else {
+            false
+        }
     }
 
-    fn deq_bookkeeping(bk: bool, active_tx: Option<ActiveTransactions>, snap_shot: Option<SnapShot>) {
-        // bk.then(|| snap_shot.map(|si| active_tx.as_ref().map(|active_list|
-        //     active_list.lock().remove(&si))));
-        if bk {
-            if let Some(si) = snap_shot {
-                active_tx.map(|active_list|
-                    // active_list.lock().remove(&si));
-                match active_list.as_ref().dispatch(CRUDOperation::Delete(si)) {
-                        (_, CRUDOperationResult::Deleted(..)) => {},
-                        _ => unreachable!()
-                    });
-            }
+    #[inline(always)]
+    fn deq_bookkeeping(active_tx: ActiveTransactions, si: SnapShot) {
+        match active_tx.dispatch(CRUDOperation::Delete(si)) {
+            (_, CRUDOperationResult::Deleted(..)) => {}
+            _ => unreachable!()
         }
     }
 
@@ -363,13 +349,10 @@ impl<const FAN_OUT: usize,
             let si
                 = tx.snapshot();
 
-            // println!("Exe: {:?}, counter: {}, Tx {}",
-            //          si,
-            //          unsafe { C.fetch_add(1, SeqCst) },
-            //          tx.as_atomic().crud);
             let _ = tx.execute(dispatcher);
-            // println!("Exe: {:?}, counter = {}", si, C.fetch_add(1, SeqCst));
-            Self::deq_bookkeeping(bk, deq_active_query, si);
+            if bk && si.is_some() && deq_active_query.is_some() {
+                Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
+            }
         });
     }
 
@@ -392,10 +375,11 @@ impl<const FAN_OUT: usize,
                 = tx.snapshot();
 
             let _ = sender.send(tx.execute(dispatcher));
-            Self::deq_bookkeeping(bk, deq_active_query, si);
+            if bk && si.is_some() && deq_active_query.is_some() {
+                Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
+            }
         });
 
         receiver
     }
 }
-pub static mut C: AtomicUsize = AtomicUsize::new(0);

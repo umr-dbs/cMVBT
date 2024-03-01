@@ -36,12 +36,16 @@ impl<'a,
     fn dispatch_atomic_transaction(&'a self, tx: AtomicTransaction<Key>)
         -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key>
     {
-        let snapshot = tx.snapshot();
-        match unsafe { mem::transmute(self.snapshot_for(snapshot).dispatch_crud(tx.crud)) } {
+        let snapshot = tx
+            .snapshot()
+            .map(|si| self.snapshot_for(si))
+            .unwrap_or(self.snapshot_current());
+
+        match unsafe { mem::transmute(snapshot.dispatch_crud(tx.crud)) } {
             CRUDOperationResult::Error =>
-                Err(snapshot),
+                Err(snapshot.snapshot()),
             crud_result =>
-                Ok((snapshot, crud_result))
+                Ok((snapshot.snapshot(), crud_result))
         }
     }
 }

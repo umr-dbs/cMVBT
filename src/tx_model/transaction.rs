@@ -93,8 +93,8 @@ impl<Key: Ord + Copy + Hash + Default + Display> AtomicTransaction<Key> {
     }
 
     #[inline(always)]
-    pub fn snapshot(&self) -> Version {
-        self.snapshot.unwrap_or(Version::MAX)
+    pub const fn snapshot(&self) -> Option<Version> {
+        self.snapshot
     }
 }
 

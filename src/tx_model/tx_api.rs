@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::mem;
 use crate::crud_model::crud_api::CRUDDispatcher;
 use crate::crud_model::crud_operation::CRUDOperation;
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -13,12 +14,12 @@ pub trait TransactionDispatcher<
     Key: Ord + Copy + Hash + Default + Display> {
     fn dispatch_transaction(
         &'a self,
-        tx: Transaction<Key>
+        tx: Transaction<Key>,
     ) -> TransactionResult<FAN_OUT, NUM_RECORDS, Key>;
 
     fn dispatch_atomic_transaction(
         &'a self,
-        tx: AtomicTransaction<Key>
+        tx: AtomicTransaction<Key>,
     ) -> AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key>;
 }
 
@@ -58,7 +59,7 @@ CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, 
     #[inline]
     fn dispatch_crud(&'a self, operation: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
         match operation {
-            CRUDOperation::PointSi(key)=> self
+            CRUDOperation::PointSi(key) => self
                 .mv_tree()
                 .dispatch_crud(CRUDOperation::Point(key, self.snapshot())),
             CRUDOperation::RangeSi(range) => self
@@ -79,12 +80,12 @@ impl<const FAN_OUT: usize,
     Key: Default + Hash + Copy + Ord + Display> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
 {
     #[inline(always)]
-    pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<FAN_OUT, NUM_RECORDS, Key> {
-        IsolatedSnapShot(snap_shot, self)
+    pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key> {
+        IsolatedSnapShot(snap_shot, unsafe { mem::transmute(self) })
     }
 
     #[inline(always)]
-    pub fn snapshot_current(&self) -> IsolatedSnapShot<FAN_OUT, NUM_RECORDS, Key> {
-        IsolatedSnapShot(self.version_manager.committed_version(), self)
+    pub fn snapshot_current(&self) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key> {
+        IsolatedSnapShot(self.version_manager.committed_version(), unsafe { mem::transmute(self) })
     }
 }
