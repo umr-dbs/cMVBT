@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::{mem, ptr};
 use std::sync::Arc;
 use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{Release, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
 use std::time::SystemTime;
 use cc_bplustree::crud_model::crud_api::CRUDDispatcher;
 use cc_bplustree::crud_model::crud_operation::CRUDOperation;
@@ -185,7 +185,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn set_active_tx_for_gc(&mut self, active_tx: Option<ActiveTransactions>) {
         if active_tx.is_some() {
             self.active_tx = active_tx;
-            self.dead_pages = Some(Arc::new(Default::default()))
+            self.dead_pages = Some(Arc::new(Mutex::new(LinkedList::new())))
         } else {
             self.active_tx.take();
             self.dead_pages.take();
@@ -252,6 +252,7 @@ impl<const FAN_OUT: usize,
                                             m_page.mark_internal()
                                         }
 
+                                        fence(Acquire);
                                         // println!("Leave cc {:?}", SystemTime::now());
                                         return dead_block;
                                     } else {

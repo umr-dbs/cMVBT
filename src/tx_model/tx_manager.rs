@@ -10,7 +10,8 @@ use cc_bplustree::crud_model::crud_operation_result::CRUDOperationResult;
 use cc_bplustree::locking::locking_strategy::LockingStrategy::OLC;
 use cc_bplustree::tree::bplus_tree::BPlusTree;
 use crossbeam_channel::Receiver;
-use rayon::ThreadPool;
+use threadpool::ThreadPool;
+// use rayon::ThreadPool;
 use crate::test::{dec_key, inc_key};
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tree::mvbplus_tree::{ClockType, MVBPlusTree};
@@ -174,6 +175,17 @@ pub struct TransactionManager<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
+    Key: Default + Hash + Ord + Copy + Display + 'static
+> Drop for TransactionManager<FAN_OUT, NUM_RECORDS, Key> {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = Box::from_raw(self.index.load(Relaxed));
+        }
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
     Key: Default + Hash + Ord + Copy + Display + Send + 'static
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key>
 {
@@ -219,7 +231,8 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn threads(&self) -> usize {
-        self.pool.current_num_threads()
+        // self.pool.current_num_threads()
+        self.pool.max_count()
     }
 
     pub const fn is_gc_enabled(&self) -> bool {
@@ -242,18 +255,19 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn join(&self) {
-        self.pool.join(|| {}, || {});
+        // self.pool.join(|| {}, || {});
+        self.pool.join();
     }
 
     pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>) -> Self {
         Self {
             active_tx: None,
-            pool: rayon::ThreadPoolBuilder::new()
+            pool: threadpool::Builder::new()
                 .num_threads(threads)
-                .thread_name(|t| format!("TxRunner{}", t))
-                .build()
-                .unwrap(),
-            index: AtomicPtr::new(Box::leak(Box::new(index))),
+                // .thread_name(|t| format!("TxRunner{}", t))
+                .build(),
+                // .unwrap(),
+            index: AtomicPtr::new(Box::into_raw(Box::new(index))),
         }
     }
 
@@ -274,12 +288,12 @@ impl<const FAN_OUT: usize,
                 inc_key,
                 dec_key,
             )))),
-            pool: rayon::ThreadPoolBuilder::new()
+            pool: threadpool::Builder::new()
                 .num_threads(threads)
-                .thread_name(|t| format!("TxRunner{}", t))
-                .build()
-                .unwrap(),
-            index: AtomicPtr::new(Box::leak(Box::new(index))),
+                // .thread_name(|t| format!("TxRunner{}", t))
+                .build(),
+                // .unwrap(),
+            index: AtomicPtr::new(Box::into_raw(Box::new(index))),
         };
 
         unsafe {
@@ -345,7 +359,7 @@ impl<const FAN_OUT: usize,
         let deq_active_query
             = self.active_tx();
 
-        self.pool.spawn(move || {
+        self.pool.execute(move || {
             let si
                 = tx.snapshot();
 
@@ -355,7 +369,6 @@ impl<const FAN_OUT: usize,
             }
         });
     }
-
 
     #[inline(always)]
     fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>, bk: bool)
@@ -370,7 +383,7 @@ impl<const FAN_OUT: usize,
         let (sender, receiver)
             = crossbeam_channel::unbounded();
 
-        self.pool.spawn(move || {
+        self.pool.execute(move || unsafe {
             let si
                 = tx.snapshot();
 

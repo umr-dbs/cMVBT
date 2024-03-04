@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "MV-BPlusTree"
-version = "0.0.26"
+version = "0.0.27"
 dependencies = [
  "CCBPlusTree",
  "chrono",
@@ -33,8 +33,8 @@ dependencies = [
  "num_cpus",
  "parking_lot",
  "rand",
- "rayon",
  "rb_tree",
+ "threadpool",
 ]
 
 [[package]]
@@ -515,6 +515,15 @@ dependencies = [
  "once_cell",
  "rayon",
  "windows",
+]
+
+[[package]]
+name = "threadpool"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d050e60b33d41c19108b32cea32164033a9013fe3b46cbd4457559bfbf77afaa"
+dependencies = [
+ "num_cpus",
 ]
 
 [[package]]
