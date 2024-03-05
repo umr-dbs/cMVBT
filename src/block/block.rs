@@ -7,6 +7,7 @@ use crate::block::block_manager::BlockManager;
 use crate::page_model::{BlockRef, node};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::{Node, PageType};
+use crate::test::Payload;
 use crate::utils::interval::Interval;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, SmartGuard};
@@ -44,16 +45,21 @@ impl BlockUnsafeDegree {
 pub(crate) enum BlockSplit<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display>
-{
-    ByKey(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>, Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>),
-    ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> {
+    ByKey(Interval<Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+          Interval<Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>),
+    ByVersion(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
-{
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default> BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload
+> {
 
 }
 
@@ -65,15 +71,17 @@ pub struct Block<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
     // pub block_id: BlockID,
-    pub node_data: SafeCell<Node<FAN_OUT, NUM_RECORDS, Key>>,
+    pub node_data: SafeCell<Node<FAN_OUT, NUM_RECORDS, Key, Payload>>,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
-> Clone for Block<FAN_OUT, NUM_RECORDS, Key>
+    Payload: Clone + Default
+> Clone for Block<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     fn clone(&self) -> Self {
         Self {
@@ -84,7 +92,8 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
-> Default for Block<FAN_OUT, NUM_RECORDS, Key>
+    Payload: Clone + Default
+> Default for Block<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     fn default() -> Self {
         Block {
@@ -96,8 +105,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display + 'static
-> Block<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default
+> Block<FAN_OUT, NUM_RECORDS, Key, Payload>
 { // #[inline(always)]
     // pub const fn block_id(&self) -> BlockID {
     //     0
@@ -121,32 +131,32 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn min_active_units(&self) -> usize {
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_records(),
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_keys()
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys()
         }
     }
 
     #[inline(always)]
     pub fn max_active_units(&self) -> usize {
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_records() * 4,
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::min_active_keys() * 4
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records() * 4,
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys() * 4
         }
     }
 
     #[inline(always)]
     pub fn max_units(&self) -> usize {
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_records(),
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_keys()
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys()
         }
     }
 
     #[inline(always)]
     pub fn max_units_safe(&self) -> usize {
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_records_safe(),
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key>::max_keys_safe()
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records_safe(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys_safe()
         }
     }
 
@@ -170,7 +180,7 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match latch {
             LatchType::Exclusive => self.into_exclusive(),
             LatchType::ReadersWriter => self.into_rw(),
@@ -184,9 +194,10 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Deref for Block<FAN_OUT, NUM_RECORDS, Key> {
-    type Target = Node<FAN_OUT, NUM_RECORDS, Key>;
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Deref for Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    type Target = Node<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -198,8 +209,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> DerefMut for Block<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> DerefMut for Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
@@ -212,9 +224,10 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
-> AsRef<Node<FAN_OUT, NUM_RECORDS, Key>> for Block<FAN_OUT, NUM_RECORDS, Key> {
+    Payload: Clone + Default
+> AsRef<Node<FAN_OUT, NUM_RECORDS, Key, Payload>> for Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key> {
+    fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             &*addr_of!(self.node_data) as _
         }
@@ -224,10 +237,11 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> AsMut<Node<FAN_OUT, NUM_RECORDS, Key>> for Block<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> AsMut<Node<FAN_OUT, NUM_RECORDS, Key, Payload>> for Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    fn as_mut(&mut self) -> &mut Node<FAN_OUT, NUM_RECORDS, Key> {
+    fn as_mut(&mut self) -> &mut Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             &mut *addr_of_mut!(self.node_data) as _
         }
@@ -238,13 +252,15 @@ pub type BlockGuard<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key
-> = SmartGuard<'a, Block<FAN_OUT, NUM_RECORDS, Key>>;
+    Key,
+    Payload: Clone
+> = SmartGuard<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
-> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key> {
+    Payload: Clone + Default
+> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
 
 }

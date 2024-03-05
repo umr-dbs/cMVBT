@@ -45,17 +45,19 @@ impl Display for ClockType {
 pub(crate) struct RootItem<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
-    pub(crate) root: Root<FAN_OUT, NUM_RECORDS, Key>,
-    pub(crate) prev: Option<SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>>,
+    pub(crate) root: Root<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    pub(crate) prev: Option<SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Deref for RootItem<FAN_OUT, NUM_RECORDS, Key> {
-    type Target = Root<FAN_OUT, NUM_RECORDS, Key>;
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Deref for RootItem<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    type Target = Root<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     fn deref(&self) -> &Self::Target {
         &self.root
@@ -64,8 +66,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display + 'static
-> RootItem<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default
+> RootItem<FAN_OUT, NUM_RECORDS, Key, Payload> {
     pub(crate) fn deep_clone(&self, latch_type: LatchType) -> Self {
         Self {
             root: Root {
@@ -81,24 +84,27 @@ impl<const FAN_OUT: usize,
 pub(crate) type SmartRoot<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key
-> = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key>>;
+    Key,
+    Payload
+> = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 pub(crate) type RootItemGuard<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key
-> = SmartGuard<'a, RootItem<FAN_OUT, NUM_RECORDS, Key>>;
+    Key,
+    Payload
+> = SmartGuard<'a, RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 pub struct MVBPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
-    pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
+    pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,
-    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) version_manager: VersionManager,
     pub(crate) inc_key: fn(Key) -> Key,
     pub(crate) dec_key: fn(Key) -> Key,
@@ -106,20 +112,34 @@ pub struct MVBPlusTree<
     pub(crate) max_key: Key,
 }
 
+// impl<const FAN_OUT: usize,
+//     const NUM_RECORDS: usize,
+//     Key: Default + Ord + Copy + Hash + Display
+// > Drop for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+//     fn drop(&mut self) {
+//         self.block_manager = self.block_manager.clone();
+//         let y = self.root.unsafe_borrow_mut().prev.take();
+//         let x = &self.root.unsafe_borrow_mut().root.block;
+//     }
+// }
+
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
-> Sync for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
+    Payload: Clone + Default
+> Sync for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Send for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {}
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Send for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 impl<const FAN_OUT: usize,
-    const NUM_RECORDS: usize
-> Default for MVBPlusTree<FAN_OUT, NUM_RECORDS, u64> {
+    const NUM_RECORDS: usize,
+    Payload: Clone + Default + 'static
+> Default for MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload> {
     fn default() -> Self {
         Self::standard()
     }
@@ -127,7 +147,8 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, u64>
+    Payload: Clone + Default + 'static
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload>
 {
     #[inline]
     fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
@@ -188,28 +209,30 @@ pub(crate) enum MergeResult<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
     Merged(usize,
            Interval<Key>,
-           BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>),
+           BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     KeySplit(usize,
-             BlockSplit<FAN_OUT, NUM_RECORDS, Key>,
-             BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>),
+             BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload>,
+             BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     Error,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static + Display,
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Payload: Clone + Default + 'static
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub(crate) fn merge(
         &self,
-        mufasa: &Block<FAN_OUT, NUM_RECORDS, Key>,
-        simba: &Block<FAN_OUT, NUM_RECORDS, Key>,
+        mufasa: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        simba: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
         simba_index: usize,
-    ) -> MergeResult<FAN_OUT, NUM_RECORDS, Key>
+    ) -> MergeResult<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_internal_page
             = mufasa.as_internal_page_ref();
@@ -464,9 +487,9 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn split(
         &self,
-        block: &Block<FAN_OUT, NUM_RECORDS, Key>,
+        block: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
         fence: &Interval<Key>,
-    ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key>
+    ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let is_leaf
             = block.is_leaf();
@@ -603,11 +626,11 @@ impl<const FAN_OUT: usize,
     }
 
     pub(crate) fn from(locking_strategy: &LockingStrategy,
-                       block: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+                       block: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
                        version: Version,
                        height: Height,
-                       prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
-    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key>
+                       prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let root_item = RootItem {
             root: Root::new(
@@ -629,7 +652,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {
         SmartCell(Arc::new(match latch_type {
             LatchType::Exclusive => SmartFlavor::ExclusiveCell(
                 Mutex::new(()),
@@ -650,11 +673,11 @@ impl<const FAN_OUT: usize,
     }
 
     pub(crate) fn make_root_item(locking_strategy: &LockingStrategy,
-                                 block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key>,
+                                 block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
                                  version: Version,
                                  height: Height,
-                                 prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key>>,
-    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key>
+                                 prev: Option<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    ) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let root_item = RootItem {
             root: Root::new(
@@ -764,12 +787,12 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub(crate) fn apply_for_ref(
         &self,
-        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
         curr_level: Level,
         attempts: Attempts,
         max_level: Level,
-    ) -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key>
+    ) -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
             LockingStrategy::ORWC {

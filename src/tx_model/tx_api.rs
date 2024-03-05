@@ -11,33 +11,37 @@ pub trait TransactionDispatcher<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Ord + Copy + Hash + Default + Display> {
+    Key: Ord + Copy + Hash + Default + Display,
+    Payload: Clone + Default>
+{
     fn dispatch_transaction(
         &'a self,
-        tx: Transaction<Key>,
-    ) -> TransactionResult<FAN_OUT, NUM_RECORDS, Key>;
+        tx: Transaction<Key, Payload>,
+    ) -> TransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     fn dispatch_atomic_transaction(
         &'a self,
-        tx: AtomicTransaction<Key>,
-    ) -> AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key>;
+        tx: AtomicTransaction<Key, Payload>,
+    ) -> AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>;
 }
 
 pub struct IsolatedSnapShot<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display + 'static>
-(
+    Key: Default + Hash + Copy + Ord + Display + 'static,
+    Payload: Clone + Default
+>(
     pub SnapShot,
-    pub &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>,
+    pub &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 );
 
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display>
-IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Copy + Ord + Display,
+    Payload: Clone + Default
+> IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
     pub const fn snapshot(&self) -> SnapShot {
@@ -45,7 +49,7 @@ IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
     }
 
     #[inline(always)]
-    pub const fn mv_tree(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    pub const fn mv_tree(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.1
     }
 }
@@ -53,11 +57,12 @@ IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + 'static + Display>
-CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Copy + Ord + 'static + Display,
+    Payload: Clone + Default + 'static>
+CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    fn dispatch_crud(&'a self, operation: CRUDOperation<Key>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    fn dispatch_crud(&'a self, operation: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         match operation {
             CRUDOperation::PointSi(key) => self
                 .mv_tree()
@@ -77,15 +82,17 @@ CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key> for IsolatedSnapShot<'a, FAN_OUT, 
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Copy + Ord + Display,
+    Payload: Clone + Default
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key> {
+    pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key, Payload> {
         IsolatedSnapShot(snap_shot, unsafe { mem::transmute(self) })
     }
 
     #[inline(always)]
-    pub fn snapshot_current(&self) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key> {
+    pub fn snapshot_current(&self) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key, Payload> {
         IsolatedSnapShot(self.version_manager.committed_version(), unsafe { mem::transmute(self) })
     }
 }

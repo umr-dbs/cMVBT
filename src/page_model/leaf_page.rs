@@ -14,43 +14,48 @@ type Len = AtomicU16;
 
 pub struct LeafPage<
     const NUM_RECORDS: usize,
-    Key: Hash + Ord + Copy + Default
+    Key: Hash + Ord + Copy + Default,
+    Payload: Clone + Default
 > {
     pub(crate) len: Len,
-    pub(crate) record_data: [MaybeUninit<RecordPoint<Key>>; NUM_RECORDS],
-    _marker: PhantomData<[RecordPoint<Key>]>,
+    pub(crate) record_data: [MaybeUninit<RecordPoint<Key, Payload>>; NUM_RECORDS],
+    _marker: PhantomData<[RecordPoint<Key, Payload>]>,
 }
 
 impl<const NUM_RECORDS: usize,
-    Key: Hash + Ord + Copy + Default
-> Clone for LeafPage<NUM_RECORDS, Key> {
+    Key: Hash + Ord + Copy + Default,
+    Payload: Clone + Default
+> Clone for LeafPage<NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         Self::from(self)
     }
 }
 
 impl<const NUM_RECORDS: usize,
-    Key: Hash + Ord + Copy + Default
-> Default for LeafPage<NUM_RECORDS, Key> {
+    Key: Hash + Ord + Copy + Default,
+    Payload: Clone + Default
+> Default for LeafPage<NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         LeafPage::new()
     }
 }
 
 impl<const NUM_RECORDS: usize,
-    Key: Hash + Ord + Copy + Default
-> Drop for LeafPage<NUM_RECORDS, Key> {
+    Key: Hash + Ord + Copy + Default,
+    Payload: Clone + Default
+> Drop for LeafPage<NUM_RECORDS, Key, Payload> {
     fn drop(&mut self) {
         self.as_records_mut().iter_mut().for_each(|record| unsafe {
-            (record as *mut RecordPoint<Key>)
+            (record as *mut RecordPoint<Key, Payload>)
                 .drop_in_place()
         })
     }
 }
 
 impl<const NUM_RECORDS: usize,
-    Key: Hash + Ord + Copy + Default
-> LeafPage<NUM_RECORDS, Key> {
+    Key: Hash + Ord + Copy + Default,
+    Payload: Clone + Default
+> LeafPage<NUM_RECORDS, Key, Payload> {
     #[inline]
     pub(crate) fn from(leaf_page: &Self) -> Self {
         let mut new_page
@@ -77,7 +82,7 @@ impl<const NUM_RECORDS: usize,
     #[inline(always)]
     pub const fn new() -> Self {
         debug_assert!(mem::size_of::<Len>() +
-                          mem::size_of::<[RecordPoint<Key>; NUM_RECORDS]>()
+                          mem::size_of::<[RecordPoint<Key, Payload>; NUM_RECORDS]>()
                           <= 4096, "FAN_OUT Invalid!");
         Self {
             len: Len::new(0),
@@ -87,16 +92,16 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub fn as_records(&self) -> &[RecordPoint<Key>] {
+    pub fn as_records(&self) -> &[RecordPoint<Key, Payload>] {
         unsafe {
             std::slice::from_raw_parts(
-                self.record_data.as_ptr() as *const RecordPoint<Key>,
+                self.record_data.as_ptr() as *const RecordPoint<Key, Payload>,
                 self.len())
         }
     }
 
     #[inline(always)]
-    pub fn as_records_mut(&mut self) -> &mut [RecordPoint<Key>] {
+    pub fn as_records_mut(&mut self) -> &mut [RecordPoint<Key, Payload>] {
         unsafe {
             std::slice::from_raw_parts_mut(
                 self.record_data.as_mut_ptr() as *mut _,
@@ -147,7 +152,7 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline]
-    pub fn push_uncommitted(&mut self, record: RecordPoint<Key>, index: usize) {
+    pub fn push_uncommitted(&mut self, record: RecordPoint<Key, Payload>, index: usize) {
         unsafe {
             self.record_data
                 .as_mut_ptr()
@@ -166,7 +171,7 @@ impl<const NUM_RECORDS: usize,
         unsafe {
             ptr::drop_in_place(self.record_data
                 .as_mut_ptr()
-                .add(index) as *mut RecordPoint<Key>);
+                .add(index) as *mut RecordPoint<Key, Payload>);
         }
     }
 
@@ -179,7 +184,7 @@ impl<const NUM_RECORDS: usize,
             (0..len).for_each(|index| {
                 ptr::drop_in_place(self.record_data
                     .as_mut_ptr()
-                    .add(index) as *mut RecordPoint<Key>);
+                    .add(index) as *mut RecordPoint<Key, Payload>);
             });
         }
     }
@@ -200,7 +205,7 @@ impl<const NUM_RECORDS: usize,
     // }
 
     #[inline(always)]
-    pub(crate) fn bulk_push(&mut self, records: Vec<&RecordPoint<Key>>) {
+    pub(crate) fn bulk_push(&mut self, records: Vec<&RecordPoint<Key, Payload>>) {
         let len
             = self.len();
 
@@ -220,7 +225,7 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn bulk_push_from_slice_ref(&mut self, records: &[&RecordPoint<Key>]) {
+    pub(crate) fn bulk_push_from_slice_ref(&mut self, records: &[&RecordPoint<Key, Payload>]) {
         let len
             = self.len();
 
@@ -237,7 +242,7 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn bulk_push_from_slice(&mut self, records: &[RecordPoint<Key>]) {
+    pub(crate) fn bulk_push_from_slice(&mut self, records: &[RecordPoint<Key, Payload>]) {
         let len
             = self.len();
 

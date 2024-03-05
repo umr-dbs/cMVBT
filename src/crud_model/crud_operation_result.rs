@@ -18,10 +18,11 @@ pub enum CRUDOperationResult<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default
 > {
-    MatchedRecords(Vec<RecordPointResult<Key>>),
-    MatchedRecordIter(RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key>),
+    MatchedRecords(Vec<RecordPointResult<Key, Payload>>),
+    MatchedRecordIter(RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     Inserted(Version),
     Updated(Version),
     Deleted(Version),
@@ -33,8 +34,9 @@ pub enum CRUDOperationResult<
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default
+> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub const fn is_err(&self) -> bool {
         match self {
@@ -53,8 +55,9 @@ impl<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> Display for CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default
+> Display for CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             CRUDOperationResult::Error =>
@@ -82,8 +85,8 @@ impl<'a,
 }
 
 /// Sugar implementation, wrapping collection of records to a RecordPointResult.
-impl<Key: Ord + Hash + Copy + Default> Into<RecordPointResult<Key>> for RecordPoint<Key> {
-    fn into(self) -> RecordPointResult<Key> {
+impl<Key: Ord + Hash + Copy + Default, Payload: Clone + Default> Into<RecordPointResult<Key, Payload>> for RecordPoint<Key, Payload> {
+    fn into(self) -> RecordPointResult<Key, Payload> {
         RecordPointResult::from(&self)
     }
 }

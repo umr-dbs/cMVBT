@@ -9,9 +9,10 @@ pub const LEVEL_ROOT: Height = 1;
 pub(crate) struct Root<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
-    pub(crate) block: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) block: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) version: Version,
     pub(crate) height: Height
 }
@@ -19,13 +20,15 @@ pub(crate) struct Root<
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Send for Root<FAN_OUT, NUM_RECORDS, Key> { }
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Send for Root<FAN_OUT, NUM_RECORDS, Key, Payload> { }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Display for Root<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Display for Root<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Root(height: {}, version: {})", self.height(), self.version)
     }
@@ -34,25 +37,28 @@ impl<const FAN_OUT: usize,
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Sync for Root<FAN_OUT, NUM_RECORDS, Key> { }
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Sync for Root<FAN_OUT, NUM_RECORDS, Key, Payload> { }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Into<Root<FAN_OUT, NUM_RECORDS, Key>> for (BlockRef<FAN_OUT, NUM_RECORDS, Key>, Version, Height) {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Into<Root<FAN_OUT, NUM_RECORDS, Key, Payload>> for (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, Version, Height) {
     #[inline(always)]
-    fn into(self) -> Root<FAN_OUT, NUM_RECORDS, Key> {
+    fn into(self) -> Root<FAN_OUT, NUM_RECORDS, Key, Payload> {
         Root::new(self.0, self.1, self.2)
     }
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Root<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Root<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub(crate) fn new(block: BlockRef<FAN_OUT, NUM_RECORDS, Key>, version: Version, height: Height) -> Self {
+    pub(crate) fn new(block: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, height: Height) -> Self {
         Self {
             block,
             version,
@@ -61,7 +67,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn block(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn block(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.block.clone()
     }
 

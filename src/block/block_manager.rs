@@ -52,7 +52,7 @@ pub const fn bsz_alignment_min<Key, Payload>() -> usize
     mem::align_of::<Arc<()>>() + // ptr size
         mem::align_of::<usize>() + // dispatcher alignment
         mem::size_of::<usize>() * 2 + // arc extras in data area in Tree
-        mem::align_of::<Block<0, 0, Key>>() + // alignment for block
+        mem::align_of::<Block<0, 0, Key, Payload>>() + // alignment for block
         mem::size_of::<ObjectCount>() + // len indicator
         mem::size_of::<usize>() * 2 + // arc extras in data area
         mem::size_of::<SmartFlavor<()>>() + // align of SmartFlavor = size of empty data
@@ -67,8 +67,12 @@ pub const fn bsz_alignment<Key, Payload>() -> usize
         if ENABLE_SMALL_BLOCK { MAX_ZEROS_PER_BLOCK } else { 0 }
 }
 
-type DeadPages<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
-= Arc<Mutex<LinkedList<(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)>>>;
+type DeadPages<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key,
+    Payload>
+= Arc<Mutex<LinkedList<(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>>>;
 
 // type DeadPages<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
 // = Arc<SafeCell<BPlusTree<250, 250, Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>>>>;
@@ -77,18 +81,20 @@ type DeadPages<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
 pub struct BlockManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
     active_tx: Option<ActiveTransactions>,
-    dead_pages: Option<DeadPages<FAN_OUT, NUM_RECORDS, Key>>,
+    dead_pages: Option<DeadPages<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     _marker: PhantomData<Key>,
     // block_id_counter: AtomicBlockID,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Clone for BlockManager<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Clone for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
@@ -102,8 +108,9 @@ impl<const FAN_OUT: usize,
 /// Default implementation for BlockManager with default BlockSettings.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display + 'static
-> Default for BlockManager<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default
+> Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         BlockManager::new()
     }
@@ -112,8 +119,9 @@ impl<const FAN_OUT: usize,
 /// Main functionality implementation for BlockManager.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display + 'static
-> BlockManager<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default
+> BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     // /// Generates and returns a new atomic (unique across callers) BlockID.
     // #[inline(always)]
@@ -193,7 +201,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>); 2]) {
+    pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
         if let Some(ref dead_pages) = self.dead_pages {
             // dead.into_iter().for_each(|(v, p)| {
             //     match dead_pages.dispatch(CRUDOperation::Insert(v, p)) {
@@ -206,7 +214,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead(&self, dead: (Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>)) {
+    pub(crate) fn register_dead(&self, dead: (Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)) {
         if let Some(ref dead_pages) = self.dead_pages {
             // match dead_pages.dispatch(CRUDOperation::Insert(dead.0, dead.1)) {
             //     (_, CRUDOperationResult::Inserted(..)) => {}
@@ -224,7 +232,7 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         if let (Some(active_tx), Some(dead_pages))
             = (self.active_tx.as_ref(), self.dead_pages.as_ref())
         {
@@ -383,13 +391,13 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline]
-    pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.alloc_block(latch_type, true)
     }
 
     /// Crafts a new aligned Index-Block.
     #[inline]
-    pub(crate) fn new_empty_index_block(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn new_empty_index_block(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.alloc_block(latch_type, false)
     }
 }

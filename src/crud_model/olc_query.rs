@@ -10,11 +10,12 @@ use crate::utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default + 'static
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
 
@@ -36,8 +37,8 @@ impl<const FAN_OUT: usize,
         mut attempts: Attempts,
     ) -> (
         //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
           Height,
           Attempts)
     {
@@ -57,8 +58,8 @@ impl<const FAN_OUT: usize,
     fn retrieve_root_write_internal_olc(&self, attempts: Attempts) -> Result<
         (
             //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-         BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+         BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
          Height), ()>
     {
         let height
@@ -134,7 +135,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal_olc(&self, key: Key, attempts: Attempts, max_level: Level)
-                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
+                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let (mut curr_block,
             mut curr_guard,

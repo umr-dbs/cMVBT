@@ -20,13 +20,15 @@ pub type Attempts = u32;
 pub type BlockRef<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key
-> = SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>>;
+    Key,
+    Payload
+> = SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    E: Default + Ord + Copy + Hash + Display
-> Display for BlockRef<FAN_OUT, NUM_RECORDS, E> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Display for BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "IsLeaf: {}, Len: {}", self.unsafe_borrow().is_leaf(), self.unsafe_borrow().len())
     }
@@ -34,42 +36,43 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Hash + Copy + Display
-> Block<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Hash + Copy + Display,
+    Payload: Clone + Default
+> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub fn into_rw(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_rw(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::ReadersWriterCell(
             Mutex::new(()),
             SafeCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_free(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_free(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::FreeCell(
             SafeCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::OLCCell(
             OptCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_lightweight_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_lightweight_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::LightWeightHybridCell(
             OptCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_exclusive(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_exclusive(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::ExclusiveCell(
             Mutex::new(()),
             SafeCell::new(self))))
     }
 
     #[inline(always)]
-    pub fn into_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key>> {
+    pub fn into_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::HybridCell(
             OptCell::new(self),
             RwLock::new(()))))

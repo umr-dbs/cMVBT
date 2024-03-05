@@ -19,31 +19,34 @@ use crate::tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, S
 use crate::tx_model::tx_api::TransactionDispatcher;
 use crate::utils::safe_cell::SafeCell;
 
-enum TransactionHolder<
+pub(crate) enum TransactionHolder<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display>
-{
-    Atomic(AtomicTransaction<Key>),
-    Multi(Transaction<Key>),
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone
+> {
+    Atomic(AtomicTransaction<Key, Payload>),
+    Multi(Transaction<Key, Payload>),
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display
-> Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>> for Transaction<Key> {
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone
+> Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>> for Transaction<Key, Payload> {
     #[inline(always)]
-    fn into(self) -> TransactionHolder<FAN_OUT, NUM_RECORDS, Key> {
+    fn into(self) -> TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> {
         TransactionHolder::Multi(self)
     }
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display
-> Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>> for AtomicTransaction<Key> {
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone
+> Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>> for AtomicTransaction<Key, Payload> {
     #[inline(always)]
-    fn into(self) -> TransactionHolder<FAN_OUT, NUM_RECORDS, Key> {
+    fn into(self) -> TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> {
         TransactionHolder::Atomic(self)
     }
 }
@@ -51,17 +54,19 @@ impl<const FAN_OUT: usize,
 pub enum TxExecutionResult<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static>
+    Key: Default + Hash + Ord + Copy + Display + 'static,
+    Payload: Clone + Default>
 {
-    AtomicTxResult(AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key>),
-    TxResult(TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key>),
+    AtomicTxResult(AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
+    TxResult(TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
 }
 
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static
-> TxExecutionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Hash + Ord + Copy + Display + 'static,
+    Payload: Clone + Default
+> TxExecutionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub const fn is_ok(&self) -> bool {
         match self {
@@ -73,7 +78,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub fn unwrap_transaction(self) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    pub fn unwrap_transaction(self) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self {
             TxExecutionResult::TxResult(tx) => tx,
             _ => unreachable!()
@@ -81,7 +86,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub fn unwrap_atomic(self) -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    pub fn unwrap_atomic(self) -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self {
             TxExecutionResult::AtomicTxResult(atomic) => atomic,
             _ => unreachable!()
@@ -91,11 +96,12 @@ impl<'a,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display> TransactionHolder<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone + Default> TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    fn execute<'a>(self, dispatcher: &'a impl TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key>)
-                   -> TxExecutionResult<'a, FAN_OUT, NUM_RECORDS, Key> {
+    fn execute<'a>(self, dispatcher: &'a impl TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload>)
+                   -> TxExecutionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self {
             TransactionHolder::Atomic(atomic) =>
                 TxExecutionResult::AtomicTxResult(
@@ -132,7 +138,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    fn as_atomic(&self) -> &AtomicTransaction<Key> {
+    fn as_atomic(&self) -> &AtomicTransaction<Key, Payload> {
         match self {
             TransactionHolder::Atomic(atomic) => atomic,
             TransactionHolder::Multi(tx) => unreachable!()
@@ -148,8 +154,8 @@ const AUX_ATX_LEAF_SIZE: usize = 499;
 pub type ActiveTransactions
 = Arc<SafeCell<BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, SnapShot, NullValue>>>;
 
-type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
-= AtomicPtr<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>>;
+type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
+= AtomicPtr<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 #[derive(Default, Clone)]
 pub struct NullValue;
@@ -160,23 +166,25 @@ impl Display for NullValue {
     }
 }
 
-type TxDispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
-= &'static MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>;
+type TxDispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
+= &'static MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub struct TransactionManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static
+    Key: Default + Hash + Ord + Copy + Display + 'static,
+    Payload: Clone + Default
 > {
     active_tx: Option<ActiveTransactions>,
     pool: ThreadPool,
-    index: Dispatcher<FAN_OUT, NUM_RECORDS, Key>,
+    index: Dispatcher<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static
-> Drop for TransactionManager<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Hash + Ord + Copy + Display + 'static,
+    Payload: Clone + Default
+> Drop for TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn drop(&mut self) {
         unsafe {
             let _ = Box::from_raw(self.index.load(Relaxed));
@@ -186,8 +194,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + Send + 'static
-> TransactionManager<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Hash + Ord + Copy + Display + Send + 'static,
+    Payload: Clone + Default + Send + 'static
+> TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
     pub(crate) fn active_tx(&self) -> Option<ActiveTransactions> {
@@ -195,19 +204,19 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn tx_dispatcher(&self) -> TxDispatcher<FAN_OUT, NUM_RECORDS, Key> {
+    fn tx_dispatcher(&self) -> TxDispatcher<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe { mem::transmute(self.index()) }
     }
 
     #[inline(always)]
-    pub fn index(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn index(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_ref().unwrap()
         }
     }
 
     #[inline(always)]
-    pub fn index_mut(&self) -> &mut MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn index_mut(&self) -> &mut MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_mut().unwrap()
         }
@@ -259,7 +268,7 @@ impl<const FAN_OUT: usize,
         self.pool.join();
     }
 
-    pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>) -> Self {
+    pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             active_tx: None,
             pool: threadpool::Builder::new()
@@ -271,7 +280,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub fn new_with(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>, gc: bool) -> Self {
+    pub fn new_with(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         if gc {
             Self::new_with_gc(threads, index)
         } else {
@@ -279,7 +288,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub fn new_with_gc(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>) -> Self {
+    pub fn new_with_gc(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         let mut manager = Self {
             active_tx: Some(Arc::new(SafeCell::new(BPlusTree::new_with(
                 OLC,
@@ -308,7 +317,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn enq_bookkeeping(&self, tx: &mut TransactionHolder<FAN_OUT, NUM_RECORDS, Key>) -> bool {
+    fn enq_bookkeeping(&self, tx: &mut TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         if tx.is_read() {
             let snapshot = tx
                 .snapshot()
@@ -336,8 +345,8 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub fn execute_tx<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>>>(&self, tx: Tx)
-    -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
+    pub fn execute_tx<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx)
+    -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let mut tx = tx.into();
         let bk = self.enq_bookkeeping(&mut tx);
@@ -345,14 +354,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub fn execute_tx_non_reader<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key>>>(&self, tx: Tx) {
+    pub fn execute_tx_non_reader<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx) {
         let mut tx = tx.into();
         let bk = self.enq_bookkeeping(&mut tx);
         self.execute_tx_non_reader_internal(tx, bk)
     }
 
     #[inline(always)]
-    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>, bk: bool) {
+    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>, bk: bool) {
         let dispatcher
             = self.tx_dispatcher();
 
@@ -371,8 +380,8 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key>, bk: bool)
-                                  -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key>>
+    fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>, bk: bool)
+                                  -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let dispatcher
             = self.tx_dispatcher();

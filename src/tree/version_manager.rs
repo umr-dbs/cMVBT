@@ -62,8 +62,9 @@ impl VersionManager {
 /// Extended "Index" implementation, i.e. including version specific methods.
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn current_version(&self) -> Version {
         self.version_manager.committed_version()

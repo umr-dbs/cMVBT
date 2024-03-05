@@ -2,15 +2,14 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use crate::utils::interval::Interval;
 use crate::crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Insert, Range, Update, PointSi, RangeSi, RangeIter, RangeIterSi};
-use crate::record_model::record_point::Payload;
 use crate::record_model::version_info::Version;
 
-pub type TxAtomicOperation<Key> = CRUDOperation<Key>;
+pub type TxAtomicOperation<Key, Payload> = CRUDOperation<Key, Payload>;
 
 /// Transactions definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
 #[derive(Clone, Default)]
-pub enum CRUDOperation<Key: Ord + Copy + Hash + Display> {
+pub enum CRUDOperation<Key: Ord + Copy + Hash + Display, Payload: Clone> {
     #[default]
     Empty,
 
@@ -30,16 +29,16 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash + Display> {
 }
 
 /// Explicitly support move-semantics for Transaction.
-unsafe impl<Key: Ord + Copy + Hash + Display> Send for CRUDOperation<Key> {}
-unsafe impl<Key: Ord + Copy + Hash + Display> Sync for CRUDOperation<Key> {}
+unsafe impl<Key: Ord + Copy + Hash + Display, Payload: Clone> Send for CRUDOperation<Key, Payload> {}
+unsafe impl<Key: Ord + Copy + Hash + Display, Payload: Clone> Sync for CRUDOperation<Key, Payload> {}
 /// Implements Display for Transaction, i.e. pretty printers.
-impl<Key: Display + Ord + Copy + Hash> Display for CRUDOperation<Key> {
+impl<Key: Display + Ord + Copy + Hash, Payload: Clone> Display for CRUDOperation<Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Insert(key, payload) =>
-                write!(f, "Insert(Key: {}, Payload: {:?})", key, payload),
+                write!(f, "Insert(Key: {})", key),
             Update(key, payload) =>
-                write!(f, "Update(key: {}, payload: {:?})", key, payload),
+                write!(f, "Update(key: {})", key),
             Delete(key) =>
                 write!(f, "Delete(Key: {})", key),
             Point(key, version) =>
@@ -60,7 +59,7 @@ impl<Key: Display + Ord + Copy + Hash> Display for CRUDOperation<Key> {
 }
 
 /// Main implementation block for Transaction.
-impl<Key: Ord + Hash + Copy + Display> CRUDOperation<Key> {
+impl<Key: Ord + Hash + Copy + Display, Payload: Clone> CRUDOperation<Key, Payload> {
     /// Returns true, only if the Transaction does not require write access when executing.
     /// Returns false, otherwise.
     #[inline(always)]

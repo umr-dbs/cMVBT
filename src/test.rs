@@ -45,13 +45,13 @@ pub fn dec_key(k: Key) -> Key {
     k.checked_sub(1).unwrap_or(Key::MIN)
 }
 
-pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>;
+pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
 
 #[inline(always)]
-pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key>]) -> (u128, u64) {
+pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key, Payload>]) -> (u128, u64) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -99,7 +99,7 @@ pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[Ato
 }
 
 #[inline(always)]
-pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key>]) -> (u128, u64) {
+pub fn bulk_crud(worker_threads: usize, tree: Tree, operations_queue: &[CRUDOperation<Key, Payload>]) -> (u128, u64) {
     let mut data_buff = operations_queue
         .iter()
         .chunks(operations_queue.len() / worker_threads)
@@ -152,7 +152,7 @@ pub fn test01(mut tree: Tree) {
         = 10_000_000;
 
     let insertions = (1u64..=EVENT_COUNT)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .map(|key| CRUDOperation::Insert(key, key as _))
         .collect_vec();
 
     for threads in 1..=num_cpus::get() {
@@ -176,7 +176,7 @@ pub fn test02(mut tree: Tree) {
     let protocol = tree.locking_strategy().clone();
     let total = EVENT_COUNT + READER_COUNT;
     let mut crud = (1u64..=EVENT_COUNT)
-        .map(|key| CRUDOperation::Insert(key, mk_payload()))
+        .map(|key| CRUDOperation::Insert(key, key as _))
         .collect_vec();
 
     crud.extend((1u64..=READER_COUNT)

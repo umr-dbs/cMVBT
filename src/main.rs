@@ -19,7 +19,7 @@ use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
-use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, test01, test02};
+use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
 use crate::tx_model::transaction::{AtomicTransaction, SnapShot};
@@ -40,16 +40,16 @@ pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
     Arc::new(MAKE_INDEX(crud))
 };
 
-fn mk_payload() -> Box<u8> {
+fn mk_payload() -> Box<()> {
     unsafe {
-        mem::transmute(Box::into_raw(Box::new(0_usize)))
+        mem::transmute(Box::into_raw(Box::new(())))
     }
 }
 
 const FAN_OUT: usize = test::FAN_OUT;
 const NUM_RECORDS: usize = test::NUM_RECORDS;
 
-pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64>;
+pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>;
 
 fn main() {
     make_splash();
@@ -89,7 +89,7 @@ fn main() {
     //     test02(tree.clone());
     // }
 
-    assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64>>() <= 4096);
+    assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64, f64>>() <= 4096);
 
     let tree
         = Arc::new(MVTree::olc_optimistic_clock());
@@ -182,13 +182,13 @@ fn main() {
 
 
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    let insertions = 10_000_000_u64;
+    let insertions = 10_00_000_u64;
 
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);
-    let mut all_tx: Vec<AtomicTransaction<Key>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
+    let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
         .into_iter()
-        .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
+        .map(|key| CRUDOperation::Insert(key, key as _).into())
         .collect::<Vec<_>>();
 
     let points = 0;
@@ -201,7 +201,7 @@ fn main() {
     println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
 
     for threads in [1, 2, 4, 8, 16, 24,  32, 64, 72, 96, 128] {
-        for gc in [ false] {
+        for gc in [true, false] {
             for tree in [MVTree::standard(), MVTree::olc_optimistic_clock(), MVTree::orwc_optimistic_clock()] {
                 if tree.locking_strategy().is_mono_writer() && threads > 1 {
                     continue;

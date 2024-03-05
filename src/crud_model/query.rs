@@ -22,21 +22,23 @@ pub struct RangeQueryIter<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default
 > {
-    pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key>,
+    pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) range: Interval<Key>,
-    path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key>)>,
-    buff: VecDeque<RecordPointResult<Key>>,
+    path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+    buff: VecDeque<RecordPointResult<Key, Payload>>,
 }
 
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default
+> RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub const fn new(tree: &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>, version: Version, range: Interval<Key>) -> Self {
+    pub const fn new(tree: &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
         Self {
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
@@ -46,7 +48,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub const fn si(&self) -> &IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key> {
+    pub const fn si(&self) -> &IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         &self.isolated_snapshot
     }
 
@@ -56,7 +58,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub const fn mv_tree(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
+    pub const fn mv_tree(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.si().mv_tree()
     }
 }
@@ -64,9 +66,10 @@ impl<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> Iterator for RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key> {
-    type Item = RecordPointResult<Key>;
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default + 'static
+> Iterator for RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
+    type Item = RecordPointResult<Key, Payload>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if !self.buff.is_empty() {
@@ -150,10 +153,11 @@ impl<'a,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + 'static + Display,
+    Payload: Clone + Default + 'static
+> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
-    pub(crate) fn retrieve_root_for(&self, lookup_version: Version) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn retrieve_root_for(&self, lookup_version: Version) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut root_anker
             = self.root.clone();
 
@@ -177,10 +181,10 @@ impl<const FAN_OUT: usize,
     // }
 
     fn traverse_read_key(
-        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
-        -> Result<BlockRef<FAN_OUT, NUM_RECORDS, Key>, ()>
+        -> Result<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         while let PageType::IndexRef(internal_page) = curr
             .unsafe_borrow()
@@ -206,10 +210,10 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traverse_read_key_range(
-        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key>,
+        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: &Interval<Key>,
         lookup_version: Version)
-        -> Vec<BlockRef<FAN_OUT, NUM_RECORDS, Key>>
+        -> Vec<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let mut blocks
             = VecDeque::new();
@@ -251,10 +255,10 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn key_point_read_from_root(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
+        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
-        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
+        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match Self::traverse_read_key(
             root.unsafe_borrow().block(),
@@ -279,10 +283,10 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn key_range_read_from_root(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key>,
+        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: Interval<Key>,
         lookup_version: Version)
-        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key>
+        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let blocks = Self::traverse_read_key_range(
             root.unsafe_borrow().block(),
@@ -306,7 +310,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key> {
+    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
         let mut lock_level = MAX_TREE_HEIGHT;
 
@@ -326,8 +330,8 @@ impl<const FAN_OUT: usize,
         mut attempts: Attempts,
     ) -> (
         //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-          BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
           Height,
           Attempts)
     {
@@ -342,13 +346,13 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn split_root<'a>(
         &self,
-        mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+        mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
         mut height: Height,
     ) -> (
         //RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-          BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
+          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+          BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
           Height)
     {
         let root_guard_deref_mut
@@ -493,8 +497,8 @@ impl<const FAN_OUT: usize,
     fn retrieve_root_write_internal(&self, attempts: Attempts) -> Result<
         (
             //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-         BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+         BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
          Height), ()>
     {
         let height
@@ -563,7 +567,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
-                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key>, (LockLevel, Attempts)>
+                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
         let (mut curr_block,
             mut curr_guard,
@@ -627,9 +631,9 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn on_overflow_node<'a>(
         &self,
-        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
-        child_index: usize) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        child_index: usize) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
@@ -735,10 +739,10 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn on_underflow_node<'a>(
         &self,
-        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key>,
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         index_simba: usize)
-        -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key>, ()>
+        -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();

@@ -64,19 +64,21 @@ impl TimeMatcher for Version {
 pub struct InternalPage<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
     pub(crate) len: Len,
     key_interval_region: [MaybeUninit<Interval<Key>>; FAN_OUT],
     version_region: [MaybeUninit<Version>; FAN_OUT],
-    pointer_region: [MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key>>; FAN_OUT],
-    _marker: PhantomData<[(Key, BlockRef<FAN_OUT, NUM_RECORDS, Key>)]>,
+    pointer_region: [MaybeUninit<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>>; FAN_OUT],
+    _marker: PhantomData<[(Key, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)]>,
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Clone for InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Clone for InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         Self::from(self)
     }
@@ -84,14 +86,15 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key>
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Drop for InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     fn drop(&mut self) {
         unsafe {
             self.children().iter().for_each(|ptr|
-                (ptr as *const BlockRef<FAN_OUT, NUM_RECORDS, Key>
-                    as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+                (ptr as *const BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+                    as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
                     .drop_in_place())
         }
     }
@@ -99,8 +102,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline]
     pub fn from(from: &Self) -> Self {
         let mut new_page
@@ -139,7 +143,7 @@ impl<const FAN_OUT: usize,
     pub const fn new() -> Self {
         debug_assert!(mem::size_of::<[Interval<Key>; FAN_OUT]>() +
                           mem::size_of::<[Version; FAN_OUT]>() +
-                          mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key>; FAN_OUT]>() +
+                          mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>; FAN_OUT]>() +
                           mem::size_of::<Len>()
                           <= 4096, "FAN_OUT Invalid!"
         );
@@ -162,7 +166,7 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline]
-    pub fn push_uncommitted(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key>, index: usize) {
+    pub fn push_uncommitted(&mut self, key_interval: Interval<Key>, version: Version, ptr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, index: usize) {
         unsafe {
             self.key_interval_region
                 .as_mut_ptr()
@@ -206,13 +210,13 @@ impl<const FAN_OUT: usize,
             (0..len).for_each(|index| {
                 ptr::drop_in_place(self.pointer_region
                     .as_mut_ptr()
-                    .add(index) as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>);
+                    .add(index) as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>);
             });
         }
     }
 
     #[inline(always)]
-    pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
+    pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>) {
         let children = self
             .children()
             .iter()
@@ -227,7 +231,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub fn bulk_push(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)>) {
+    pub fn bulk_push(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>) {
         let len
             = self.len();
 
@@ -248,7 +252,7 @@ impl<const FAN_OUT: usize,
                     .write(*version);
 
                 (self.pointer_region
-                    .as_ptr() as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+                    .as_ptr() as *mut BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
                     .add(index + len)
                     .write(pointer.clone());
             });
@@ -259,7 +263,7 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub fn bulk_push_from_slice(
         &mut self,
-        entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key>)])
+        entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)])
     {
         let len
             = self.len();
@@ -316,7 +320,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
+    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>]) {
         let len
             = self.len();
 
@@ -363,16 +367,16 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
+    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>] {
         unsafe {
             std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, self.len())
         }
     }
 
     #[inline(always)]
-    pub fn get_pointer(&self, index: usize) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn get_pointer(&self, index: usize) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
-            &*(self.pointer_region.as_ptr() as *const BlockRef<FAN_OUT, NUM_RECORDS, Key>)
+            &*(self.pointer_region.as_ptr() as *const BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
                 .add(index)
         }
     }

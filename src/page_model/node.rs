@@ -1,18 +1,12 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
-use std::{mem, ptr};
-use std::arch::x86_64::_mm_mfence;
 use std::mem::ManuallyDrop;
-use std::ops::{Deref, Sub};
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::page_model::BlockRef;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
-use crate::record_model::record_point::{Payload, RecordPoint};
+use crate::record_model::record_point::RecordPoint;
 use crate::record_model::version_info::{Version, VersionInfo};
 use crate::utils::interval::Interval;
-use crate::utils::safe_cell::SafeCell;
 
 // #[derive(Clone)]
 // pub enum Node<
@@ -27,19 +21,21 @@ use crate::utils::safe_cell::SafeCell;
 pub struct Node<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
     m_type: usize,
-    page: InnerPage<FAN_OUT, NUM_RECORDS, Key>,
+    page: InnerPage<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
 
 pub union InnerPage<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
-    internal: ManuallyDrop<InternalPage<FAN_OUT, NUM_RECORDS, Key>>,
-    leaf: ManuallyDrop<LeafPage<NUM_RECORDS, Key>>,
+    internal: ManuallyDrop<InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    leaf: ManuallyDrop<LeafPage<NUM_RECORDS, Key, Payload>>,
 }
 
 pub const PAGE_TYPE_INTERNAL: usize = 0;
@@ -48,25 +44,27 @@ pub const PAGE_TYPE_LEAF: usize = 1;
 pub enum PageType<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
 > {
-    LeafRef(&'a LeafPage<NUM_RECORDS, Key>),
-    IndexRef(&'a InternalPage<FAN_OUT, NUM_RECORDS, Key>),
-    LeafMut(&'a mut LeafPage<NUM_RECORDS, Key>),
-    IndexMut(&'a mut InternalPage<FAN_OUT, NUM_RECORDS, Key>),
+    LeafRef(&'a LeafPage<NUM_RECORDS, Key, Payload>),
+    IndexRef(&'a InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>),
+    LeafMut(&'a mut LeafPage<NUM_RECORDS, Key, Payload>),
+    IndexMut(&'a mut InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>),
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Node<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub const fn m_type(&self) -> usize {
         self.m_type
     }
 
     #[inline(always)]
-    pub fn as_page_ref(&self) -> PageType<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn as_page_ref(&self) -> PageType<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type() {
             PAGE_TYPE_INTERNAL => PageType::IndexRef(self.as_internal_page_ref()),
             _ => PageType::LeafRef(self.as_leaf_page_ref())
@@ -74,7 +72,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_page_mut(&mut self) -> PageType<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn as_page_mut(&mut self) -> PageType<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type() {
             PAGE_TYPE_INTERNAL => PageType::IndexMut(self.as_internal_page()),
             _ => PageType::LeafMut(self.as_leaf_page())
@@ -107,7 +105,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_records(&self) -> &[RecordPoint<Key>] {
+    pub fn as_records(&self) -> &[RecordPoint<Key, Payload>] {
         match self.m_type() {
             PAGE_TYPE_LEAF => unsafe {
                 let deref
@@ -146,7 +144,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key>] {
+    pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>] {
         match self.m_type()  {
             PAGE_TYPE_INTERNAL => unsafe {
                 let deref
@@ -159,7 +157,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key>]) {
+    pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>]) {
         match self.m_type()  {
             PAGE_TYPE_INTERNAL => unsafe {
                 let deref
@@ -185,7 +183,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key> {
+    pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key, Payload> {
         match self.m_type()  {
             PAGE_TYPE_LEAF => unsafe { &mut self.page.leaf },
             _ => unreachable!()
@@ -193,7 +191,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_leaf_page_ref(&self) -> &LeafPage<NUM_RECORDS, Key> {
+    pub fn as_leaf_page_ref(&self) -> &LeafPage<NUM_RECORDS, Key, Payload> {
         match self.m_type()  {
             PAGE_TYPE_LEAF => unsafe { &self.page.leaf },
             _ => unreachable!()
@@ -219,7 +217,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn as_internal_page(&mut self) -> &mut InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type()  {
             PAGE_TYPE_INTERNAL => unsafe { &mut self.page.internal },
             _ => unreachable!()
@@ -227,7 +225,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn as_internal_page_ref(&self) -> &InternalPage<FAN_OUT, NUM_RECORDS, Key> {
+    pub fn as_internal_page_ref(&self) -> &InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type()  {
             PAGE_TYPE_INTERNAL => unsafe { &self.page.internal },
             _ => unreachable!()
@@ -255,17 +253,19 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> AsRef<Node<FAN_OUT, NUM_RECORDS, Key>> for Node<FAN_OUT, NUM_RECORDS, Key> {
-    fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> AsRef<Node<FAN_OUT, NUM_RECORDS, Key, Payload>> for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    fn as_ref(&self) -> &Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
         &self
     }
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Default for Node<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Default for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         Self {
             m_type: PAGE_TYPE_LEAF,
@@ -276,8 +276,9 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display
-> Clone for Node<FAN_OUT, NUM_RECORDS, Key> {
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Clone for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         if self.is_leaf() {
             Self {
