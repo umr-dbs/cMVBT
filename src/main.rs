@@ -182,7 +182,7 @@ fn main() {
 
 
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    let insertions = 10_00_000_u64;
+    let insertions = 10_000_000_u64;
 
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);

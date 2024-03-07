@@ -1,6 +1,9 @@
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
+use std::sync;
+use std::sync::atomic::{AtomicUsize, fence};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use crate::page_model::BlockRef;
 use crate::page_model::internal_page::InternalPage;
 use crate::page_model::leaf_page::LeafPage;
@@ -24,8 +27,27 @@ pub struct Node<
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
 > {
-    m_type: usize,
+    m_type: AtomicUsize,
     page: InnerPage<FAN_OUT, NUM_RECORDS, Key, Payload>,
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Drop for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    fn drop(&mut self) {
+        fence(SeqCst);
+        match self.m_type.load(SeqCst) {
+            PAGE_TYPE_INTERNAL => unsafe {
+                ManuallyDrop::drop(&mut self.page.internal)
+            },
+            PAGE_TYPE_LEAF => unsafe {
+                ManuallyDrop::drop(&mut self.page.leaf)
+            },
+            _ => {}
+        }
+    }
 }
 
 pub union InnerPage<
@@ -59,8 +81,8 @@ impl<const FAN_OUT: usize,
     Payload: Clone + Default
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub const fn m_type(&self) -> usize {
-        self.m_type
+    pub fn m_type(&self) -> usize {
+        self.m_type.load(Acquire)
     }
 
     #[inline(always)]
@@ -82,7 +104,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn new_leaf() -> Self {
         Self {
-            m_type: PAGE_TYPE_LEAF,
+            m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
             page: InnerPage {
                 leaf: ManuallyDrop::new(LeafPage::new())
             },
@@ -92,7 +114,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn new_internal() -> Self {
         Self {
-            m_type: PAGE_TYPE_INTERNAL,
+            m_type: AtomicUsize::new(PAGE_TYPE_INTERNAL),
             page: InnerPage {
                 internal: ManuallyDrop::new(InternalPage::new())
             },
@@ -242,12 +264,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn mark_leaf(&mut self) {
-        self.m_type = PAGE_TYPE_LEAF;
+        self.m_type.store(PAGE_TYPE_LEAF, Release)
     }
 
     #[inline]
     pub fn mark_internal(&mut self) {
-        self.m_type = PAGE_TYPE_INTERNAL
+        self.m_type.store(PAGE_TYPE_INTERNAL, Release)
     }
 }
 
@@ -268,7 +290,7 @@ impl<const FAN_OUT: usize,
 > Default for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         Self {
-            m_type: PAGE_TYPE_LEAF,
+            m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
             page: InnerPage { leaf: ManuallyDrop::new(LeafPage::new()) },
         }
     }
@@ -282,14 +304,14 @@ impl<const FAN_OUT: usize,
     fn clone(&self) -> Self {
         if self.is_leaf() {
             Self {
-                m_type: PAGE_TYPE_LEAF,
+                m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
                 page: InnerPage {
                     leaf: unsafe { self.page.leaf.clone() }
                 },
             }
         } else {
             Self {
-                m_type: PAGE_TYPE_INTERNAL,
+                m_type: AtomicUsize::new(PAGE_TYPE_INTERNAL),
                 page: InnerPage {
                     internal: unsafe { self.page.internal.clone() }
                 },
