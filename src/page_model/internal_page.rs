@@ -36,11 +36,6 @@ impl TimeMatcher for Version {
     }
 
     #[inline(always)]
-    fn matched(self, other: Version) -> bool {
-        self & !OBSOLETE_VERSION_MARK <= other
-    }
-
-    #[inline(always)]
     fn match_version_active(self, other: Version) -> bool {
         self <= other
     }
@@ -58,6 +53,11 @@ impl TimeMatcher for Version {
     #[inline(always)]
     fn is_active(&self) -> bool {
         *self & OBSOLETE_VERSION_MARK == 0
+    }
+
+    #[inline(always)]
+    fn matched(self, other: Version) -> bool {
+        self & !OBSOLETE_VERSION_MARK <= other
     }
 }
 

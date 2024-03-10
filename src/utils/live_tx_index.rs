@@ -6,7 +6,7 @@ use cc_bplustree::crud_model::crud_api::CRUDDispatcher;
 use cc_bplustree::crud_model::crud_operation::CRUDOperation;
 use cc_bplustree::crud_model::crud_operation_result::CRUDOperationResult;
 use cc_bplustree::locking::locking_strategy::LockingStrategy::OLC;
-use cc_bplustree::locking::locking_strategy::{LockingStrategy, orwc};
+use cc_bplustree::locking::locking_strategy::LockingStrategy;
 use cc_bplustree::tree::bplus_tree::BPlusTree;
 use crate::page_model::BlockRef;
 use crate::page_model::internal_page::TimeMatcher;

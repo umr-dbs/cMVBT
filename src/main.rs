@@ -191,7 +191,7 @@ fn main() {
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     // let insertions = 40_000_u64;
 
-    let insertions = 1_000_000_u64;
+    let insertions = 10_000_000_u64;
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);
     let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
@@ -204,7 +204,7 @@ fn main() {
     //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
     //         test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
 
-    all_tx.shuffle(&mut thread_rng());
+    // all_tx.shuffle(&mut thread_rng());
     println!("> Finished generating {insertions} keys!");
     println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
 

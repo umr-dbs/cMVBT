@@ -134,7 +134,7 @@ impl<const FAN_OUT: usize,
     fn as_atomic(&self) -> &AtomicTransaction<Key, Payload> {
         match self {
             TransactionHolder::Atomic(atomic) => atomic,
-            TransactionHolder::Multi(tx) => unreachable!()
+            TransactionHolder::Multi(..) => unreachable!()
         }
     }
 }
@@ -248,7 +248,7 @@ impl<const FAN_OUT: usize,
                 .num_threads(threads)
                 // .thread_name(|t| format!("TxRunner{}", t))
                 .build(),
-                // .unwrap(),
+            // .unwrap(),
             index: AtomicPtr::new(Box::into_raw(Box::new(index))),
         }
     }
@@ -282,19 +282,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn enq_bookkeeping(&self, tx: &mut TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
-        tx.is_read().then(|| {
-            let snapshot = tx
-                .snapshot()
-                .unwrap_or(self.tx_dispatcher().current_version());
-
-            tx.set_snapshot(Some(snapshot));
-            self.db_tracker
+    fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+        tx.is_read().then(|| match tx.snapshot() {
+            Some(snapshot) => self.db_tracker
                 .as_ref()
-                .map(|tracker|
-                    tracker.on_tx_start(snapshot))
-                .unwrap_or_default()
-        }).unwrap_or(false)
+                .map(|tracker| tracker.on_tx_start(snapshot))
+                .unwrap_or_default(),
+            _ => false
+        }).unwrap_or_default()
     }
 
     #[inline(always)]
@@ -306,15 +301,15 @@ impl<const FAN_OUT: usize,
     pub fn execute_tx<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx)
     -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
-        let mut tx = tx.into();
-        let bk = self.enq_bookkeeping(&mut tx);
+        let tx = tx.into();
+        let bk = self.enq_bookkeeping(&tx);
         self.execute_tx_reader_internal(tx, bk)
     }
 
     #[inline]
     pub fn execute_tx_non_reader<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx) {
-        let mut tx = tx.into();
-        let bk = self.enq_bookkeeping(&mut tx);
+        let tx = tx.into();
+        let bk = self.enq_bookkeeping(&tx);
         self.execute_tx_non_reader_internal(tx, bk)
     }
 

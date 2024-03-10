@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "MV-BPlusTree"
-version = "0.0.30"
+version = "0.0.31"
 dependencies = [
  "CCBPlusTree",
  "chrono",

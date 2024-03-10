@@ -2,35 +2,18 @@ use std::collections::LinkedList;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::{mem, ptr};
+use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
-use std::time::SystemTime;
-use cc_bplustree::crud_model::crud_api::CRUDDispatcher;
-use cc_bplustree::crud_model::crud_operation::CRUDOperation;
-use cc_bplustree::crud_model::crud_operation_result::CRUDOperationResult;
-// use cc_bplustree::crud_model::crud_api::CRUDDispatcher;
-// use cc_bplustree::crud_model::crud_operation::CRUDOperation;
-// use cc_bplustree::crud_model::crud_operation_result::CRUDOperationResult;
-// use cc_bplustree::locking::locking_strategy::LockingStrategy::OLC;
-// use cc_bplustree::locking::locking_strategy::orwc;
-// use cc_bplustree::record_model::record_point::RecordPoint;
-// use cc_bplustree::tree::bplus_tree::BPlusTree;
-use parking_lot::{Mutex, RawMutex};
-use parking_lot::lock_api::MutexGuard;
-use rb_tree::RBTree;
+use std::sync::atomic::Ordering::Acquire;
+use parking_lot::Mutex;
 use crate::block::block::Block;
-use crate::page_model::internal_page::{InternalPage, TimeMatcher};
-use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::page_model::{BlockRef, ObjectCount};
 use crate::record_model::version_info::Version;
-use crate::test::{dec_key, inc_key};
-use crate::tx_model::transaction::SnapShot;
 use crate::utils::live_tx_index::MDBTracker;
 use crate::utils::safe_cell::SafeCell;
-use crate::utils::smart_cell::{LatchType, OBSOLETE_FLAG_VERSION, SmartCell, SmartFlavor};
+use crate::utils::smart_cell::{LatchType, SmartCell, SmartFlavor};
 
 const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a block // outdated due to omitted block-id
@@ -59,13 +42,13 @@ pub const fn bsz_alignment_min<Key, Payload>() -> usize
         mem::size_of::<SmartCell<()>>() // align of SmartCell = size of usize
 }
 
-pub const fn bsz_alignment<Key, Payload>() -> usize
-    where Key: Default + Ord + Copy + Hash + Display,
-          Payload: Default + Clone
-{
-    bsz_alignment_min::<Key, Payload>() +
-        if ENABLE_SMALL_BLOCK { MAX_ZEROS_PER_BLOCK } else { 0 }
-}
+// pub const fn bsz_alignment<Key, Payload>() -> usize
+//     where Key: Default + Ord + Copy + Hash + Display,
+//           Payload: Default + Clone
+// {
+//     bsz_alignment_min::<Key, Payload>() +
+//         if ENABLE_SMALL_BLOCK { MAX_ZEROS_PER_BLOCK } else { 0 }
+// }
 
 type DeadPages<
     const FAN_OUT: usize,
@@ -85,7 +68,6 @@ pub struct BlockManager<
     Payload: Clone + Default + 'static
 > {
     db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
-    _marker: PhantomData<Key>,
     // block_id_counter: AtomicBlockID,
 }
 
@@ -98,7 +80,6 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: None,
-            _marker: PhantomData,
         }
     }
 }
@@ -173,7 +154,6 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: None,
-            _marker: PhantomData,
         }
     }
 
@@ -182,7 +162,6 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: Some(db_tracker),
-            _marker: PhantomData,
         }
     }
 
@@ -229,7 +208,7 @@ impl<const FAN_OUT: usize,
                fence(Acquire);
                block
            }
-           e => {
+           _ => {
                // println!("Alloc");
                Block {
                    // block_id: self.next_block_id(),

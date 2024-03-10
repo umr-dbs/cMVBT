@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.30"
+version = "0.0.31"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -19,7 +19,7 @@ hardware-lock-elision = []
 
 [dependencies]
 #CCBPlusTree = { path = "../../CLionProjects/CC-BPlusTree" }
-CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.113" } # 112+
+CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.113" } # 113+
 rb_tree = "0.5.0"
 crossbeam-channel = "0.5.12"
 threadpool = "1.8.1"
