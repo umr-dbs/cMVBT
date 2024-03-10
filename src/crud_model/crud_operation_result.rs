@@ -19,7 +19,7 @@ pub enum CRUDOperationResult<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default
+    Payload: Clone + Default + 'static
 > {
     MatchedRecords(Vec<RecordPointResult<Key, Payload>>),
     MatchedRecordIter(RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),

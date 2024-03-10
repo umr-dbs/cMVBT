@@ -94,7 +94,7 @@ fn main() {
     let tree
         = Arc::new(MVTree::olc_optimistic_clock());
     //
-    let insertions = 1_0_000_u64;
+    let insertions = 50_000_u64;
     // let mut last_insert_version = Version::MIN;
     // let mut version_inserts = vec![];
     //
@@ -169,21 +169,29 @@ fn main() {
     //     .map(|(k, v)|
     //         format!("{k}, v: {v}")).into_iter().join("\n"));
 
-
     // let mut insertions_vec = (0..insertions)
-    //     .map(|k| CRUDOperation::Insert(k, mk_payload()))
+    //     .map(|k| CRUDOperation::<Key, Payload>::Insert(k, k as _))
     //     .collect_vec();
-
-    // insertions_vec.extend((0..insertions).map(|k| Point(k, k)));
+    //
+    // let mut rnd = StdRng::seed_from_u64(90501960);
+    // let mut insertions_vec: Vec<_> = test::gen_data_exp(
+    //     insertions, 0.01, &mut rnd
+    // )
+    //     .into_iter()
+    //     .map(|key| CRUDOperation::Insert(key, key as _).into())
+    //     .collect::<Vec<_>>();
+    //
+    // // insertions_vec.extend((0..insertions).map(|k| Point(k, k)));
     // let (time, ..) = test::bulk_crud(
     //     num_cpus::get(),
     //     tree.clone(),
     //     insertions_vec.as_slice());
-
-
+    //
+    //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    let insertions = 10_000_000_u64;
+    // let insertions = 40_000_u64;
 
+    let insertions = 1_000_000_u64;
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);
     let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
@@ -191,12 +199,12 @@ fn main() {
         .map(|key| CRUDOperation::Insert(key, key as _).into())
         .collect::<Vec<_>>();
 
-    let points = 0;
+    let points = insertions;
     // all_tx.extend((0..points).map(|key|
     //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
     //         test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
-    //
-    // all_tx.shuffle(&mut thread_rng());
+
+    all_tx.shuffle(&mut thread_rng());
     println!("> Finished generating {insertions} keys!");
     println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
 

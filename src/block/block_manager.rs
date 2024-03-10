@@ -28,7 +28,7 @@ use crate::page_model::{BlockRef, ObjectCount};
 use crate::record_model::version_info::Version;
 use crate::test::{dec_key, inc_key};
 use crate::tx_model::transaction::SnapShot;
-use crate::tx_model::tx_manager::ActiveTransactions;
+use crate::utils::live_tx_index::MDBTracker;
 use crate::utils::safe_cell::SafeCell;
 use crate::utils::smart_cell::{LatchType, OBSOLETE_FLAG_VERSION, SmartCell, SmartFlavor};
 
@@ -81,11 +81,10 @@ type DeadPages<
 pub struct BlockManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default + 'static
 > {
-    active_tx: Option<ActiveTransactions>,
-    dead_pages: Option<DeadPages<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     _marker: PhantomData<Key>,
     // block_id_counter: AtomicBlockID,
 }
@@ -98,8 +97,7 @@ impl<const FAN_OUT: usize,
     fn clone(&self) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            active_tx: None,
-            dead_pages: None,
+            db_tracker: None,
             _marker: PhantomData,
         }
     }
@@ -120,7 +118,7 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
-    Payload: Clone + Default
+    Payload: Clone + Default + 'static
 > BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     // /// Generates and returns a new atomic (unique across callers) BlockID.
@@ -174,114 +172,71 @@ impl<const FAN_OUT: usize,
     pub(crate) fn new() -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            active_tx: None,
-            dead_pages: None,
+            db_tracker: None,
             _marker: PhantomData,
         }
     }
 
     #[inline(always)]
-    pub(crate) fn new_with_gc(active_tx: ActiveTransactions) -> Self {
+    pub(crate) fn new_with_gc(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            dead_pages: Some(Arc::new(Mutex::new(LinkedList::new()))),
-            active_tx: Some(active_tx),
+            db_tracker: Some(db_tracker),
             _marker: PhantomData,
         }
     }
 
-    pub(crate) fn set_active_tx_for_gc(&mut self, active_tx: Option<ActiveTransactions>) {
-        if active_tx.is_some() {
-            self.active_tx = active_tx;
-            self.dead_pages = Some(Arc::new(Mutex::new(LinkedList::new())))
+    pub(crate) fn set_active_tx_for_gc(&mut self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
+        if db_tracker.is_some() {
+            self.db_tracker = db_tracker;
         } else {
-            self.active_tx.take();
-            self.dead_pages.take();
+            self.db_tracker.take();
         }
     }
 
     #[inline(always)]
     pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
-        if let Some(ref dead_pages) = self.dead_pages {
-            // dead.into_iter().for_each(|(v, p)| {
-            //     match dead_pages.dispatch(CRUDOperation::Insert(v, p)) {
-            //         (_, CRUDOperationResult::Inserted(..)) => {}
-            //         _ => unreachable!()
-            //     }
-            // });
-            dead_pages.lock().extend(dead);
-        }
+        self.db_tracker
+            .as_ref()
+            .map(|tracker|
+                tracker.register_died_page_col(dead));
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead(&self, dead: (Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)) {
-        if let Some(ref dead_pages) = self.dead_pages {
-            // match dead_pages.dispatch(CRUDOperation::Insert(dead.0, dead.1)) {
-            //     (_, CRUDOperationResult::Inserted(..)) => {}
-            //     _ => unreachable!()
-            // }
-            dead_pages.lock().push_back(dead);
-        }
+    pub(crate) fn register_dead(&self, dead_v: Version, dead_p: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>) {
+        self.db_tracker
+            .as_ref()
+            .map(|tracker|
+                tracker.register_died_page(dead_v, dead_p));
     }
-
-    // #[inline]
-    // pub fn mark_version_ooo(v: *mut Version) {
-    //     unsafe {
-    //         *v = *v | OOO_REUSED_VERSION_MARK;
-    //     }
-    // }
 
     #[inline(always)]
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        if let (Some(active_tx), Some(dead_pages))
-            = (self.active_tx.as_ref(), self.dead_pages.as_ref())
-        {
-            match dead_pages.try_lock() {
-                Some(mut guard) => {
-                    let front
-                        = guard.pop_front();
+       match self.db_tracker.as_ref().map(|tracker| tracker.free_block()) {
+           Some(Some(block)) => {
+               let m_page
+                   = block.unsafe_borrow_mut().node_data.get_mut();
 
-                    mem::drop(guard);
+               // println!("Reuse");
+               m_page.on_reuse();
 
-                    match front {
-                        Some((dead_version, dead_block)) =>
-                            match active_tx.dispatch(CRUDOperation::PeekMin) {
-                                (.., CRUDOperationResult::MatchedRecord(smallest_si)) => {
-                                    if smallest_si.is_none() || dead_version.lt_self_any(smallest_si.unwrap().key()) {
-                                        // println!("Enter cc {:?}", SystemTime::now());
-                                        let m_page
-                                            = dead_block.unsafe_borrow_mut().node_data.get_mut();
+               if leaf {
+                   m_page.mark_leaf()
+               } else {
+                   m_page.mark_internal()
+               }
 
-                                        m_page.on_reuse();
-
-                                        if leaf {
-                                            m_page.mark_leaf()
-                                        } else {
-                                            m_page.mark_internal()
-                                        }
-
-                                        fence(Acquire);
-                                        // println!("Leave cc {:?}", SystemTime::now());
-                                        return dead_block;
-                                    } else {
-                                        // println!("Enter aa {:?}", SystemTime::now());
-                                        dead_pages.lock().push_front((dead_version, dead_block));
-                                        // println!("Leave aa {:?}", SystemTime::now());
-                                    }
-                                }
-                                _ => unreachable!()
-                            },
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Block {
-            // block_id: self.next_block_id(),
-            node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-        }.into_cell(latch_type)
+               fence(Acquire);
+               block
+           }
+           e => {
+               // println!("Alloc");
+               Block {
+                   // block_id: self.next_block_id(),
+                   node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
+               }.into_cell(latch_type)
+           }
+       }
     }
 
 

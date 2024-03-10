@@ -23,7 +23,7 @@ pub struct RangeQueryIter<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default
+    Payload: Clone + Default + 'static
 > {
     pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) range: Interval<Key>,
@@ -278,7 +278,6 @@ impl<const FAN_OUT: usize,
             },
             Err(..) => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0))
         }
-
     }
 
     #[inline]
@@ -330,10 +329,10 @@ impl<const FAN_OUT: usize,
         mut attempts: Attempts,
     ) -> (
         //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-          Height,
-          Attempts)
+        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        Height,
+        Attempts)
     {
         loop {
             match self.retrieve_root_write_internal(attempts) {
@@ -351,9 +350,9 @@ impl<const FAN_OUT: usize,
         mut height: Height,
     ) -> (
         //RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
-          BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-          BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
-          Height)
+        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        Height)
     {
         let root_guard_deref_mut
             = root_guard.deref_mut().unwrap();
@@ -497,9 +496,9 @@ impl<const FAN_OUT: usize,
     fn retrieve_root_write_internal(&self, attempts: Attempts) -> Result<
         (
             //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-         BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-         Height), ()>
+            BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+            BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+            Height), ()>
     {
         let height
             = self.root.unsafe_borrow().height();
@@ -731,8 +730,8 @@ impl<const FAN_OUT: usize,
         }
 
         self.block_manager.register_dead(
-            (internal_page.get_version(child_index),
-             internal_page.get_pointer(child_index).clone()));
+            internal_page.get_version(child_index),
+            internal_page.get_pointer(child_index).clone());
 
         mufasa
     }
@@ -806,7 +805,7 @@ impl<const FAN_OUT: usize,
 
                 self.block_manager.register_dead_col([
                     (mufasa_internal_page.get_version(index_simba),
-                    mufasa_internal_page.get_pointer(index_simba).clone()),
+                     mufasa_internal_page.get_pointer(index_simba).clone()),
                     (mufasa_internal_page.get_version(index_sibling),
                      mufasa_internal_page.get_pointer(index_sibling).clone())
                 ]);

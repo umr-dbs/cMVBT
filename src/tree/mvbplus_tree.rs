@@ -67,7 +67,7 @@ impl<const FAN_OUT: usize,
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
-    Payload: Clone + Default
+    Payload: Clone + Default + 'static
 > RootItem<FAN_OUT, NUM_RECORDS, Key, Payload> {
     pub(crate) fn deep_clone(&self, latch_type: LatchType) -> Self {
         Self {
@@ -99,8 +99,8 @@ pub(crate) type RootItemGuard<
 pub struct MVBPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + 'static,
+    Payload: Clone + Default + 'static
 > {
     pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,

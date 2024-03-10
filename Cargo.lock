@@ -4,8 +4,8 @@ version = 3
 
 [[package]]
 name = "CCBPlusTree"
-version = "0.0.111"
-source = "git+ssh://git@github.com/umr-dbs/CC-BPlusTree.git#19b184c7b4187ff06bfecf1acf314be8c96bc4c3"
+version = "0.0.113"
+source = "git+ssh://git@github.com/umr-dbs/CC-BPlusTree.git#f8546a18e01ca64c8a20325e60b630d37b029675"
 dependencies = [
  "chrono",
  "crossbeam",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "MV-BPlusTree"
-version = "0.0.29"
+version = "0.0.30"
 dependencies = [
  "CCBPlusTree",
  "chrono",
@@ -504,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.30.5"
+version = "0.30.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fb4f3438c8f6389c864e61221cbc97e9bca98b4daf39a5beb7bea660f528bb2"
+checksum = "0c385888ef380a852a16209afc8cfad22795dd8873d69c9a14d2e2088f118d18"
 dependencies = [
  "cfg-if",
  "core-foundation-sys",
