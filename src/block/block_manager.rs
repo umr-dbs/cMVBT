@@ -4,8 +4,8 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::sync::Arc;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::Acquire;
+use std::sync::atomic::{AtomicUsize, fence};
+use std::sync::atomic::Ordering::{Acquire, Relaxed};
 use parking_lot::Mutex;
 use crate::block::block::Block;
 use crate::page_model::node::Node;
@@ -68,6 +68,8 @@ pub struct BlockManager<
     Payload: Clone + Default + 'static
 > {
     db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    pub reuse_count: AtomicUsize,
+    pub alloc_count: AtomicUsize
     // block_id_counter: AtomicBlockID,
 }
 
@@ -80,6 +82,8 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: None,
+            reuse_count: AtomicUsize::new(0),
+            alloc_count: AtomicUsize::new(0),
         }
     }
 }
@@ -154,6 +158,8 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: None,
+            reuse_count: AtomicUsize::new(0),
+            alloc_count: AtomicUsize::new(0),
         }
     }
 
@@ -162,6 +168,8 @@ impl<const FAN_OUT: usize,
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: Some(db_tracker),
+            reuse_count: AtomicUsize::new(0),
+            alloc_count: AtomicUsize::new(0),
         }
     }
 
@@ -193,6 +201,8 @@ impl<const FAN_OUT: usize,
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
        match self.db_tracker.as_ref().map(|tracker| tracker.free_block()) {
            Some(Some(block)) => {
+               self.reuse_count.fetch_add(1, Relaxed);
+
                let m_page
                    = block.unsafe_borrow_mut().node_data.get_mut();
 
@@ -209,6 +219,7 @@ impl<const FAN_OUT: usize,
                block
            }
            _ => {
+               self.alloc_count.fetch_add(1, Relaxed);
                // println!("Alloc");
                Block {
                    // block_id: self.next_block_id(),

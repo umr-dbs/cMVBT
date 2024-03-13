@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Div;
+use std::sync::Arc;
 use std::thread::spawn;
 use std::time::SystemTime;
 use itertools::Itertools;
@@ -18,6 +19,8 @@ use crate::record_model::version_info::Version;
 use crate::tree::locking_strategy::LockingStrategy;
 use crate::tx_model::transaction::AtomicTransaction;
 use crate::tx_model::tx_api::TransactionDispatcher;
+use crate::tx_model::tx_manager::{TransactionHolder, TransactionManager};
+use crate::utils::safe_cell::SafeCell;
 
 pub const VALIDATE_OPERATION_RESULT: bool = false;
 pub const EXE_LOOK_UPS: bool = false;
@@ -48,6 +51,45 @@ pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
+
+#[inline(always)]
+pub fn bulk_tx_manager(
+    worker_threads: usize,
+    tree: MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>,
+    gc: bool,
+    operations_queue: &[AtomicTransaction<Key, Payload>]) -> (u128, TransactionManager<FAN_OUT, NUM_RECORDS, u64, f64>)
+{
+    let mut data_buff = operations_queue
+        .iter()
+        .chunks(operations_queue.len() / worker_threads)
+        .into_iter()
+        .map(|s| s.into_iter()
+            .cloned()
+            .collect::<Vec<_>>())
+        .map(|col| SafeCell::new(col))
+        .collect::<VecDeque<_>>();
+
+    if data_buff.len() > worker_threads {
+        let back = data_buff.pop_back().unwrap();
+        data_buff.front_mut().unwrap().extend(back.into_inner());
+    }
+
+    let m_manager = TransactionManager::new_with(
+        worker_threads,
+        tree,
+        gc);
+
+    let start = SystemTime::now();
+    for _ in 1..=worker_threads {
+        m_manager.execute_tx_non_reader_batch(data_buff.pop_front().unwrap());
+    }
+
+    m_manager.join();
+    let time_elapsed
+        = SystemTime::now().duration_since(start).unwrap();
+
+    (time_elapsed.as_millis(), m_manager)
+}
 
 #[inline(always)]
 pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key, Payload>]) -> (u128, u64) {

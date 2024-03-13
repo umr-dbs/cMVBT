@@ -1,6 +1,7 @@
 use std::{env, fs, mem, thread};
 use std::io::Read;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, SystemTime};
 // use cc_bplustree::tree::bplus_tree::BPlusTree;
 use chrono::{DateTime, Local};
@@ -206,7 +207,7 @@ fn main() {
 
     // all_tx.shuffle(&mut thread_rng());
     println!("> Finished generating {insertions} keys!");
-    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC");
+    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC,Alloc,Reuse");
 
     for threads in [1, 2, 4, 8, 16, 24,  32, 64, 72, 96, 128] {
         for gc in [true, false] {
@@ -214,25 +215,21 @@ fn main() {
                 if tree.locking_strategy().is_mono_writer() && threads > 1 {
                     continue;
                 }
-                let mut tx_manager = Box::new(TransactionManager::new_with(
+
+                let (end, tx_manager) = test::bulk_tx_manager(
                     threads,
                     tree,
-                    gc));
+                    gc,
+                    all_tx.as_slice()
+                );
 
-                let start = SystemTime::now();
-
-                all_tx.iter()
-                    .for_each(|tx| tx_manager.execute_tx_non_reader(tx.clone()));
-
-                tx_manager.join();
-
-                let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-
-                println!("{insertions},{points},{},{},{},{end},{}",
+                println!("{insertions},{points},{},{},{},{end},{},{},{}",
                          tx_manager.threads(),
                          tx_manager.locking_protocol(),
                          tx_manager.clock_type(),
-                         tx_manager.is_gc_enabled());
+                         tx_manager.is_gc_enabled(),
+                         tx_manager.index().block_manager.alloc_count.load(SeqCst),
+                         tx_manager.index().block_manager.reuse_count.load(SeqCst));
             }
         }
     }

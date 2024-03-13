@@ -11,6 +11,7 @@ use crate::tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
 use crate::tx_model::tx_api::TransactionDispatcher;
 use crate::utils::live_tx_index::{DBTracker, MDBTracker};
+use crate::utils::safe_cell::SafeCell;
 
 pub(crate) enum TransactionHolder<
     const FAN_OUT: usize,
@@ -32,6 +33,18 @@ impl<const FAN_OUT: usize,
         TransactionHolder::Multi(self)
     }
 }
+
+unsafe impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone
+> Send for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> { }
+
+unsafe impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Hash + Ord + Copy + Display,
+    Payload: Clone
+> Sync for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> { }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -175,7 +188,7 @@ impl<const FAN_OUT: usize,
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub(crate) fn active_tx(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    pub(crate) fn db_tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         self.db_tracker.clone()
     }
 
@@ -271,7 +284,7 @@ impl<const FAN_OUT: usize,
         };
 
         unsafe {
-            let clone = manager.active_tx();
+            let clone = manager.db_tracker();
             manager
                 .index_mut()
                 .block_manager
@@ -283,13 +296,23 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
-        tx.is_read().then(|| match tx.snapshot() {
-            Some(snapshot) => self.db_tracker
-                .as_ref()
-                .map(|tracker| tracker.on_tx_start(snapshot))
-                .unwrap_or_default(),
-            _ => false
-        }).unwrap_or_default()
+        Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref(), tx)
+    }
+
+    #[inline(always)]
+    fn enq_bookkeeping_from_tracker(
+        tracker: Option<&MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+        tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool
+    {
+        if tx.is_read() {
+            match (tracker, tx.snapshot()) {
+                (Some(tracker), Some(snapshot)) =>
+                    return tracker.on_tx_start(snapshot),
+                _ => { }
+            }
+        }
+
+        false
     }
 
     #[inline(always)]
@@ -313,13 +336,45 @@ impl<const FAN_OUT: usize,
         self.execute_tx_non_reader_internal(tx, bk)
     }
 
+    #[inline]
+    pub fn execute_tx_non_reader_batch<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>> + 'static>(
+        &self,
+        txs: SafeCell<Vec<Tx>>,
+    ) {
+        let m_db_tracker
+            = self.db_tracker();
+
+        let dispatcher
+            = self.tx_dispatcher();
+
+        self.pool.execute(move || txs.into_inner().into_iter().for_each(|tx| {
+            let tx
+                = tx.into();
+
+            let si
+                = tx.snapshot();
+
+            let bk
+                = Self::enq_bookkeeping_from_tracker(m_db_tracker.as_ref(), &tx);
+
+            let _
+                = tx.execute(dispatcher);
+
+            if bk {
+                if let (Some(tracker), Some(si)) = (m_db_tracker.as_ref(), si) {
+                    tracker.on_tx_completed(si)
+                }
+            }
+        }));
+    }
+
     #[inline(always)]
     fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>, bk: bool) {
         let dispatcher
             = self.tx_dispatcher();
 
         let deq_active_query
-            = self.active_tx();
+            = self.db_tracker();
 
         self.pool.execute(move || {
             let si
@@ -340,12 +395,12 @@ impl<const FAN_OUT: usize,
             = self.tx_dispatcher();
 
         let deq_active_query
-            = self.active_tx();
+            = self.db_tracker();
 
         let (sender, receiver)
             = crossbeam_channel::unbounded();
 
-        self.pool.execute(move || unsafe {
+        self.pool.execute(move || {
             let si
                 = tx.snapshot();
 
