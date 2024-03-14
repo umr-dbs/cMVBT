@@ -3,7 +3,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::Acquire;
+use std::sync::atomic::Ordering::{Acquire, SeqCst};
 use itertools::Itertools;
 use crate::block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::crud_model::crud_operation_result::CRUDOperationResult;
@@ -542,7 +542,10 @@ impl<const FAN_OUT: usize,
                         master_v == master_guard.deref().unwrap().version()
                     => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
-                    _ => Ok((root_block, root_guard, height))
+                    _ => {
+                        fence(Acquire);
+                        Ok((root_block, root_guard, height))
+                    }
                 }
             }
             _ => {
@@ -579,6 +582,8 @@ impl<const FAN_OUT: usize,
         loop {
             match curr_guard.deref().unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
+                    fence(Acquire);
+
                     let keys_page = internal_page
                         .keys();
 
@@ -604,7 +609,6 @@ impl<const FAN_OUT: usize,
                     let curr_len
                         = keys_page.len();
 
-                    fence(Acquire);
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
@@ -622,6 +626,7 @@ impl<const FAN_OUT: usize,
                         }
                         _ => return Err((curr_level, attempts + 1))
                     }
+                    fence(SeqCst);
                 }
                 _ => return Ok(curr_guard) // cant have it both ways in non-optimistic latching protocol
             }
