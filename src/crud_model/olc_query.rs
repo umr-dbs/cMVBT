@@ -1,5 +1,7 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 use itertools::Itertools;
 use crate::block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::page_model::{Attempts, BlockRef, Height, Level};
@@ -163,8 +165,14 @@ impl<const FAN_OUT: usize,
                         .enumerate()
                         .rev()
                         .find(|(.., range)| range.contains(key))
-                        .map(|(pos, ..)| pos)
-                        .unwrap();
+                        .map(|(pos, ..)| pos);
+
+                    if let None = index {
+                        return Err((curr_level, attempts + 1))
+                    }
+
+                    let index
+                        = index.unwrap();
 
                     let next_curr_block = internal_page
                         .get_pointer(index)
@@ -206,6 +214,7 @@ impl<const FAN_OUT: usize,
                         }
                         _ => return Err((curr_level - 1, attempts + 1))
                     }
+                    fence(SeqCst);
                 }
                 _ => return if curr_guard.upgrade_write_lock() {
                     Ok(curr_guard)

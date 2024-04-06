@@ -582,7 +582,7 @@ impl<const FAN_OUT: usize,
         loop {
             match curr_guard.deref().unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
-                    fence(Acquire);
+                    // fence(Acquire);
 
                     let keys_page = internal_page
                         .keys();
@@ -592,8 +592,14 @@ impl<const FAN_OUT: usize,
                         .enumerate()
                         .rev()
                         .find(|(.., range)| range.contains(key))
-                        .map(|(pos, ..)| pos)
-                        .unwrap();
+                        .map(|(pos, ..)| pos);
+
+                    if let None = index {
+                        return Err((curr_level, attempts + 1))
+                    }
+
+                    let index
+                        = index.unwrap();
 
                     let next_curr_block = internal_page
                         .get_pointer(index)
@@ -608,6 +614,10 @@ impl<const FAN_OUT: usize,
 
                     let curr_len
                         = keys_page.len();
+
+                    if let None = next_curr_guard.deref() {
+                        return Err((curr_level, attempts + 1))
+                    }
 
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
@@ -628,7 +638,11 @@ impl<const FAN_OUT: usize,
                     }
                     fence(SeqCst);
                 }
-                _ => return Ok(curr_guard) // cant have it both ways in non-optimistic latching protocol
+                _ => return if curr_guard.upgrade_write_lock() {
+                    Ok(curr_guard)
+                } else {
+                    Err((curr_level, attempts + 1))
+                }
             }
         }
     }

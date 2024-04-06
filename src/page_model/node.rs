@@ -60,6 +60,13 @@ pub union InnerPage<
     leaf: ManuallyDrop<LeafPage<NUM_RECORDS, Key, Payload>>,
 }
 
+unsafe impl<
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Sync for InnerPage<FAN_OUT, NUM_RECORDS, Key, Payload> { }
+
 pub const PAGE_TYPE_INTERNAL: usize = 0;
 pub const PAGE_TYPE_LEAF: usize = 1;
 

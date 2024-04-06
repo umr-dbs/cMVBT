@@ -260,7 +260,7 @@ impl<const FAN_OUT: usize,
             // .filter(|((.., version), ..)| version.is_active())
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
-                (index, bro.borrow_read(), bro, bro.unsafe_borrow().active_count(), fence))
+                (index, bro, fence))
             .collect_vec();
 
         let mut compute_candidate = ||
@@ -276,26 +276,32 @@ impl<const FAN_OUT: usize,
             };
 
         let (candidate_index,
-            candidate_guard,
-            _candidate_block,
-            candidate_active_count,
+            // candidate_guard,
+            candidate_block,
+            // candidate_active_count,
             candidate_fence
         ) = match compute_candidate() {
             Ok((index,
-                   mut candidate_guard,
+                   // mut candidate_guard,
                    block,
-                   cac,
+                   // cac,
                    cf)
-            ) => if !candidate_guard.upgrade_write_lock() {
-                return MergeResult::Error
-            }
-            else {
-                (index, candidate_guard, block, cac, cf)
-            }
+            ) => (index, block, cf),
             _ => return MergeResult::Error
         };
 
         all_candidates.clear();
+
+        let candidate_guard = candidate_block
+            .borrow_mut();
+
+        if !candidate_guard.is_valid() {
+            return MergeResult::Error
+        }
+
+        let candidate_active_count = candidate_block
+            .unsafe_borrow()
+            .active_count();
 
         if candidate_active_count + simba_active_count <= max_active_units { // <= 4d
             let combined_block = match is_simba_leaf {
