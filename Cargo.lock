@@ -4,8 +4,8 @@ version = 3
 
 [[package]]
 name = "CCBPlusTree"
-version = "0.0.114"
-source = "git+ssh://git@github.com/umr-dbs/CC-BPlusTree.git#fe9d33451a724b984d8c6da6ce7450d997528938"
+version = "0.0.115"
+source = "git+ssh://git@github.com/umr-dbs/CC-BPlusTree.git#6481416c4f163cf0527712b637e791d3d2c2a959"
 dependencies = [
  "chrono",
  "crossbeam",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "MV-BPlusTree"
-version = "0.0.34"
+version = "0.0.35"
 dependencies = [
  "CCBPlusTree",
  "chrono",
@@ -111,9 +111,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.37"
+version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
+checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -476,9 +476,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.115"
+version = "1.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
+checksum = "3e17db7126d17feb94eb3fad46bf1a96b034e8aacbc2e775fe81505f8b0b2813"
 dependencies = [
  "itoa",
  "ryu",
@@ -504,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.30.7"
+version = "0.30.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c385888ef380a852a16209afc8cfad22795dd8873d69c9a14d2e2088f118d18"
+checksum = "26d7c217777061d5a2d652aea771fb9ba98b6dade657204b08c4b9604d11555b"
 dependencies = [
  "cfg-if",
  "core-foundation-sys",
