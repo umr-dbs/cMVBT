@@ -1,6 +1,7 @@
 use std::{env, fs, mem, thread};
 use std::io::Read;
 use std::sync::Arc;
+use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, SystemTime};
 // use cc_bplustree::tree::bplus_tree::BPlusTree;
@@ -192,7 +193,7 @@ fn main() {
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     // let insertions = 40_000_u64;
 
-    let insertions = 10_000_000_u64;
+    let insertions = 1_00_000_u64;
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);
     let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = test::gen_data_exp(insertions, 0.01, &mut rnd)
@@ -211,7 +212,7 @@ fn main() {
 
     for threads in [1, 2, 4, 8, 16, 24,  32, 64, 72, 96, 128] {
         for gc in [true, false] {
-            for tree in [MVTree::standard(), MVTree::olc_optimistic_clock(), MVTree::orwc_optimistic_clock()] {
+            for tree in [ MVTree::orwc_optimistic_clock()] {
                 if tree.locking_strategy().is_mono_writer() && threads > 1 {
                     continue;
                 }
@@ -223,6 +224,7 @@ fn main() {
                     all_tx.as_slice()
                 );
 
+                fence(SeqCst);
                 println!("{insertions},{points},{},{},{},{end},{},{},{}",
                          tx_manager.threads(),
                          tx_manager.locking_protocol(),

@@ -209,11 +209,11 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
-    pub fn is_read_valid(&self, read_latch: LatchVersion) -> IsRead {
+    pub fn is_read_valid(&self, _read_latch: LatchVersion) -> IsRead {
         let load_version
             = self.load_version();
 
-        read_latch == load_version & !PIN_FLAG_VERSION && load_version & WRITE_OBSOLETE_FLAG_VERSION == 0
+        load_version & WRITE_OBSOLETE_FLAG_VERSION == 0 // read_latch == load_version & !PIN_FLAG_VERSION &&
     }
 
     #[inline(always)]
@@ -843,7 +843,6 @@ impl<E: Default> SmartCell<E> {
 impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         match self {
-            RwReaderFree(..) => fence(Release),
             OLCWriter(cell, write_version) =>
                 if let LightWeightHybridCell(opt) = cell.0.as_ref() {
                     if *write_version != ZEROED_FLAG_VERSION {
