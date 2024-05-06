@@ -209,14 +209,6 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
-    pub fn is_read_valid(&self, _read_latch: LatchVersion) -> IsRead {
-        let load_version
-            = self.load_version();
-
-        load_version & WRITE_OBSOLETE_FLAG_VERSION == 0 // read_latch == load_version & !PIN_FLAG_VERSION &&
-    }
-
-    #[inline(always)]
     pub fn pin_write_lock(&self, read_version_pin: LatchVersion) -> LatchVersion {
         let pin_write
             = WRITE_FLAG_VERSION | (read_version_pin & !PIN_FLAG_VERSION);
@@ -344,13 +336,11 @@ impl<E: Default> SmartFlavor<E> {
     #[inline(always)]
     fn is_read_valid(&self, read_version: LatchVersion) -> bool {
         match self {
-            OLCCell(opt) | LightWeightHybridCell(opt) =>
-                opt.is_read_valid(read_version),
             HybridCell(opt, rw) => {
                 let reader
                     = rw.try_read();
 
-                reader.is_some() && opt.is_read_valid(read_version)
+                reader.is_some()
             }
             _ => true
         }
@@ -612,25 +602,9 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
-    pub fn is_valid(&self) -> bool {
+    pub const fn is_valid(&self) -> bool {
         match self {
-            OLCReader(Some((cell, latch))) => cell.0
-                .is_read_valid(*latch),
             OLCReader(None) => false,
-            HybridRwReader(.., opt, latch) =>
-                opt.is_read_valid(*latch),
-            //  | HybridRwWriter(.., opt, latch)
-            _ => true
-        }
-    }
-
-    #[inline(always)]
-    pub fn is_read_not_obsolete(&self) -> bool {
-        match self {
-            OLCReader(Some((cell, ..))) => cell.0.is_read_not_obsolete(),
-            OLCReader(None) => false,
-            HybridRwReader(.., opt, _) |
-            HybridRwWriter(.., opt, _) => opt.is_read_not_obsolete(),
             _ => true
         }
     }
@@ -662,8 +636,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             RwReaderFree(.., ptr) => unsafe { ptr.as_ref() },
             RwWriterMut(.., ptr) => unsafe { ptr.as_ref() },
             MutExclusive(.., ptr) => unsafe { ptr.as_ref() },
-            OLCReader(Some((cell, latch))) if cell.0.is_read_valid(*latch) =>
-                Some(cell.0.as_ref()),
+            OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(cell, ..) => Some(cell.0.as_ref()),
             OLCReaderPin(cell, ..) => Some(cell.0.as_ref()),
             HybridRwReader(.., opt, _) | HybridRwWriter(_, opt, ..) =>
@@ -765,13 +738,13 @@ impl<E: Default> SmartCell<E> {
 
                 OLCReader(success.then(|| (self.clone(), read)))
             }
-            ExclusiveCell(mutex, ptr) => unsafe {
-                MutExclusive(transmute(mutex.lock()),
-                             ptr.get_mut())
-            },
+            ExclusiveCell(mutex, ptr) |
             ReadersWriterCell(mutex, ptr) => unsafe {
                 RwReaderFree(transmute(mutex), ptr.as_ref())
             },
+            // ReadersWriterCell(mutex, ptr) => unsafe {
+            //     RwReaderFree(transmute(mutex), ptr.as_ref())
+            // },
             FreeCell(ptr) => LockFree(ptr.get_mut()),
             _ => OLCReader(None)
         }
@@ -796,10 +769,13 @@ impl<E: Default> SmartCell<E> {
         match self.0.deref() {
             FreeCell(ptr) => LockFree(ptr.get_mut()),
             ReadersWriterCell(rw, ptr) => unsafe {
-                transmute(RwWriterMut(
-                    transmute(rw.lock()),
-                    ptr.get_mut(),
-                ))
+                match rw.try_lock() {
+                    None => OLCReader(None),
+                    Some(guard) =>  transmute(RwWriterMut(
+                        transmute(guard),
+                        ptr.get_mut(),
+                    ))
+                }
             },
             OLCCell(opt) | LightWeightHybridCell(opt) => {
                 let read_version

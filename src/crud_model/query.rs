@@ -508,11 +508,19 @@ impl<const FAN_OUT: usize,
                 let master_guard
                     = self.root.borrow_mut();
 
+                if !master_guard.is_valid() {
+                    return Err(())
+                }
+
                 let root_block
                     = master_guard.deref_mut().unwrap().block();
 
                 let root_guard
                     = root_block.borrow_mut();
+
+                if !root_guard.is_valid() {
+                    return Err(())
+                }
 
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow =>
@@ -524,6 +532,10 @@ impl<const FAN_OUT: usize,
                 let mut master_guard
                     = self.root.borrow_read();
 
+                if !master_guard.is_valid() {
+                    return Err(())
+                }
+
                 let master_v
                     = master_guard.deref().unwrap().version();
 
@@ -532,6 +544,10 @@ impl<const FAN_OUT: usize,
 
                 let mut root_guard
                     = root_block.borrow_read();
+
+                if !root_guard.is_valid() {
+                    return Err(())
+                }
 
                 let len = root_guard.deref().unwrap().len();
                 match root_guard.deref().unwrap().unsafe_degree() {
@@ -543,7 +559,7 @@ impl<const FAN_OUT: usize,
                     => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
                     _ => {
-                        fence(Acquire);
+                        // fence(Acquire);
                         Ok((root_block, root_guard, height))
                     }
                 }
@@ -582,8 +598,6 @@ impl<const FAN_OUT: usize,
         loop {
             match curr_guard.deref().unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
-                    // fence(Acquire);
-
                     let keys_page = internal_page
                         .keys();
 
@@ -636,7 +650,6 @@ impl<const FAN_OUT: usize,
                         }
                         _ => return Err((curr_level, attempts + 1))
                     }
-                    fence(SeqCst);
                 }
                 _ => return if curr_guard.upgrade_write_lock() {
                     Ok(curr_guard)
