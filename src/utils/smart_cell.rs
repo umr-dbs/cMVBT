@@ -772,14 +772,19 @@ impl<E: Default> SmartCell<E> {
     pub fn borrow_mut(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
             FreeCell(ptr) => LockFree(ptr.get_mut()),
-            ReadersWriterCell(rw, ptr) => unsafe {
-                match rw.try_lock() {
-                    None => OLCReader(None),
-                    Some(guard) =>  transmute(RwWriterMut(
-                        transmute(guard),
-                        self.clone(),
-                    ))
-                }
+            ReadersWriterCell(rw, ..) => unsafe {
+                let lock = rw.lock();
+                transmute(RwWriterMut(
+                    transmute(lock),
+                    self.clone(),
+                ))
+                // match rw.try_lock() {
+                //     None => OLCReader(None),
+                //     Some(guard) =>  transmute(RwWriterMut(
+                //         transmute(guard),
+                //         self.clone(),
+                //     ))
+                // }
             },
             OLCCell(opt) | LightWeightHybridCell(opt) => {
                 let read_version
