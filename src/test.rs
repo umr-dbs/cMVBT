@@ -2,10 +2,14 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Div;
+use std::{mem, ptr, thread};
+use std::ffi::c_void;
+use std::ptr::null_mut;
 use std::sync::Arc;
 use std::thread::spawn;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use itertools::Itertools;
+use libc::{MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_READ, PROT_WRITE, size_t};
 use rand::prelude::SliceRandom;
 use rand::{Rng, thread_rng};
 use rand::rngs::StdRng;
@@ -89,6 +93,43 @@ pub fn bulk_tx_manager(
         = SystemTime::now().duration_since(start).unwrap();
 
     (time_elapsed.as_millis(), m_manager)
+}
+
+pub fn alloc_memory_force(gigs: usize) -> *mut c_void {
+    let size = gigs * 1024 * 1024 * 1024;
+
+    let ptr = unsafe {
+        libc::mmap(
+            ptr::null_mut(),
+            size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0)
+    };
+
+    if ptr == MAP_FAILED {
+        println!("***********Failed to allocate memory");
+        return null_mut();
+    }
+
+    for offset in (0..size).step_by(mem::size_of::<u8>()) {
+        unsafe {
+            let p = (ptr as *mut u8).offset(offset as isize);
+            *p = 0;
+        }
+    }
+
+    println!("Memory allocated successfully");
+    ptr
+}
+
+pub fn allocate_free(ptr: *mut c_void, size: size_t) {
+    let ret = unsafe { libc::munmap(ptr, size) };
+
+    if ret != 0 {
+        println!("Failed to free memory");
+    }
 }
 
 #[inline(always)]

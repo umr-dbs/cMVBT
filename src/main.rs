@@ -21,7 +21,7 @@ use crate::page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::page_model::leaf_page::LeafPage;
 use crate::page_model::node::Node;
 use crate::record_model::version_info::Version;
-use crate::test::{format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02};
+use crate::test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02};
 use crate::tree::mvbplus_tree::MVBPlusTree;
 use crate::tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
 use crate::tx_model::transaction::{AtomicTransaction, SnapShot};
@@ -192,6 +192,8 @@ fn main() {
     //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     // let insertions = 40_000_u64;
+    let gigs = 763;
+    let ptr = alloc_memory_force(gigs);
 
     let insertions = 10_000_000_u64;
     println!("> Generating {insertions} keys..");
@@ -205,6 +207,8 @@ fn main() {
     // all_tx.extend((0..points).map(|key|
     //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
     //         test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
+
+
 
     // all_tx.shuffle(&mut thread_rng());
     println!("> Finished generating {insertions} keys!");
@@ -243,63 +247,8 @@ fn main() {
             }
         }
     }
-    // let mut insertions_vec = (0u64..insertions)
-    //     .map(|key| CRUDOperation::Insert(key, mk_payload()).into())
-    //     .collect_vec();
-    //
-    // insertions_vec.shuffle(&mut thread_rng());
 
-
-    // println!("Insertions,Threads,Protocol,Clock,Time");
-    // for btree in [
-    //     MVTree::olc_optimistic_clock(),
-    //     MVTree::lhl_optimistic_clock(),
-    //     MVTree::orwc_optimistic_clock()]
-    // {
-    //     for threads in [1, 2, 4, 8, 16, 32, 64] {
-    //         let tree = Arc::new(btree.make_empty_copy());
-    //
-    //         let (time, ..)
-    //             = test::bulk_atomic_tx(threads, tree.clone(), insertions_vec.as_slice());
-    //
-    //         println!("{insertions},{threads},{},{},{time}",
-    //                  tree.locking_strategy(),
-    //                  tree.clock_type());
-    //     }
-    // }
-    // let snapshot =
-    //     tree.current_version();
-    //
-    // let start = SystemTime::now();
-    // (0..insertions).into_par_iter().for_each(|key|
-    //     if tree.dispatch_crud(CRUDOperation::Point(key, snapshot))
-    //         .is_err()
-    //     {
-    //         println!("ERROR Point dispatch crud.")
-    //     });
-    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-    //
-    // println!("\
-    // All Keys Point Search = {}\n\
-    // Threads = {}\n\
-    // Time = {}ms\n",
-    //          format_insertions(insertions as _),
-    //          rayon::current_num_threads(),
-    //          end);
-    //
-    // let range
-    //     = Interval::new(tree.min_key, tree.max_key);
-    //
-    // let start = SystemTime::now();
-    // match tree.dispatch_crud(CRUDOperation::RangeIter(range, snapshot)) {
-    //     CRUDOperationResult::MatchedRecordIter(iter) => if iter.count() != insertions as _ {
-    //         println!("ERROR Range Iter")
-    //     }
-    //     _ => println!("Range Iter Failed")
-    // }
-    //
-    // let end = SystemTime::now().duration_since(start).unwrap().as_millis();
-    // println!("Scan = Key-Space\nTime = {end}ms");
+    allocate_free(ptr, gigs);
 }
 
 /// Essential function.
