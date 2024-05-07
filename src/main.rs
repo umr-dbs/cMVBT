@@ -193,7 +193,7 @@ fn main() {
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     // let insertions = 40_000_u64;
 
-    let insertions = 1_000_000_u64;
+    let insertions = 10_000_000_u64;
     println!("> Generating {insertions} keys..");
     let mut rnd = StdRng::seed_from_u64(90501960);
     let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = test::gen_data_exp(insertions, 0.01, &mut rnd)

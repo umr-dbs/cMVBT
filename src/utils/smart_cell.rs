@@ -416,8 +416,8 @@ impl<E: Default + 'static> DerefMut for SmartFlavor<E> {
 
 pub enum SmartGuard<'a, E: Default> {
     LockFree(*mut E),
-    RwReaderFree(&'a Mutex<()>, *const E),
-    RwWriterMut(MutexGuard<'a, RawMutex, ()>, *mut E),
+    RwReaderFree(SmartCell<E>),
+    RwWriterMut(MutexGuard<'a, RawMutex, ()>, SmartCell<E>),
     MutExclusive(MutexGuard<'a, RawMutex, ()>, *mut E),
     OLCReader(Option<(SmartCell<E>, LatchVersion)>),
     OLCWriter(SmartCell<E>, LatchVersion),
@@ -433,8 +433,7 @@ impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
             OLCReaderPin(inner, read_latch) =>
                 OLCReader(Some((inner.clone(), (*read_latch & !PIN_FLAG_VERSION)))),
             LockFree(ptr) => LockFree(*ptr),
-            RwReaderFree(rw, ptr) =>
-                RwReaderFree(*rw, *ptr),
+            RwReaderFree(rw) => RwReaderFree(rw.clone()),
             _ => OLCReader(None)
         }
     }
@@ -464,14 +463,14 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn downgrade(&mut self) {
         match self {
-            RwWriterMut(guard, ptr) => unsafe {
+            RwWriterMut(guard, cell) => unsafe {
                 let mutex
                     = MutexGuard::mutex(guard);
 
                 mutex.force_unlock();
 
                 let s_guard
-                    = RwReaderFree(mutex, *ptr);
+                    = RwReaderFree(cell.clone());
 
                 ptr::write(self, s_guard)
             },
@@ -494,11 +493,18 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             HybridRwWriter(..) => true,
             MutExclusive(..) => true,
             OLCWriter(..) => true,
-            RwReaderFree(rw, ptr) => unsafe {
-                if let Some(writer) = rw.try_lock() {
-                    let ptr = (*ptr) as *mut _;
-                    ptr::write(self, RwWriterMut(writer, ptr));
-                    return true;
+            RwReaderFree(ref cell) => unsafe {
+                if let ReadersWriterCell(mutex, ..) = cell.0.as_ref() {
+                    let mutex: &'a Mutex<()>
+                        = transmute(mutex);
+
+                    if let Some(writer) = mutex.try_lock() {
+                        let next
+                            = transmute(RwWriterMut::<E>(writer, transmute_copy(cell)));
+
+                        ptr::write(self, next);
+                        return true;
+                    }
                 }
 
                 false
@@ -633,8 +639,8 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     pub fn deref(&self) -> Option<&'_ E> {
         match self {
             LockFree(ptr) => unsafe { ptr.as_ref() },
-            RwReaderFree(.., ptr) => unsafe { ptr.as_ref() },
-            RwWriterMut(.., ptr) => unsafe { ptr.as_ref() },
+            RwReaderFree(.., ptr) => unsafe { Some(ptr.unsafe_borrow()) },
+            RwWriterMut(.., ptr) => unsafe { Some(ptr.unsafe_borrow()) },
             MutExclusive(.., ptr) => unsafe { ptr.as_ref() },
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(cell, ..) => Some(cell.0.as_ref()),
@@ -649,8 +655,8 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     pub unsafe fn deref_unsafe(&self) -> Option<&'_ E> {
         match self {
             LockFree(ptr) => ptr.as_ref(),
-            RwReaderFree(.., ptr) => ptr.as_ref(),
-            RwWriterMut(.., ptr) => ptr.as_ref(),
+            RwReaderFree(.., ptr) => Some(ptr.unsafe_borrow()),
+            RwWriterMut(.., ptr) => Some(ptr.unsafe_borrow()),
             MutExclusive(.., ptr) => ptr.as_ref(),
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
             OLCWriter(cell, ..) => Some(cell.0.as_ref()),
@@ -666,7 +672,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     pub fn deref_mut(&self) -> Option<&mut E> {
         match self {
             LockFree(ptr) => unsafe { ptr.as_mut() },
-            RwWriterMut(.., ptr) => unsafe { ptr.as_mut() },
+            RwWriterMut(.., ptr) => unsafe { Some(ptr.unsafe_borrow_mut()) },
             MutExclusive(.., ptr) => unsafe { ptr.as_mut() },
             OLCWriter(cell, ..) => Some(cell.unsafe_borrow_mut()),
             // OLCReaderPin(cell, ..) =>
@@ -739,9 +745,7 @@ impl<E: Default> SmartCell<E> {
                 OLCReader(success.then(|| (self.clone(), read)))
             }
             ExclusiveCell(mutex, ptr) |
-            ReadersWriterCell(mutex, ptr) => unsafe {
-                RwReaderFree(transmute(mutex), ptr.as_ref())
-            },
+            ReadersWriterCell(mutex, ptr) => RwReaderFree(self.clone()),
             // ReadersWriterCell(mutex, ptr) => unsafe {
             //     RwReaderFree(transmute(mutex), ptr.as_ref())
             // },
@@ -773,7 +777,7 @@ impl<E: Default> SmartCell<E> {
                     None => OLCReader(None),
                     Some(guard) =>  transmute(RwWriterMut(
                         transmute(guard),
-                        ptr.get_mut(),
+                        self.clone(),
                     ))
                 }
             },
