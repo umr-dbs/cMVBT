@@ -192,7 +192,7 @@ fn main() {
     //
     // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
     // let insertions = 40_000_u64;
-    let gigs = 763;
+    let gigs = 480;
     let ptr = alloc_memory_force(gigs);
 
     let insertions = 10_000_000_u64;

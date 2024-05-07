@@ -113,12 +113,19 @@ pub fn alloc_memory_force(gigs: usize) -> *mut c_void {
         return null_mut();
     }
 
-    for offset in (0..size).step_by(mem::size_of::<u8>()) {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    for offset in (0..size).step_by(page_size) {
         unsafe {
-            let p = (ptr as *mut u8).offset(offset as isize);
-            *p = 0;
+            ptr::write_bytes(ptr.add(offset) as *mut u8, 0, mem::size_of::<u8>() * page_size);
         }
     }
+
+    // for offset in (0..size).step_by(mem::size_of::<u8>()) {
+    //     unsafe {
+    //         let p = (ptr as *mut u8).offset(offset as isize);
+    //         *p = 0;
+    //     }
+    // }
 
     println!("Memory allocated successfully");
     ptr
