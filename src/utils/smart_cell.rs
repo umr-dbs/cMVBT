@@ -747,7 +747,7 @@ impl<E: Default> SmartCell<E> {
             ExclusiveCell(mutex, ptr) |
             ReadersWriterCell(mutex, ptr) => {
                 let ret = RwReaderFree(self.clone());
-                fence(Acquire);
+                fence(AcqRel);
                 ret
             },
             // ReadersWriterCell(mutex, ptr) => unsafe {
