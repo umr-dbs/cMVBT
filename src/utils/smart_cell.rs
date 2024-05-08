@@ -745,7 +745,11 @@ impl<E: Default> SmartCell<E> {
                 OLCReader(success.then(|| (self.clone(), read)))
             }
             ExclusiveCell(mutex, ptr) |
-            ReadersWriterCell(mutex, ptr) => RwReaderFree(self.clone()),
+            ReadersWriterCell(mutex, ptr) => {
+                let ret = RwReaderFree(self.clone());
+                fence(Acquire);
+                ret
+            },
             // ReadersWriterCell(mutex, ptr) => unsafe {
             //     RwReaderFree(transmute(mutex), ptr.as_ref())
             // },

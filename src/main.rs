@@ -220,8 +220,8 @@ fn main() {
                 MVTree::standard(),
                 MVTree::orwc(),
                 MVTree::orwc_optimistic_clock(),
-                MVTree::lc(),
-                MVTree::lc_optimistic_clock(),
+                // MVTree::lc(),
+                // MVTree::lc_optimistic_clock(),
                 MVTree::olc(),
                 MVTree::olc_optimistic_clock()
             ] {
