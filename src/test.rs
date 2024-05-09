@@ -127,15 +127,16 @@ pub fn alloc_memory_force(gigs: usize) -> *mut c_void {
     //     }
     // }
 
-    println!("Memory allocated successfully");
+    println!("> Memory allocated successfully");
     ptr
 }
 
-pub fn allocate_free(ptr: *mut c_void, size: size_t) {
+pub fn allocate_free(ptr: *mut c_void, gigs: size_t) {
+    let size = gigs * 1024 * 1024 * 1024;
     let ret = unsafe { libc::munmap(ptr, size) };
 
     if ret != 0 {
-        println!("Failed to free memory");
+        println!("> Failed to free memory");
     }
 }
 
