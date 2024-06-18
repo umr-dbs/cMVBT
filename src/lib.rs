@@ -35,20 +35,12 @@ impl Default for tree_options_t {
     }
 }
 
-pub trait TreeApi {
-    fn find(&self, key: *const u8, sz: usize, value_out: *mut u8) -> bool;
-    fn insert(&self, key: *const u8, key_sz: usize, value: *const u8, value_sz: usize) -> bool;
-    fn update(&self, key: *const u8, key_sz: usize, value: *const u8, value_sz: usize) -> bool;
-    fn remove(&self, key: *const u8, key_sz: usize) -> bool;
-    fn scan(&self, key: *const u8, key_sz: usize, scan_sz: i32, values_out: *mut *mut u8) -> i32;
-}
-
-#[repr(C)]
-pub struct MVBTreeApi(mv_tree::mvbplus_tree::MVBPlusTree<127, 127, u64, f64>);
+struct MVBTreeApi(mv_tree::mvbplus_tree::MVBPlusTree<127, 127, u64, f64>);
 
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 
-impl TreeApi for MVBTreeApi {
+impl MVBTreeApi {
+    #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
         match self.0.dispatch_crud(CRUDOperation::PointSi(
             unsafe { ptr::read(mem::transmute(key)) }))
@@ -62,6 +54,7 @@ impl TreeApi for MVBTreeApi {
         }
     }
 
+    #[inline(always)]
     fn insert(&self, key: *const u8, _key_sz: usize, value: *const u8, _value_sz: usize) -> bool {
         match self.0.dispatch_crud(CRUDOperation::Insert(
             unsafe { ptr::read(mem::transmute(key)) },
@@ -72,6 +65,7 @@ impl TreeApi for MVBTreeApi {
         }
     }
 
+    #[inline(always)]
     fn update(&self, key: *const u8, _key_sz: usize, value: *const u8, _value_sz: usize) -> bool {
         match self.0.dispatch_crud(CRUDOperation::Update(
             unsafe { ptr::read(mem::transmute(key)) },
@@ -82,6 +76,7 @@ impl TreeApi for MVBTreeApi {
         }
     }
 
+    #[inline(always)]
     fn remove(&self, key: *const u8, _key_sz: usize) -> bool {
         match self.0.dispatch_crud(CRUDOperation::Delete(
             unsafe { ptr::read(mem::transmute(key)) }))
@@ -91,6 +86,7 @@ impl TreeApi for MVBTreeApi {
         }
     }
 
+    #[inline(always)]
     fn scan(&self, key: *const u8, _key_sz: usize, mut scan_sz: i32, mut values_out: *mut *mut u8) -> i32 {
         let mut result
             = Vec::<*mut RecordPointResult<u64, f64>>::new();
@@ -125,12 +121,10 @@ impl TreeApi for MVBTreeApi {
 }
 
 #[no_mangle]
-pub extern "C" fn create_tree(tree_options_t: &tree_options_t) -> *mut c_void { // tree_api.hpp -> create_tree(...)
-    if tree_options_t.num_threads == 1 {
-        Box::into_raw(Box::new(MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::standard()))) as _
-    } else {
-        Box::into_raw(Box::new(MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::orwc_optimistic_clock()))) as _
-    }
+pub extern "C" fn init_tree() -> *mut c_void { // tree_api.hpp -> create_tree(...)
+    Box::into_raw(Box::new(
+            MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
+            orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]
@@ -139,7 +133,7 @@ pub extern "C" fn destroy_tree_api(
 {
     if !api.is_null() {
         unsafe {
-            let _tree = *Box::from_raw(Box::into_raw(Box::new(api)) as *mut Box<dyn TreeApi>);
+            let _tree = Box::from_raw(api as *mut MVBTreeApi);
         }
     }
 }
@@ -151,7 +145,7 @@ pub extern "C" fn tree_api_find(
     sz: usize,
     value_out: *mut u8) -> bool
 {
-    let api = unsafe { &*(api as *mut Box<dyn TreeApi>) };
+    let api = unsafe { &*(api as *mut MVBTreeApi) };
     api.find(key, sz, value_out)
 }
 
@@ -163,7 +157,7 @@ pub extern "C" fn tree_api_insert(
     value: *const u8,
     value_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut Box<dyn TreeApi>) };
+    let api = unsafe { &*(api as *mut MVBTreeApi) };
     api.insert(key, key_sz, value, value_sz)
 }
 
@@ -175,7 +169,7 @@ pub extern "C" fn tree_api_update(
     value: *const u8,
     value_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut Box<dyn TreeApi>) };
+    let api = unsafe { &*(api as *mut MVBTreeApi) };
     api.update(key, key_sz, value, value_sz)
 }
 
@@ -185,7 +179,7 @@ pub extern "C" fn tree_api_remove(
     key: *const u8,
     key_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut Box<dyn TreeApi>) };
+    let api = unsafe { &*(api as *mut MVBTreeApi) };
     api.remove(key, key_sz)
 }
 
@@ -197,7 +191,7 @@ pub extern "C" fn tree_api_scan(
     scan_sz: i32,
     values_out: *mut *mut u8) -> i32
 {
-    let api = unsafe { &*(api as *mut Box<dyn TreeApi>) };
+    let api = unsafe { &*(api as *mut MVBTreeApi) };
     api.scan(key, key_sz, scan_sz, values_out)
 }
 
