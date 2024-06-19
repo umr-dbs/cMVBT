@@ -215,7 +215,7 @@ impl<const FAN_OUT: usize,
                    m_page.mark_internal()
                }
 
-               fence(Acquire);
+               // fence(Acquire);
                block
            }
            _ => {

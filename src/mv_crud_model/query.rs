@@ -878,12 +878,14 @@ impl<const FAN_OUT: usize,
 
                 loop {
                     match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => {
-                            *mufasa_internal_page
-                                .get_version_mut(mufasa_len) = commit;
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let versions_uncomitted = mufasa_internal_page
+                                .versions_byKey_uncommitted_mut();
 
-                            *mufasa_internal_page
-                                .get_version_mut(mufasa_len + 1) = commit;
+                            *versions_uncomitted.get_unchecked_mut(mufasa_len) = commit;
+
+                            *versions_uncomitted
+                                .get_unchecked_mut(mufasa_len + 1) = commit;
 
                             break;
                         }
