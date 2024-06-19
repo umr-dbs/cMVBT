@@ -57,7 +57,7 @@ impl<'a,
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) if commit_attempts > 0 => unsafe {
                             let records
-                                = leaf_page.as_records_mut();
+                                = leaf_page.as_records_uncommitted_mut();
 
                             records.get_unchecked_mut(current_len)
                                 .version_mut()
@@ -111,7 +111,7 @@ impl<'a,
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) if commit_attempts > 0 => unsafe {
                             let records
-                                = leaf_page.as_records_mut();
+                                = leaf_page.as_records_uncommitted_mut();
 
                             records.get_unchecked_mut(current_len)
                                 .version_mut()

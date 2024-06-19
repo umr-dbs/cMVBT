@@ -121,10 +121,17 @@ impl MVBTreeApi {
 }
 
 #[no_mangle]
-pub extern "C" fn init_tree() -> *mut c_void { // tree_api.hpp -> create_tree(...)
+pub extern "C" fn _create_tree(_options: &tree_options_t) -> *mut c_void { // tree_api.hpp -> create_tree(...)
     Box::into_raw(Box::new(
             MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
             orwc_optimistic_clock()))) as _
+}
+
+#[no_mangle]
+pub extern "C" fn init_tree() -> *mut c_void {
+    Box::into_raw(Box::new(
+        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
+        orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]

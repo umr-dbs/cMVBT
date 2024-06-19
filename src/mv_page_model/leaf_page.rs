@@ -110,6 +110,15 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
+    pub fn as_records_uncommitted_mut(&mut self) -> &mut [RecordPoint<Key, Payload>] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.record_data.as_mut_ptr() as *mut _,
+                self.len() + 1)
+        }
+    }
+
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.len.load(Acquire) as _
     }

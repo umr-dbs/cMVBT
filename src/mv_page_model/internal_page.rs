@@ -352,6 +352,11 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub unsafe fn versions_byKey_uncommitted_mut(&mut self) -> &mut [Version] {
+        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.len() + 2)
+    }
+
+    #[inline(always)]
     pub fn get_version_mut(&mut self, index: usize) -> &mut Version {
         unsafe { &mut *(self.version_region.as_mut_ptr().add(index) as *mut Version) }
     }
