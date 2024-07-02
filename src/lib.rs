@@ -38,6 +38,7 @@ impl Default for tree_options_t {
 struct MVBTreeApi(mv_tree::mvbplus_tree::MVBPlusTree<127, 127, u64, f64>);
 
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
+use crate::mv_utils::interval::Interval;
 
 impl MVBTreeApi {
     #[inline(always)]
@@ -89,29 +90,28 @@ impl MVBTreeApi {
     #[inline(always)]
     fn scan(&self, key: *const u8, _key_sz: usize, mut scan_sz: i32, mut values_out: *mut *mut u8) -> i32 {
         let mut result
-            = Vec::<*mut RecordPointResult<u64, f64>>::new();
+            = Vec::<*mut RecordPointResult<u64, f64>>::with_capacity(scan_sz as _);
 
-        let mut count = 0;
-        while scan_sz > 0 {
-            match self.0.dispatch_crud(CRUDOperation::PointSi(unsafe {
-                ptr::read(mem::transmute::<_, *const u64>(key).add(count))
-            }))
-            {
-                CRUDOperationResult::MatchedRecords(mut buff) if !buff.is_empty() => unsafe {
-                    buff.shrink_to_fit();
-                    result.push(buff.get_unchecked(0) as *const _ as *mut _);
+        let key_start = unsafe { *(key as *const u64) };
+        let key_end = unsafe { *(key as *const u64).add(scan_sz as usize - 1) };
 
-                    mem::forget(buff);
-                }
-                _ => {}
+        match self.0.dispatch_crud(CRUDOperation::RangeSi(Interval::new(key_start, key_end))) {
+            CRUDOperationResult::MatchedRecords(mut buff) if !buff.is_empty() => unsafe {
+                buff.shrink_to_fit();
+
+                buff.iter()
+                    .for_each(|r|
+                        result.push(r as *const _ as *mut _));
+
+                mem::forget(buff);
             }
-
-            scan_sz -= 1;
-            count += 1;
+            _ => {}
         }
 
         result.shrink_to_fit();
-        values_out = result.as_mut_ptr() as _;
+        unsafe {
+            *values_out = result.as_mut_ptr() as _;
+        }
 
         let len = result.len() as _;
         mem::forget(result);
@@ -123,8 +123,8 @@ impl MVBTreeApi {
 #[no_mangle]
 pub extern "C" fn _create_tree(_options: &tree_options_t) -> *mut c_void { // tree_api.hpp -> create_tree(...)
     Box::into_raw(Box::new(
-            MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
-            orwc_optimistic_clock()))) as _
+        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
+        orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]
