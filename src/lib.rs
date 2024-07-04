@@ -1,5 +1,6 @@
 use std::ffi::{c_void, CString};
 use std::{mem, ptr};
+use std::ops::Deref;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_record_model::record_point::RecordPointResult;
@@ -35,16 +36,28 @@ impl Default for tree_options_t {
     }
 }
 
-struct MVBTreeApi(mv_tree::mvbplus_tree::MVBPlusTree<127, 127, u64, f64>);
+struct MVBTreeApi(MVBPlusTree<127, 127, u64, u64>);
+
+impl Deref for MVBTreeApi {
+    type Target = MVBPlusTree<127, 127, u64, u64>;
+
+    fn deref(&self) -> &Self::Target {
+       &self.0
+    }
+}
 
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
+use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::interval::Interval;
 
 impl MVBTreeApi {
     #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
-        match self.0.dispatch_crud(CRUDOperation::PointSi(
-            unsafe { ptr::read(mem::transmute(key)) }))
+        let querying_v
+            = self.current_version();
+
+        match self.dispatch_crud(CRUDOperation::Point(
+            unsafe { ptr::read(mem::transmute(key)) }, querying_v))
         {
             CRUDOperationResult::MatchedRecords(result)
             if !result.is_empty() => unsafe {
@@ -57,7 +70,7 @@ impl MVBTreeApi {
 
     #[inline(always)]
     fn insert(&self, key: *const u8, _key_sz: usize, value: *const u8, _value_sz: usize) -> bool {
-        match self.0.dispatch_crud(CRUDOperation::Insert(
+        match self.dispatch_crud(CRUDOperation::Insert(
             unsafe { ptr::read(mem::transmute(key)) },
             unsafe { ptr::read(mem::transmute(value)) }))
         {
@@ -68,7 +81,7 @@ impl MVBTreeApi {
 
     #[inline(always)]
     fn update(&self, key: *const u8, _key_sz: usize, value: *const u8, _value_sz: usize) -> bool {
-        match self.0.dispatch_crud(CRUDOperation::Update(
+        match self.dispatch_crud(CRUDOperation::Update(
             unsafe { ptr::read(mem::transmute(key)) },
             unsafe { ptr::read(mem::transmute(value)) }))
         {
@@ -79,7 +92,7 @@ impl MVBTreeApi {
 
     #[inline(always)]
     fn remove(&self, key: *const u8, _key_sz: usize) -> bool {
-        match self.0.dispatch_crud(CRUDOperation::Delete(
+        match self.dispatch_crud(CRUDOperation::Delete(
             unsafe { ptr::read(mem::transmute(key)) }))
         {
             CRUDOperationResult::Deleted(..) => true,
@@ -89,13 +102,16 @@ impl MVBTreeApi {
 
     #[inline(always)]
     fn scan(&self, key: *const u8, _key_sz: usize, mut scan_sz: i32, mut values_out: *mut *mut u8) -> i32 {
+        let querying_v
+            = self.current_version();
+
         let mut result
             = Vec::<*mut RecordPointResult<u64, f64>>::with_capacity(scan_sz as _);
 
         let key_start = unsafe { *(key as *const u64) };
         let key_end = unsafe { *(key as *const u64).add(scan_sz as usize - 1) };
 
-        match self.0.dispatch_crud(CRUDOperation::RangeSi(Interval::new(key_start, key_end))) {
+        match self.dispatch_crud(CRUDOperation::Range(Interval::new(key_start, key_end), querying_v)) {
             CRUDOperationResult::MatchedRecords(mut buff) if !buff.is_empty() => unsafe {
                 buff.shrink_to_fit();
 
@@ -123,14 +139,14 @@ impl MVBTreeApi {
 #[no_mangle]
 pub extern "C" fn _create_tree(_options: &tree_options_t) -> *mut c_void { // tree_api.hpp -> create_tree(...)
     Box::into_raw(Box::new(
-        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
+        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, u64>::
         orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]
 pub extern "C" fn init_tree() -> *mut c_void {
     Box::into_raw(Box::new(
-        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, f64>::
+        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, u64>::
         orwc_optimistic_clock()))) as _
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.41"
+version = "0.0.42"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -24,7 +24,6 @@ crate-type = ["cdylib"]
 [dependencies]
 #CCBPlusTree = { path = "../../CLionProjects/CC-BPlusTree" }
 CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.117" }
-#rb_tree = "0.5.0"
 crossbeam-channel = "0.5.13"
 threadpool = "1.8.1"
 num_cpus = "1.16.0"
