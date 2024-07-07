@@ -14,6 +14,8 @@ mod mv_utils;
 mod mv_test;
 mod mv_tx_model;
 
+type MVBTreeApi = MVBPlusTree<127, 127, u64, u64>;
+
 #[allow(non_camel_case_types)]
 #[repr(C)]
 pub struct tree_options_t {
@@ -36,10 +38,10 @@ impl Default for tree_options_t {
     }
 }
 
-struct MVBTreeApi(MVBPlusTree<127, 127, u64, u64>);
+struct MVBTreeApiExport(MVBTreeApi);
 
-impl Deref for MVBTreeApi {
-    type Target = MVBPlusTree<127, 127, u64, u64>;
+impl Deref for MVBTreeApiExport {
+    type Target = MVBTreeApi;
 
     fn deref(&self) -> &Self::Target {
        &self.0
@@ -50,7 +52,7 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::interval::Interval;
 
-impl MVBTreeApi {
+impl MVBTreeApiExport {
     #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
         let querying_v
@@ -109,7 +111,7 @@ impl MVBTreeApi {
             = Vec::<*mut RecordPointResult<u64, f64>>::with_capacity(scan_sz as _);
 
         let key_start = unsafe { *(key as *const u64) };
-        let key_end = unsafe { *(key as *const u64).add(scan_sz as usize - 1) };
+        let key_end = key_start + scan_sz as u64 - 1;
 
         match self.dispatch_crud(CRUDOperation::Range(Interval::new(key_start, key_end), querying_v)) {
             CRUDOperationResult::MatchedRecords(mut buff) if !buff.is_empty() => unsafe {
@@ -138,16 +140,12 @@ impl MVBTreeApi {
 
 #[no_mangle]
 pub extern "C" fn _create_tree(_options: &tree_options_t) -> *mut c_void { // tree_api.hpp -> create_tree(...)
-    Box::into_raw(Box::new(
-        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, u64>::
-        orwc_optimistic_clock()))) as _
+    Box::into_raw(Box::new(MVBTreeApiExport(MVBTreeApi::orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]
 pub extern "C" fn init_tree() -> *mut c_void {
-    Box::into_raw(Box::new(
-        MVBTreeApi(crate::mv_tree::mvbplus_tree::MVBPlusTree::<127, 127, u64, u64>::
-        orwc_optimistic_clock()))) as _
+    Box::into_raw(Box::new(MVBTreeApiExport(MVBTreeApi::orwc_optimistic_clock()))) as _
 }
 
 #[no_mangle]
@@ -156,7 +154,7 @@ pub extern "C" fn destroy_tree_api(
 {
     if !api.is_null() {
         unsafe {
-            let _tree = Box::from_raw(api as *mut MVBTreeApi);
+            let _tree = Box::from_raw(api as *mut MVBTreeApiExport);
         }
     }
 }
@@ -168,7 +166,7 @@ pub extern "C" fn tree_api_find(
     sz: usize,
     value_out: *mut u8) -> bool
 {
-    let api = unsafe { &*(api as *mut MVBTreeApi) };
+    let api = unsafe { &*(api as *mut MVBTreeApiExport) };
     api.find(key, sz, value_out)
 }
 
@@ -180,7 +178,7 @@ pub extern "C" fn tree_api_insert(
     value: *const u8,
     value_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut MVBTreeApi) };
+    let api = unsafe { &*(api as *mut MVBTreeApiExport) };
     api.insert(key, key_sz, value, value_sz)
 }
 
@@ -192,7 +190,7 @@ pub extern "C" fn tree_api_update(
     value: *const u8,
     value_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut MVBTreeApi) };
+    let api = unsafe { &*(api as *mut MVBTreeApiExport) };
     api.update(key, key_sz, value, value_sz)
 }
 
@@ -202,7 +200,7 @@ pub extern "C" fn tree_api_remove(
     key: *const u8,
     key_sz: usize) -> bool
 {
-    let api = unsafe { &*(api as *mut MVBTreeApi) };
+    let api = unsafe { &*(api as *mut MVBTreeApiExport) };
     api.remove(key, key_sz)
 }
 
@@ -214,7 +212,7 @@ pub extern "C" fn tree_api_scan(
     scan_sz: i32,
     values_out: *mut *mut u8) -> i32
 {
-    let api = unsafe { &*(api as *mut MVBTreeApi) };
+    let api = unsafe { &*(api as *mut MVBTreeApiExport) };
     api.scan(key, key_sz, scan_sz, values_out)
 }
 
