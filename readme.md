@@ -1,6 +1,6 @@
 # Multi Version B+Tree
-- Release Date: 07.07.2024
-- Latest Version: 0.0.43 (Beta)
+- Release Date: 30.07.2024
+- Latest Version: 0.0.44 (Beta)
 #### Requirements:
 - OS:          Linux/Windows
 - Rustc:       >= 1.65.0 (2021 Edition)

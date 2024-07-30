@@ -395,7 +395,7 @@ impl<const FAN_OUT: usize,
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) if commit_attempts > 0 => unsafe {
                             let versions
-                                = root_internal_page.versions_mut();
+                                = root_internal_page.versions_byKey_uncommitted_mut();
 
                             *versions.get_unchecked_mut(0) = commit;
                             *versions.get_unchecked_mut(1) = commit;

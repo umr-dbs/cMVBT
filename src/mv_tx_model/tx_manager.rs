@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
+use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::locking_strategy::LockingStrategy;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
@@ -38,13 +39,13 @@ unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Hash + Ord + Copy + Display,
     Payload: Clone
-> Send for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> { }
+> Send for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Hash + Ord + Copy + Display,
     Payload: Clone
-> Sync for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> { }
+> Sync for TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -252,6 +253,33 @@ impl<const FAN_OUT: usize,
     pub fn join(&self) {
         // self.pool.join(|| {}, || {});
         self.pool.join();
+    }
+
+    #[inline]
+    pub fn execute_on_caller_thread<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(
+        &self, tx: Tx,
+    ) -> TxExecutionResult<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        let tx
+            = tx.into();
+
+        let bk
+            = self.enq_bookkeeping(&tx);
+
+        let dispatcher
+            = self.tx_dispatcher();
+
+        let deq_active_query
+            = self.db_tracker();
+
+        let si
+            = tx.snapshot();
+
+        let r = tx.execute(dispatcher);
+        if bk && si.is_some() && deq_active_query.is_some() {
+            Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
+        }
+
+        r
     }
 
     pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
