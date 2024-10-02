@@ -161,7 +161,7 @@ impl<E: Ord + Copy + Hash + Display> Into<Interval<E>> for RangeInclusive<E> {
 
 impl Into<U64interval> for Range<u64> {
     fn into(self) -> U64interval {
-        U64interval::new(self.start, self.end.checked_add(1).unwrap_or(u64::MAX))
+        U64interval::new(self.start, self.end.checked_sub(1).unwrap_or(u64::MIN))
     }
 }
 

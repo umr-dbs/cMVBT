@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{LinkedList, VecDeque};
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
@@ -304,6 +304,9 @@ impl<const FAN_OUT: usize,
                 .sorted_by_key(|r| r.key())
                 .map(|r| RecordPointResult::from(r))
                 .collect::<Vec<_>>())
+            .filter(|set| !set.is_empty())
+            .sorted_by_key(|set|
+                unsafe { set.get_unchecked(set.len() - 1).key })
             .flatten()
             .collect())
     }

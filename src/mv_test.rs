@@ -4,7 +4,9 @@ use std::hash::Hash;
 use std::ops::Div;
 use std::{mem, ptr, thread};
 use std::ffi::c_void;
-use std::ptr::null_mut;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::ptr::{null_mut, slice_from_raw_parts};
 use std::sync::Arc;
 use std::thread::spawn;
 use std::time::{Duration, SystemTime};
@@ -55,6 +57,31 @@ pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
+
+pub fn dump_to_json(tree: &INDEX) {
+    const VERSION_STAR: Version = Version::MAX - 1;
+    let data
+        = tree.dispatch_crud(CRUDOperation::Range((Key::MIN..=Key::MAX).into(), VERSION_STAR));
+
+    if let CRUDOperationResult::MatchedRecords(all_data) = data {
+        println!("Records: {}", format_insertions(all_data.len()));
+
+        let file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open("mv.json")
+            .unwrap();
+
+        let data = all_data
+            .iter()
+            .map(|r| r.key)
+            .collect_vec();
+
+        serde_json::to_writer(file, data.as_slice()).unwrap();
+    }
+}
+
 
 #[inline(always)]
 pub fn bulk_tx_manager(

@@ -1,4 +1,5 @@
 use std::{env, fs, mem, thread};
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::fence;
@@ -21,7 +22,7 @@ use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::mv_page_model::leaf_page::LeafPage;
 use crate::mv_page_model::node::Node;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02};
+use crate::mv_test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02, dump_to_json};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
 use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
@@ -95,9 +96,25 @@ fn main() {
     assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64, f64>>() <= 4096);
 
     let tree
-        = Arc::new(MVTree::olc_optimistic_clock());
+        = MVTree::orwc_optimistic_clock();
     //
     let insertions = 50_000_u64;
+
+    (0..insertions).for_each(|i| {
+        let cr
+            = tree.dispatch_crud(CRUDOperation::Insert(i, i as _));
+        let s = "asfdad".to_string();
+    });
+
+    let range
+        = tree.dispatch_crud(CRUDOperation::Range((0..300).into(), Version::MAX));
+
+    if let CRUDOperationResult::MatchedRecords(data) = range {
+        let hase = "hase".to_string();
+        let old = "olaf".to_string();
+    }
+
+
     // let mut last_insert_version = Version::MIN;
     // let mut version_inserts = vec![];
     //
@@ -197,17 +214,31 @@ fn main() {
     let ptr = alloc_memory_force(gigs);
 
     let insertions = 10_000_000_u64;
-    println!("> Generating {insertions} keys..");
-    let mut rnd = StdRng::seed_from_u64(90501960);
-    let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = mv_test::gen_data_exp(insertions, 0.01, &mut rnd)
-        .into_iter()
-        .map(|key| CRUDOperation::Insert(key, key as _).into())
-        .collect::<Vec<_>>();
+    // println!("> Generating {insertions} keys..");
+    // let mut rnd = StdRng::seed_from_u64(90501960);
+    // let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = mv_test::gen_data_exp(insertions, 0.1, &mut rnd)
+    //     .into_iter()
+    //     .map(|key| CRUDOperation::Insert(key, key as _).into())
+    //     .collect::<Vec<_>>();
 
     let points = insertions;
     // all_tx.extend((0..points).map(|key|
     //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
     //         test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
+
+
+    let file = OpenOptions::new()
+        .read(true)
+        .open("/home/amir/Schreibtisch/100k.json")
+        .unwrap();
+
+    let data_lambdas: Vec<u64>
+        = serde_json::from_reader(file).unwrap();
+
+    let data_lambdas = data_lambdas
+        .into_iter()
+        .map(|v| AtomicTransaction::from_crud(CRUDOperation::Insert(v, 0f64)))
+        .collect_vec();
 
 
 
@@ -216,7 +247,7 @@ fn main() {
     println!("Inserts,Points,Threads,Protocol,Clock,Time,GC,Alloc,Reuse");
 
     for threads in [1, 2, 4, 8, 16, 24,  32, 64, 72, 96, 128] {
-        for gc in [true, false] {
+        for gc in [false] {
             for tree in [
                 MVTree::standard(),
                 MVTree::orwc(),
@@ -234,10 +265,15 @@ fn main() {
                     threads,
                     tree,
                     gc,
-                    all_tx.as_slice()
+                    data_lambdas.as_slice()
                 );
 
                 fence(SeqCst);
+
+
+                dump_to_json(tx_manager.index());
+                return;
+
                 println!("{insertions},{points},{},{},{},{end},{},{},{}",
                          tx_manager.threads(),
                          tx_manager.locking_protocol(),
