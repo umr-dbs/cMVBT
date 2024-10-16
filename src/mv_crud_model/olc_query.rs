@@ -214,7 +214,7 @@ impl<const FAN_OUT: usize,
                         }
                         _ => return Err((curr_level - 1, attempts + 1))
                     }
-                    fence(SeqCst);
+                    // fence(SeqCst);
                 }
                 _ => return if curr_guard.upgrade_write_lock() {
                     Ok(curr_guard)
