@@ -1,13 +1,15 @@
 use std::{env, fs, mem, thread};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::sync::Arc;
-use std::sync::atomic::fence;
+use std::sync::atomic::{fence, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::{Duration, SystemTime};
+use CCBPlusTree::test;
 // use cc_bplustree::mv_tree::bplus_tree::BPlusTree;
 use chrono::{DateTime, Local};
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use rand::prelude::{SliceRandom, StdRng};
 use rand::{SeedableRng, thread_rng};
 // use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -22,8 +24,8 @@ use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::mv_page_model::leaf_page::LeafPage;
 use crate::mv_page_model::node::Node;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, test01, test02, dump_to_json};
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, experiment, gen_data_exp, IndexHandler};
+use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
 use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
 use crate::mv_tx_model::tx_manager::TransactionManager;
@@ -54,238 +56,137 @@ const NUM_RECORDS: usize = mv_test::NUM_RECORDS;
 
 pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>;
 
+// struct NoCacheAllocator;
+// unsafe impl GlobalAlloc for NoCacheAllocator {
+//     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+//         System.alloc(layout)
+//     }
+//     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+//         System.dealloc(ptr, layout)
+//     }
+// }
+//
+// #[global_allocator]
+// static GLOBAL: NoCacheAllocator = NoCacheAllocator;
+
+static TOTAL_TX_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+
 fn main() {
     make_splash();
 
+    let protocol = LockingStrategy::OLC;
+    let clock = ClockType::OPTIMISTIC;
 
-    // const F: usize = 250;
-    // const R: usize = 499;
-    // let internal_cc
-    //     = mem::size_of::<cc_bplustree::mv_page_model::internal_page::InternalPage<F, R, SnapShot, ()>>();
-    //
-    // let leaf_cc
-    //     = mem::size_of::<cc_bplustree::mv_page_model::leaf_page::LeafPage<R, SnapShot, ()>>();
-    //
-    // let block_cc
-    //     = mem::size_of::<cc_bplustree::mv_block::mv_block::Block<F, R, SnapShot, ()>>();
-    // println!("Fanout = {F}, Records = {R}, Internal = {internal_cc}, Leaf = {leaf_cc}, Block = {block_cc}");
+    println!("---------------------------------------------------------------------------------");
+    println!("[Configuration] - Protocol = {protocol}, Clock = {clock}");
+    println!("---------------------------------------------------------------------------------");
 
-    // println!("{}", mem::align_of::<Block<FAN_OUT, NUM_RECORDS, Key>>());
-    // println!("InternalPage Align = {}, Size = {}",
-    //          mem::align_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key>>(),
-    //          mem::size_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key>>(),
-    // );
-    //
-    // println!("LeafPage Align = {}, Size = {}",
-    //          mem::align_of::<LeafPage<NUM_RECORDS, Key>>(),
-    //          mem::size_of::<LeafPage<NUM_RECORDS, Key>>(),
-    // );
+    let range_start = 0;
+    let range_end = u64::MAX;
+    let lambda = 0.1;
+    let gc_enable = true;
+    let threads = num_cpus::get();
+    let total_tx = 10_000_000;
 
-    // let trees = vec![
-    //     Arc::new(MVTree::orwc_optimistic_clock()),
-    //     Arc::new(MVTree::lhl_optimistic_clock()),
-    //     Arc::new(MVTree::olc_optimistic_clock()),
-    // ];
+    let insert_ratio = 0;
+    let update_ratio = 0;
+    let point_reads_ratio = 50;
+    let range_reads_ratio = 50;
 
-    // println!("Records,Threads,Protocol,Errors,Time,Inserts,Reads");
-    // for mv_tree in trees.into_iter() {
-    //     test01(mv_tree.clone());
-    //     test02(mv_tree.clone());
-    // }
+    let range_size = 100;
 
-    assert!(mem::size_of::<Block<FAN_OUT, NUM_RECORDS, u64, f64>>() <= 4096);
+    let index_handler =  run_experiment_with_params(
+        threads,
+        Either::Right((protocol, clock)),
+        gc_enable,
+        lambda,
+        range_start,
+        range_end,
+        100,
+        0,
+        0,
+        0,
+        0,
+        total_tx,
+    );
 
-    let tree
-        = MVTree::orwc_optimistic_clock();
-    //
-    let insertions = 50_000_u64;
+    // Start Experiment
+    let index_handler = run_experiment_with_params(
+        threads,
+        index_handler,
+        gc_enable,
+        lambda,
+        range_start,
+        range_end,
+        insert_ratio,
+        update_ratio,
+        point_reads_ratio,
+        range_reads_ratio,
+        range_size,
+        total_tx,
+    );
+    // End Experiment
+}
 
-    (0..insertions).for_each(|i| {
-        let cr
-            = tree.dispatch_crud(CRUDOperation::Insert(i, i as _));
-        let s = "asfdad".to_string();
-    });
+fn run_experiment_with_params(threads: usize,
+                              index: IndexHandler,
+                              gc_enable: bool,
+                              lambda: f64,
+                              range_start: u64,
+                              range_end: u64,
+                              insert_ratio: usize,
+                              update_ratio: usize,
+                              point_reads_ratio: usize,
+                              range_reads_ratio: usize,
+                              range_size: u64,
+                              total_tx: usize
+) -> IndexHandler {
+    let (index_handler, handles) = experiment(
+        threads,
+        index,
+        gc_enable,
+        lambda,
+        range_start,
+        range_end,
+        insert_ratio,
+        update_ratio,
+        point_reads_ratio,
+        range_reads_ratio,
+        range_size,
+        &TOTAL_TX_COUNTER,
+    );
 
-    let range
-        = tree.dispatch_crud(CRUDOperation::Range((0..300).into(), Version::MAX));
-
-    if let CRUDOperationResult::MatchedRecords(data) = range {
-        let hase = "hase".to_string();
-        let old = "olaf".to_string();
+    while TOTAL_TX_COUNTER.load(SeqCst) < total_tx {
+        thread::yield_now();
     }
 
-
-    // let mut last_insert_version = Version::MIN;
-    // let mut version_inserts = vec![];
-    //
-    // for key in 0u64..insertions {
-    //     match mv_tree.dispatch_crud(CRUDOperation::Insert(key, mk_payload())) {
-    //         CRUDOperationResult::Inserted(ver) => {
-    //             last_insert_version = ver;
-    //             version_inserts.push(ver);
-    //             // println!("Inserted at version {}", ver);
-    //             match mv_tree.dispatch_crud(CRUDOperation::Point(key, ver)) {
-    //                 CRUDOperationResult::MatchedRecords(found)
-    //                 if found.last().unwrap().key == key => {}
-    //                     // println!("Record(s) found ({}): {}", found.len(), found.into_iter().join(",")),
-    //                 err => println!("Err at insertion {}", err),
-    //             }
-    //         }
-    //         err => println!("Err at insertion {}", err),
-    //     }
-    // }
-    //
-    // match mv_tree.dispatch_crud(CRUDOperation::Range(Interval::new(0, 255), last_insert_version)) {
-    //     CRUDOperationResult::MatchedRecords(v) if v.len() == 256.min(insertions as usize) =>{}
-    //         // println!("Range Query:\n\t{}", v.iter().join("\n\t")),
-    //     x => println!("Error Range: {x}")
-    // }
-    //
-    // let lazy_range = RangeQueryIter::new(
-    //     &mv_tree,
-    //     last_insert_version,
-    //     Interval::new(0, insertions));
-    //
-    // println!("Height = {}", mv_tree.root.unsafe_borrow().height());
-    // println!("Lazy Range = {}, all = {insertions}", lazy_range.count());
-    //
-    // println!("Before Delete Height = {}", mv_tree.root.unsafe_borrow().height);
-    // for key in 0u64..insertions{
-    //     if key == insertions - 1 {
-    //         let s = "asdas".to_string();
-    //     }
-    //     match mv_tree.dispatch_crud(CRUDOperation::Delete(key)) {
-    //         CRUDOperationResult::Deleted(v) => {}
-    //             // println!("Key = {}, v = {} deleted", key, v),
-    //         _ => println!("Error delete key = {}", key)
-    //     }
-    // }
-    // for key in 0u64..insertions {
-    //     // println!("Verified key = {key}");
-    //     let r = mv_tree
-    //         .dispatch_crud(CRUDOperation::Point(key, *version_inserts.get(key as usize).unwrap()));
-    //     if let CRUDOperationResult::MatchedRecords(v) = r {
-    //         if v.last().unwrap().key != key {
-    //             println!("ERR expected = {key}, found = {}", v.last().unwrap().key)
-    //         }
-    //     }
-    // }
-    //
-    // for key in 0u64..insertions as u64 {
-    //     match mv_tree.dispatch_crud(CRUDOperation::Point(key, last_insert_version)) {
-    //         CRUDOperationResult::MatchedRecords(mut v) if v.last().unwrap().key == key => {}
-    //             // println!("Found Point  {}", v.pop().unwrap()),
-    //         err => panic!("Point failed: {}, key = {}", err, key)
-    //     }
-    // }
-
-    // let (keys, versions) = mv_tree.root.unsafe_borrow()
-    //     .root.mv_block.unsafe_borrow().as_internal_page_ref().keys_versions();
-    //
-    // println!("Keys Root\n{}", keys
-    //     .iter()
-    //     .zip(versions)
-    //     .filter(|(.., v)| v.is_active())
-    //     .map(|(k, v)|
-    //         format!("{k}, v: {v}")).into_iter().join("\n"));
-
-    // let mut insertions_vec = (0..insertions)
-    //     .map(|k| CRUDOperation::<Key, Payload>::Insert(k, k as _))
-    //     .collect_vec();
-    //
-    // let mut rnd = StdRng::seed_from_u64(90501960);
-    // let mut insertions_vec: Vec<_> = test::gen_data_exp(
-    //     insertions, 0.01, &mut rnd
-    // )
-    //     .into_iter()
-    //     .map(|key| CRUDOperation::Insert(key, key as _).into())
-    //     .collect::<Vec<_>>();
-    //
-    // // insertions_vec.extend((0..insertions).map(|k| Point(k, k)));
-    // let (time, ..) = test::bulk_crud(
-    //     num_cpus::get(),
-    //     mv_tree.clone(),
-    //     insertions_vec.as_slice());
-    //
-    //
-    // println!("Insertions = {}, Time = {time}ms", format_insertions(insertions_vec.len()));
-    // let insertions = 40_000_u64;
-    let gigs = 100;
-    let ptr = alloc_memory_force(gigs);
-
-    let insertions = 10_000_000_u64;
-    // println!("> Generating {insertions} keys..");
-    // let mut rnd = StdRng::seed_from_u64(90501960);
-    // let mut all_tx: Vec<AtomicTransaction<Key, Payload>> = mv_test::gen_data_exp(insertions, 0.1, &mut rnd)
-    //     .into_iter()
-    //     .map(|key| CRUDOperation::Insert(key, key as _).into())
-    //     .collect::<Vec<_>>();
-
-    let points = insertions;
-    // all_tx.extend((0..points).map(|key|
-    //     AtomicTransaction::new_latest_si(TxAtomicOperation::PointSi(
-    //         test::gen_rand_key(key, Key::MIN, Key::MAX, 0.01, &mut rnd)))));
-
-
-    let file = OpenOptions::new()
-        .read(true)
-        .open("/home/amir/Schreibtisch/100k.json")
-        .unwrap();
-
-    let data_lambdas: Vec<u64>
-        = serde_json::from_reader(file).unwrap();
-
-    let data_lambdas = data_lambdas
+    let bulk_killer = handles
         .into_iter()
-        .map(|v| AtomicTransaction::from_crud(CRUDOperation::Insert(v, 0f64)))
+        .map(|(handle, killer)| {
+            drop(killer);
+            handle
+        }).collect_vec();
+
+    let result = bulk_killer
+        .into_iter()
+        .map(|handle|
+            handle.join().unwrap())
         .collect_vec();
 
-
-
-    // all_tx.shuffle(&mut thread_rng());
-    println!("> Finished generating {insertions} keys!");
-    println!("Inserts,Points,Threads,Protocol,Clock,Time,GC,Alloc,Reuse");
-
-    for threads in [1, 2, 4, 8, 16, 24,  32, 64, 72, 96, 128] {
-        for gc in [false] {
-            for tree in [
-                MVTree::standard(),
-                MVTree::orwc(),
-                MVTree::orwc_optimistic_clock(),
-                // MVTree::lc(),
-                // MVTree::lc_optimistic_clock(),
-                MVTree::olc(),
-                MVTree::olc_optimistic_clock()
-            ] {
-                if tree.locking_strategy().is_mono_writer() && threads > 1 {
-                    continue;
-                }
-
-                let (end, tx_manager) = mv_test::bulk_tx_manager(
-                    threads,
-                    tree,
-                    gc,
-                    data_lambdas.as_slice()
-                );
-
-                fence(SeqCst);
-
-
-                dump_to_json(tx_manager.index());
-                return;
-
-                println!("{insertions},{points},{},{},{},{end},{},{},{}",
-                         tx_manager.threads(),
-                         tx_manager.locking_protocol(),
-                         tx_manager.clock_type(),
-                         tx_manager.is_gc_enabled(),
-                         tx_manager.index().block_manager.alloc_count.load(SeqCst),
-                         tx_manager.index().block_manager.reuse_count.load(SeqCst));
-            }
-        }
+    let mut total_executed_tx = 0;
+    let mut total_time = 0;
+    for (index, (tx_success, tx_error, time)) in result.iter().enumerate() {
+        println!("\t[tid_{index}]: tx_success = {tx_success}, tx_error = {tx_error}, time = {time}");
+        total_executed_tx += tx_success + tx_error;
+        total_time = total_time.max(*time);
     }
+    println!("---------------------------------------------------------------------------------");
+    println!("[Summary] - Tx Executed = {total_executed_tx}, Target Tx = {total_tx}, Total Time = {total_time}");
+    println!("---------------------------------------------------------------------------------");
 
-    allocate_free(ptr, gigs);
+    TOTAL_TX_COUNTER.store(0, SeqCst);
+    index_handler
 }
 
 /// Essential function.

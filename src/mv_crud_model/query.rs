@@ -306,7 +306,7 @@ impl<const FAN_OUT: usize,
                 .collect::<Vec<_>>())
             .filter(|set| !set.is_empty())
             .sorted_by_key(|set|
-                unsafe { set.get_unchecked(set.len() - 1).key })
+                unsafe { set.get_unchecked(0).key })
             .flatten()
             .collect())
     }

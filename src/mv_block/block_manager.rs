@@ -29,8 +29,9 @@ pub const _16KB: usize = 16 * _1KB;
 pub const _32KB: usize = 32 * _1KB;
 
 pub const fn bsz_alignment_min<Key, Payload>() -> usize
-    where Key: Default + Ord + Copy + Hash + Display,
-          Payload: Default + Clone
+where
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Default + Clone,
 {
     mem::align_of::<Arc<()>>() + // ptr size
         mem::align_of::<usize>() + // dispatcher alignment
@@ -69,7 +70,7 @@ pub struct BlockManager<
 > {
     db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub reuse_count: AtomicUsize,
-    pub alloc_count: AtomicUsize
+    pub alloc_count: AtomicUsize,
     // block_id_counter: AtomicBlockID,
 }
 
@@ -199,34 +200,34 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-       match self.db_tracker.as_ref().map(|tracker| tracker.free_block()) {
-           Some(Some(block)) => {
-               self.reuse_count.fetch_add(1, Relaxed);
+        match self.db_tracker.as_ref().map(|tracker| tracker.free_block()) {
+            Some(Some(block)) => {
+                self.reuse_count.fetch_add(1, Relaxed);
 
-               let m_page
-                   = block.unsafe_borrow_mut().node_data.get_mut();
+                let m_page
+                    = block.unsafe_borrow_mut().node_data.get_mut();
 
-               // println!("Reuse");
-               m_page.on_reuse();
+                // println!("Reuse");
+                m_page.on_reuse();
 
-               if leaf {
-                   m_page.mark_leaf()
-               } else {
-                   m_page.mark_internal()
-               }
+                if leaf {
+                    m_page.mark_leaf()
+                } else {
+                    m_page.mark_internal()
+                }
 
-               // fence(Acquire);
-               block
-           }
-           _ => {
-               self.alloc_count.fetch_add(1, Relaxed);
-               // println!("Alloc");
-               Block {
-                   // block_id: self.next_block_id(),
-                   node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-               }.into_cell(latch_type)
-           }
-       }
+                // fence(Acquire);
+                block
+            }
+            _ => {
+                self.alloc_count.fetch_add(1, Relaxed);
+                // println!("Alloc");
+                Block {
+                    // block_id: self.next_block_id(),
+                    node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
+                }.into_cell(latch_type)
+            }
+        }
     }
 
 

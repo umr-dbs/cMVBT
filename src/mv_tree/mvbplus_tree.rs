@@ -151,7 +151,7 @@ impl<const FAN_OUT: usize,
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload>
 {
     #[inline]
-    fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
+    pub fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
         fn inc_key(k: u64) -> u64 {
             k.checked_add(1).unwrap_or(u64::MAX)
         }
