@@ -1,10 +1,90 @@
 use std::collections::VecDeque;
+use std::ffi::c_void;
 use std::fs::OpenOptions;
-use std::mem;
+use std::{mem, ptr};
+use std::ptr::null_mut;
+use std::sync::Arc;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
 use std::thread::spawn;
 use std::time::SystemTime;
+
+const FAN_OUT: usize = mv_test::FAN_OUT;
+const NUM_RECORDS: usize = mv_test::NUM_RECORDS;
+pub const VALIDATE_OPERATION_RESULT: bool = false;
+pub const EXE_LOOK_UPS: bool = false;
+pub const EXE_RANGE_LOOK_UPS: bool = false;
+pub const BSZ_BASE: usize = _4KB;
+pub const BSZ: usize = BSZ_BASE - 0; // bsz_alignment::<Key, Payload>();
+// pub const FAN_OUT: usize = BSZ / 8 / 2;
+// pub const NUM_RECORDS: usize = (BSZ - 2) / (8 + 8);
+
+
+pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>;
+pub type Tree = Arc<INDEX>;
+
+pub type INDEX = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
+
+pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
+= |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
+
+pub type Tree = Arc<INDEX>;
+
+pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
+    Arc::new(MAKE_INDEX(crud))
+};
+
+fn mk_payload() -> Box<()> {
+    unsafe {
+        mem::transmute(Box::into_raw(Box::new(())))
+    }
+}
+
+pub fn alloc_memory_force(gigs: usize) -> *mut c_void {
+    let size = gigs * 1024 * 1024 * 1024;
+
+    let ptr = unsafe {
+        libc::mmap(
+            ptr::null_mut(),
+            size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0)
+    };
+
+    if ptr == MAP_FAILED {
+        println!("***********Failed to allocate memory");
+        return null_mut();
+    }
+
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    for offset in (0..size).step_by(page_size) {
+        unsafe {
+            ptr::write_bytes(ptr.add(offset) as *mut u8, 0, mem::size_of::<u8>() * page_size);
+        }
+    }
+
+    // for offset in (0..size).step_by(mem::size_of::<u8>()) {
+    //     unsafe {
+    //         let p = (ptr as *mut u8).offset(offset as isize);
+    //         *p = 0;
+    //     }
+    // }
+
+    println!("> Memory allocated successfully");
+    ptr
+}
+
+pub fn allocate_free(ptr: *mut c_void, gigs: size_t) {
+    let size = gigs * 1024 * 1024 * 1024;
+    let ret = unsafe { libc::munmap(ptr, size) };
+
+    if ret != 0 {
+        println!("> Failed to free memory");
+    }
+}
+
 
 #[inline(always)]
 pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key, Payload>]) -> (u128, u64) {

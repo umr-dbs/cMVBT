@@ -1,0 +1,16 @@
+[{
+  "protocol": "OLC",
+  "clock": "OPTIMISTIC",
+  "range_start": 0,
+  "range_end": 18446744073709551615,
+  "lambda": 0.1,
+  "gc_enable": false,
+  "threads": 24,
+  "total_tx": 10000000,
+  "insert_ratio": 100,
+  "update_ratio": 0,
+  "delete_ratio": 0,
+  "point_reads_ratio": 0,
+  "range_reads_ratio": 0,
+  "range_size": 0
+}]

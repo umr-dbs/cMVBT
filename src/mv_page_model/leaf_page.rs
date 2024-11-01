@@ -268,23 +268,23 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline]
-    pub(crate) fn delete(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
+    pub(crate) fn delete(&mut self, key: Key, del: Version) -> Result<Option<VersionInfo>, ()>  {
         match self.as_records_mut()
             .iter_mut()
             .rev()
             .find(|record| record.key == key)
         {
-            Some(record) => unsafe {
+            Some(record) => {
                 let ver_info = record
                     .version_mut();
 
                 if ver_info.delete(del) {
-                    Some(ver_info.clone())
+                    Ok(Some(ver_info.clone()))
                 } else {
-                    None
+                    Err(())
                 }
             }
-            _ => None
+            _ => Ok(None)
         }
     }
 }

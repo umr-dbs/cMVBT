@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::mem;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
+use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_crud_model::query::RangeQueryIter;
 use crate::mv_record_model::record_point::RecordPoint;
@@ -129,13 +130,17 @@ impl<'a,
                 };
 
                 match leaf_page.delete(key, version) {
-                    None => {
-                        leaf_page.undo_uncommitted(current_len);
-                        CRUDOperationResult::Error
-                    }
-                    Some(..) => {
+                    Ok(Some(..)) => {
                         leaf_page.commit_until(current_len);
                         CRUDOperationResult::Updated(committed_version)
+                    }
+                    Ok(None) => {
+                        leaf_page.undo_uncommitted(current_len);
+                        CRUDOperationResult::ZeroAffected(KeyDoesNotExist)
+                    }
+                    Err(()) => {
+                        leaf_page.undo_uncommitted(current_len);
+                        CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                     }
                 }
             }
@@ -172,8 +177,9 @@ impl<'a,
                 };
 
                 match leaf_page.delete(key, committed_version) {
-                    None => CRUDOperationResult::Error,
-                    Some(..) => CRUDOperationResult::Deleted(committed_version)
+                    Ok(Some(..)) => CRUDOperationResult::Deleted(committed_version),
+                    Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
+                    Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
             }
             CRUDOperation::Range(range, version) => Self::key_range_read_from_root(

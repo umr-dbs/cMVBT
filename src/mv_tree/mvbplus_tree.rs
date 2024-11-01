@@ -5,6 +5,7 @@ use std::sync::Arc;
 use itertools::Itertools;
 use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use crate::mv_block::block::{Block, BlockGuard, BlockSplit};
 use crate::mv_block::block_manager::BlockManager;
 use crate::mv_tree::root::Root;
@@ -25,6 +26,7 @@ pub type LockLevel = ObjectCount;
 pub const INIT_TREE_HEIGHT: Height = 1;
 pub const MAX_TREE_HEIGHT: Height = Height::MAX;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub enum ClockType {
     FREE,
     OPTIMISTIC,

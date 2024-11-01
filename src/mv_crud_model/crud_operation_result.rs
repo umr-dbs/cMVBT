@@ -27,8 +27,15 @@ pub enum CRUDOperationResult<
     Updated(Version),
     Deleted(Version),
 
+    ZeroAffected(CRUDOperationInnerReason),
+
     #[default]
     Error, // flatten no good
+}
+
+pub enum CRUDOperationInnerReason {
+    KeyAlreadyDeleted,
+    KeyDoesNotExist,
 }
 
 impl<'a,
@@ -79,7 +86,11 @@ impl<'a,
                 write!(f, "RangeQueryIterator(low: {}, high: {}, version: {})",
                        iter.range.lower(),
                        iter.range.upper(),
-                       iter.isolated_snapshot.snapshot())
+                       iter.isolated_snapshot.snapshot()),
+            CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyAlreadyDeleted) =>
+                write!(f, "ZeroAffected(KeyAlreadyDeleted"),
+            CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyDoesNotExist) =>
+                write!(f, "ZeroAffected(KeyDoesNotExist)"),
         }
     }
 }

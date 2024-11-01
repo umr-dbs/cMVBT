@@ -222,11 +222,9 @@ impl<const FAN_OUT: usize,
 
     pub fn disable_gc(&mut self) {
         self.db_tracker.take();
-        unsafe {
-            self.index_mut()
-                .block_manager
-                .set_active_tx_for_gc(None);
-        }
+        self.index_mut()
+            .block_manager
+            .set_active_tx_for_gc(None);
     }
 
     pub fn threads(&self) -> usize {
@@ -336,7 +334,7 @@ impl<const FAN_OUT: usize,
             match (tracker, tx.snapshot()) {
                 (Some(tracker), Some(snapshot)) =>
                     return tracker.on_tx_start(snapshot),
-                _ => { }
+                _ => {}
             }
         }
 
@@ -350,7 +348,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub fn execute_tx<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx)
-    -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
+                                                                                       -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let tx = tx.into();
         let bk = self.enq_bookkeeping(&tx);

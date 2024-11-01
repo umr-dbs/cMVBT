@@ -5,7 +5,7 @@ use std::sync::Arc;
 use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
-use CCBPlusTree::locking::locking_strategy::LockingStrategy::OLC;
+use CCBPlusTree::locking::locking_strategy::LockingStrategy::{OLC, ORWC};
 use CCBPlusTree::locking::locking_strategy::LockingStrategy;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
 use crate::mv_page_model::BlockRef;
@@ -20,7 +20,7 @@ const AUX_DP_FAN_OUT: usize = 250;
 const AUX_ATX_LEAF_SIZE: usize = 499;
 const AUX_DP_LEAF_SIZE: usize = 250;
 
-const AUX_PROTOCOL: LockingStrategy = OLC; // LHL works too, but readers are disjoint with writers!
+const AUX_PROTOCOL: LockingStrategy = ORWC { write_level: 0f32, write_attempt: 5 }; // LHL works too, but readers are disjoint with writers!
 
 type TxLiveKey = SnapShot;
 type TxLiveValue = NullValue;

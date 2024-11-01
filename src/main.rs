@@ -1,35 +1,15 @@
-use std::{env, fs, mem, thread};
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::{env, fs, thread};
 use std::fs::OpenOptions;
-use std::io::Read;
-use std::sync::Arc;
 use std::sync::atomic::{fence, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
-use std::time::{Duration, SystemTime};
-use CCBPlusTree::test;
-// use cc_bplustree::mv_tree::bplus_tree::BPlusTree;
 use chrono::{DateTime, Local};
 use itertools::{Either, Itertools};
-use rand::prelude::{SliceRandom, StdRng};
-use rand::{SeedableRng, thread_rng};
-// use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use crate::mv_block::block::Block;
-use crate::mv_tree::mvbplus_tree;
-use crate::mv_crud_model::crud_api::CRUDDispatcher;
-use crate::mv_crud_model::crud_operation::{CRUDOperation, TxAtomicOperation};
-use crate::mv_crud_model::crud_operation::CRUDOperation::Point;
-use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_crud_model::query::RangeQueryIter;
-use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
-use crate::mv_page_model::leaf_page::LeafPage;
-use crate::mv_page_model::node::Node;
-use crate::mv_record_model::version_info::Version;
-use crate::mv_test::{alloc_memory_force, allocate_free, format_insertions, INDEX, Key, MAKE_INDEX, Payload, experiment, gen_data_exp, IndexHandler};
-use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tree::locking_strategy::{CRUDProtocol, LHL_read, LockingStrategy, OLC, orwc};
-use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
-use crate::mv_tx_model::tx_manager::TransactionManager;
-use crate::mv_utils::interval::Interval;
+use serde::{Deserialize, Serialize};
+use serde::de::Unexpected::Seq;
+use serde_json::error;
+use crate::mv_test::{experiment, format_insertions, IndexHandler};
+use crate::mv_tree::mvbplus_tree::ClockType;
+use crate::mv_tree::locking_strategy::{orwc, CRUDProtocol, LockingStrategy};
 use crate::mv_utils::smart_cell::ENABLE_YIELD;
 
 mod mv_block;
@@ -40,21 +20,6 @@ mod mv_tree;
 mod mv_utils;
 mod mv_test;
 mod mv_tx_model;
-
-pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
-    Arc::new(MAKE_INDEX(crud))
-};
-
-fn mk_payload() -> Box<()> {
-    unsafe {
-        mem::transmute(Box::into_raw(Box::new(())))
-    }
-}
-
-const FAN_OUT: usize = mv_test::FAN_OUT;
-const NUM_RECORDS: usize = mv_test::NUM_RECORDS;
-
-pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>;
 
 // struct NoCacheAllocator;
 // unsafe impl GlobalAlloc for NoCacheAllocator {
@@ -71,62 +36,172 @@ pub type MVTree = MVBPlusTree::<FAN_OUT, NUM_RECORDS, u64, f64>;
 
 static TOTAL_TX_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+const CONFIG_PARAMETERS: &'static str = "config.json";
+
+#[derive(Clone, Serialize, Deserialize)]
+struct GroupConfig {
+    group: usize,
+    group_order: usize,
+    protocol: CRUDProtocol,
+    clock: ClockType,
+    range_start: u64,
+    range_end: u64,
+    lambda: f64,
+    gc_enable: bool,
+    threads: usize,
+    total_tx: usize,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+}
+
+impl GroupConfig {
+    fn is_valid(&self) -> bool {
+        100 == self.insert_ratio +
+            self.update_ratio +
+            self.delete_ratio +
+            self.point_reads_ratio +
+            self.range_reads_ratio &&
+            self.threads > 1 && self.protocol.is_mono_writer() && self.is_read_only() ||
+            self.threads == 1 && self.protocol.is_mono_writer() ||
+            !self.protocol.is_mono_writer()
+    }
+
+    fn index_handler(&self) -> IndexHandler {
+        Either::Right((self.protocol.clone(), self.clock.clone()))
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.insert_ratio == 0 && self.update_ratio == 0 && self.delete_ratio == 0
+    }
+
+    fn is_write_only(&self) -> bool {
+        self.point_reads_ratio == 0 && self.range_reads_ratio == 0
+    }
+
+    fn is_mix_read_write(&self) -> bool {
+        !self.is_read_only() && !self.is_write_only()
+    }
+}
+
+impl Default for GroupConfig {
+    fn default() -> Self {
+        Self {
+            group: 0,
+            group_order: 0,
+            protocol: Default::default(),
+            clock: ClockType::FREE,
+            range_start: 0,
+            range_end: u64::MAX,
+            lambda: 0.1,
+            gc_enable: false,
+            threads: 1,
+            total_tx: 10_000_000,
+            insert_ratio: 100,
+            update_ratio: 0,
+            delete_ratio: 0,
+            point_reads_ratio: 0,
+            range_reads_ratio: 0,
+            range_size: 0,
+        }
+    }
+}
 
 fn main() {
     make_splash();
 
-    let protocol = LockingStrategy::OLC;
-    let clock = ClockType::OPTIMISTIC;
+    // println!("{}", serde_json::to_string(&orwc()).unwrap());
+    let configs: Vec<GroupConfig> = match OpenOptions::new().read(true).open(CONFIG_PARAMETERS) {
+        Ok(file) => serde_json::from_reader(file).unwrap_or_else(|error| {
+            println!("JSON Error: {}", error);
+            println!("Using default ConfigParameters");
+            vec![GroupConfig::default()]
+        }),
+        Err(error) => {
+            println!("File Error: {}", error);
+            println!("Using default ConfigParameters");
+            vec![GroupConfig::default()]
+        }
+    };
 
-    println!("---------------------------------------------------------------------------------");
-    println!("[Configuration] - Protocol = {protocol}, Clock = {clock}");
-    println!("---------------------------------------------------------------------------------");
+    println!("[Info] - Total Loaded #{} Experiments", configs.len());
 
-    let range_start = 0;
-    let range_end = u64::MAX;
-    let lambda = 0.1;
-    let gc_enable = true;
-    let threads = num_cpus::get();
-    let total_tx = 10_000_000;
+    let mut groups = configs
+        .into_iter()
+        .into_group_map_by(|c| c.group)
+        .into_iter()
+        .sorted_by_key(|(group, _)| *group)
+        .map(|(_, groups)| groups)
+        .collect_vec();
 
-    let insert_ratio = 0;
-    let update_ratio = 0;
-    let point_reads_ratio = 50;
-    let range_reads_ratio = 50;
+    groups
+        .iter_mut()
+        .for_each(|group|
+            group.sort_by_key(|c| c.group_order));
 
-    let range_size = 100;
+    println!("[Info] - Number of Experiment-Groups #{}", groups.len());
 
-    let index_handler =  run_experiment_with_params(
-        threads,
-        Either::Right((protocol, clock)),
-        gc_enable,
-        lambda,
-        range_start,
-        range_end,
-        100,
-        0,
-        0,
-        0,
-        0,
-        total_tx,
-    );
+    for (group_id, group) in groups.into_iter().enumerate() { // E x p e r i m e n t
+        let mut index_handler
+            = group[0].index_handler();
 
-    // Start Experiment
-    let index_handler = run_experiment_with_params(
-        threads,
-        index_handler,
-        gc_enable,
-        lambda,
-        range_start,
-        range_end,
-        insert_ratio,
-        update_ratio,
-        point_reads_ratio,
-        range_reads_ratio,
-        range_size,
-        total_tx,
-    );
-    // End Experiment
+        for (config_id, config) in group.into_iter().enumerate() {
+            println!("------------------------------------- # {group_id}.{config_id} # -------------------------------------");
+            println!("[Configuration] - Protocol \t\t= {}", config.protocol);
+            println!("[Configuration] - Clock \t\t= {}", config.clock);
+            println!("[Configuration] - Lambda \t\t= {}", config.lambda);
+            println!("[Configuration] - GC \t\t\t= {}", config.gc_enable);
+            println!("[Configuration] - Threads \t\t= {}", config.threads);
+            println!("[Configuration] - Total \t\t= {}", format_insertions(config.total_tx));
+            println!("[Configuration] - InsertRatio \t\t= {}%", config.insert_ratio);
+            println!("[Configuration] - UpdateRatio \t\t= {}%", config.update_ratio);
+            println!("[Configuration] - DeleteRatio \t\t= {}%", config.delete_ratio);
+            println!("[Configuration] - PointReadsRatio \t= {}%", config.point_reads_ratio);
+            println!("[Configuration] - RangeReadsRatio \t= {}%", config.range_reads_ratio);
+            println!("[Configuration] - RangeSize \t\t= {}", config.range_size);
+            if !config.is_valid() {
+                println!("***[Configuration] - Invalid Configuration!");
+                continue;
+            }
+
+            if let Either::Left(m_manager) = &mut index_handler {
+                if config.gc_enable && !m_manager.is_gc_enabled() {
+                    println!("[Note]\t\t- Enabling Garbage Collector...");
+                    m_manager.get_mut().enable_gc();
+                    fence(SeqCst);
+                    assert!(m_manager.is_gc_enabled())
+                }
+                else if !config.gc_enable && m_manager.is_gc_enabled() {
+                    println!("[Note]\t\t- Disabling Garbage Collector...");
+                    m_manager.get_mut().disable_gc();
+                    fence(SeqCst);
+                    assert!(!m_manager.is_gc_enabled())
+                }
+            }
+            
+            println!("----------------------------------------------------------------------------------------");
+            println!("----------------------------------------------------------------------------------------");
+            
+            index_handler = run_experiment_with_params(
+                config.threads,
+                index_handler,
+                config.gc_enable,
+                config.lambda,
+                config.range_start,
+                config.range_end,
+                config.insert_ratio,
+                config.update_ratio,
+                config.delete_ratio,
+                config.point_reads_ratio,
+                config.range_reads_ratio,
+                config.range_size,
+                config.total_tx,
+            );
+        }
+    }
 }
 
 fn run_experiment_with_params(threads: usize,
@@ -137,10 +212,11 @@ fn run_experiment_with_params(threads: usize,
                               range_end: u64,
                               insert_ratio: usize,
                               update_ratio: usize,
+                              delete_ratio: usize,
                               point_reads_ratio: usize,
                               range_reads_ratio: usize,
                               range_size: u64,
-                              total_tx: usize
+                              total_tx: usize,
 ) -> IndexHandler {
     let (index_handler, handles) = experiment(
         threads,
@@ -151,6 +227,7 @@ fn run_experiment_with_params(threads: usize,
         range_end,
         insert_ratio,
         update_ratio,
+        delete_ratio,
         point_reads_ratio,
         range_reads_ratio,
         range_size,
@@ -223,8 +300,6 @@ fn make_splash() {
     println!();
     println!("--> System Log:");
 }
-
-pub type Tree = Arc<INDEX>;
 
 pub fn hle() -> &'static str {
     if cfg!(feature = "hardware-lock-elision") {

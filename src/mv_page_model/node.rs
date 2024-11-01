@@ -198,18 +198,18 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
-    pub fn delete_key(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
-        match self.m_type()  {
-            PAGE_TYPE_LEAF => unsafe {
-                let derefmut
-                    = &mut self.page.leaf;
-
-                derefmut.delete(key, del)
-            },
-            _ => None
-        }
-    }
+    // #[inline]
+    // pub fn delete_key(&mut self, key: Key, del: Version) -> Option<VersionInfo> {
+    //     match self.m_type()  {
+    //         PAGE_TYPE_LEAF => unsafe {
+    //             let derefmut
+    //                 = &mut self.page.leaf;
+    // 
+    //             derefmut.delete(key, del)
+    //         },
+    //         _ => None
+    //     }
+    // }
 
     #[inline(always)]
     pub fn as_leaf_page(&mut self) -> &mut LeafPage<NUM_RECORDS, Key, Payload> {
