@@ -222,11 +222,11 @@ fn execute_experiments(groups: Vec<GroupConfig>) {
             let subgroup = init_group.sub_group_execute_order;
             let target_tx = init_group.total_tx;
             print!("{curr_group_id},{subgroup},{target_tx}");
-            
+
             // println!("[Starting Experiment] - [Group: {curr_group_id}]");
             // println!("\t[Initialize Experiment] - [Sub-Group: {}]",
             //          group.front().unwrap().sub_group_execute_order);
-            
+
             let mut index_handler
                 = start_experiment_by_config(group.pop_front().unwrap());
 
@@ -236,7 +236,15 @@ fn execute_experiments(groups: Vec<GroupConfig>) {
                 let subgroup = inner_group.sub_group_execute_order;
                 let target_tx = inner_group.total_tx;
                 print!("{curr_group_id},{subgroup},{target_tx}");
-                
+
+                if let Either::Left(m_manager) = &mut index_handler {
+                    if inner_group.gc_enable && !m_manager.is_gc_enabled() {
+                        m_manager.enable_gc();
+                    } else if !inner_group.gc_enable && m_manager.is_gc_enabled() {
+                        m_manager.disable_gc();
+                    }
+                }
+
                 index_handler = chain_experiment_by_config(
                     inner_group,
                     index_handler.clone());
