@@ -88,7 +88,7 @@ impl<'a,
             self.path.push((
                 Interval::new(self.mv_tree().min_key,
                               self.mv_tree().max_key),
-                smart_root.unsafe_borrow().block())
+                smart_root.borrow_read().deref().unwrap().block())
             );
         }
 
@@ -107,7 +107,7 @@ impl<'a,
             }
 
             self.path.push((fence.clone(), block.clone()));
-            match block.unsafe_borrow().as_ref().as_page_ref() {
+            match block.borrow_read().deref().unwrap().as_ref().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
@@ -162,8 +162,11 @@ impl<const FAN_OUT: usize,
             = self.root.clone();
 
         loop {
+            let root_h
+                = root_anker.borrow_read();
+            
             let root_item
-                = root_anker.unsafe_borrow();
+                = root_h.deref().unwrap();
 
             if root_item.version().le_other_any(lookup_version) {
                 break root_anker;
@@ -176,10 +179,6 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    // pub(crate) fn retrieve_root_latest(&self) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key> {
-    //     self.retrieve_root_for(Version::MAX)
-    // }
-
     fn traverse_read_key(
         mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
@@ -187,7 +186,9 @@ impl<const FAN_OUT: usize,
         -> Result<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         while let PageType::IndexRef(internal_page) = curr
-            .unsafe_borrow()
+            .borrow_read()
+            .deref()
+            .unwrap()
             .as_page_ref()
         {
             let (keys_page, versions_page) = internal_page
@@ -208,50 +209,50 @@ impl<const FAN_OUT: usize,
         Ok(curr)
     }
 
-    #[inline]
-    fn traverse_read_key_range(
-        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        lookup_range: &Interval<Key>,
-        lookup_version: Version)
-        -> Vec<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>>
-    {
-        let mut blocks
-            = VecDeque::new();
-
-        blocks.push_back(curr);
-
-        let mut leafs
-            = vec![];
-
-        while !blocks.is_empty() {
-            curr = blocks.pop_front().unwrap();
-
-            match curr.unsafe_borrow().as_page_ref() {
-                PageType::IndexRef(internal_page) => {
-                    let (keys_page, versions_page) = internal_page
-                        .keys_versions();
-
-                    blocks.extend(versions_page
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .zip(keys_page
-                            .iter()
-                            .rev())
-                        .filter(|((.., v), ..)| v.matched(lookup_version))
-                        .filter(|(.., range)| lookup_range.overlap(range))
-                        .unique_by(|(.., range)| range.lower())
-                        .map(|((pos, ..), ..)| internal_page
-                            .get_pointer(pos)
-                            .clone())
-                    );
-                }
-                _ => leafs.push(curr)
-            }
-        }
-
-        leafs
-    }
+    // #[inline]
+    // fn traverse_read_key_range(
+    //     mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    //     lookup_range: &Interval<Key>,
+    //     lookup_version: Version)
+    //     -> Vec<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>>
+    // {
+    //     let mut blocks
+    //         = VecDeque::new();
+    // 
+    //     blocks.push_back(curr);
+    // 
+    //     let mut leafs
+    //         = vec![];
+    // 
+    //     while !blocks.is_empty() {
+    //         curr = blocks.pop_front().unwrap();
+    // 
+    //         match curr.borrow_read().deref().unwrap().as_page_ref() {
+    //             PageType::IndexRef(internal_page) => {
+    //                 let (keys_page, versions_page) = internal_page
+    //                     .keys_versions();
+    // 
+    //                 blocks.extend(versions_page
+    //                     .iter()
+    //                     .enumerate()
+    //                     .rev()
+    //                     .zip(keys_page
+    //                         .iter()
+    //                         .rev())
+    //                     .filter(|((.., v), ..)| v.matched(lookup_version))
+    //                     .filter(|(.., range)| lookup_range.overlap(range))
+    //                     .unique_by(|(.., range)| range.lower())
+    //                     .map(|((pos, ..), ..)| internal_page
+    //                         .get_pointer(pos)
+    //                         .clone())
+    //                 );
+    //             }
+    //             _ => leafs.push(curr)
+    //         }
+    //     }
+    // 
+    //     leafs
+    // }
 
     #[inline]
     pub(crate) fn key_point_read_from_root(
@@ -261,12 +262,14 @@ impl<const FAN_OUT: usize,
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match Self::traverse_read_key(
-            root.unsafe_borrow().block(),
+            root.borrow_read().deref().unwrap().block(),
             key,
             lookup_version)
         {
             Ok(leaf) => match leaf
-                .unsafe_borrow()
+                .borrow_read()
+                .deref()
+                .unwrap()
                 .as_records()
                 .iter()
                 .rev()
@@ -280,36 +283,38 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
-    pub(crate) fn key_range_read_from_root(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        lookup_range: Interval<Key>,
-        lookup_version: Version)
-        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
-    {
-        let blocks = Self::traverse_read_key_range(
-            root.unsafe_borrow().block(),
-            &lookup_range,
-            lookup_version);
-
-        CRUDOperationResult::MatchedRecords(blocks
-            .into_iter()
-            .map(|leaf| leaf
-                .unsafe_borrow()
-                .as_records()
-                .iter()
-                .rev()
-                .filter(|r| lookup_range.contains(r.key()))
-                .filter(|r| r.version().matches(lookup_version))
-                .sorted_by_key(|r| r.key())
-                .map(|r| RecordPointResult::from(r))
-                .collect::<Vec<_>>())
-            .filter(|set| !set.is_empty())
-            .sorted_by_key(|set|
-                unsafe { set.get_unchecked(0).key })
-            .flatten()
-            .collect())
-    }
+    // #[inline]
+    // pub(crate) fn key_range_read_from_root(
+    //     root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    //     lookup_range: Interval<Key>,
+    //     lookup_version: Version)
+    //     -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+    // {
+    //     let blocks = Self::traverse_read_key_range(
+    //         root.borrow_read().deref().unwrap().block(),
+    //         &lookup_range,
+    //         lookup_version);
+    // 
+    //     CRUDOperationResult::MatchedRecords(blocks
+    //         .into_iter()
+    //         .map(|leaf| leaf
+    //             .borrow_read()
+    //             .deref()
+    //             .unwrap()
+    //             .as_records()
+    //             .iter()
+    //             .rev()
+    //             .filter(|r| lookup_range.contains(r.key()))
+    //             .filter(|r| r.version().matches(lookup_version))
+    //             .sorted_by_key(|r| r.key())
+    //             .map(|r| RecordPointResult::from(r))
+    //             .collect::<Vec<_>>())
+    //         .filter(|set| !set.is_empty())
+    //         .sorted_by_key(|set|
+    //             unsafe { set.get_unchecked(0).key })
+    //         .flatten()
+    //         .collect())
+    // }
 
     #[inline]
     pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
@@ -348,9 +353,9 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn split_root<'a>(
         &self,
-        mut master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
-        mut root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
-        mut height: Height,
+        master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        height: Height,
     ) -> (
         //RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -590,7 +595,7 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
                                 -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
     {
-        let (mut curr_block,
+        let (mut _curr_block,
             mut curr_guard,
             height,
             attempts) = self.retrieve_root_write(attempts);
@@ -649,7 +654,7 @@ impl<const FAN_OUT: usize,
                         BlockUnsafeDegree::Ok if curr_guard.deref().unwrap().len() == curr_len => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
-                            curr_block = next_curr_block;
+                            _curr_block = next_curr_block;
                         }
                         _ => return Err((curr_level, attempts + 1))
                     }

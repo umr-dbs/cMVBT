@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
+use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
@@ -182,10 +183,16 @@ impl<'a,
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
             }
-            CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
-                self.retrieve_root_for(version),
-                range,
-                version),
+            CRUDOperation::Range(range, version) => 
+                CRUDOperationResult::MatchedRecords(RangeQueryIter::new(
+                    self,
+                    version,
+                    range).collect_vec())
+                // Self::key_range_read_from_root(
+                //     self.retrieve_root_for(version),
+                //     range,
+                //     version)
+            ,
             CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
                 self.retrieve_root_for(version),
                 key,

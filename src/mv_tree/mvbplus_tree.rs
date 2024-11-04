@@ -3,7 +3,6 @@ use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
 use itertools::Itertools;
-use parking_lot::lock_api::RwLock;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use crate::mv_block::block::{Block, BlockGuard, BlockSplit};
@@ -14,7 +13,7 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tree::global_clock::GlobalClock;
-use crate::mv_tree::locking_strategy::{hybrid_lock, LHL_read, LockingStrategy, OLC, orwc};
+use crate::mv_tree::locking_strategy::{LockingStrategy, OLC, orwc};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
 use crate::mv_utils::safe_cell::SafeCell;
@@ -173,18 +172,6 @@ impl<const FAN_OUT: usize,
         Self::make_standard(orwc(), ClockType::SYNCED)
     }
 
-    pub fn lhl() -> Self {
-        Self::make_standard(LHL_read(4), ClockType::SYNCED)
-    }
-
-    pub fn lhl_optimistic_clock() -> Self {
-        Self::make_standard(LHL_read(4), ClockType::OPTIMISTIC)
-    }
-
-    pub fn hl() -> Self {
-        Self::make_standard(hybrid_lock(), ClockType::SYNCED)
-    }
-
     pub fn orwc_optimistic_clock() -> Self {
         Self::make_standard(orwc(), ClockType::OPTIMISTIC)
     }
@@ -195,14 +182,6 @@ impl<const FAN_OUT: usize,
 
     pub fn olc() -> Self {
         Self::make_standard(OLC(), ClockType::SYNCED)
-    }
-
-    pub fn lc() -> Self {
-        Self::make_standard(LockingStrategy::LockCoupling, ClockType::SYNCED)
-    }
-
-    pub fn lc_optimistic_clock() -> Self {
-        Self::make_standard(LockingStrategy::LockCoupling, ClockType::OPTIMISTIC)
     }
 }
 
@@ -662,18 +641,10 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {
         SmartCell(Arc::new(match latch_type {
-            LatchType::Exclusive => SmartFlavor::ExclusiveCell(
-                Mutex::new(()),
-                SafeCell::new(root_item), ),
             LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
                 Mutex::new(()),
                 SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
-                OptCell::new(root_item)),
-            LatchType::Hybrid => SmartFlavor::HybridCell(
-                OptCell::new(root_item),
-                RwLock::new(())),
-            LatchType::LightWeightHybrid => SmartFlavor::LightWeightHybridCell(
                 OptCell::new(root_item)),
             LatchType::None => SmartFlavor::FreeCell(
                 SafeCell::new(root_item))
@@ -697,18 +668,10 @@ impl<const FAN_OUT: usize,
         };
 
         SmartCell(Arc::new(match locking_strategy.latch_type() {
-            LatchType::Exclusive => SmartFlavor::ExclusiveCell(
-                Mutex::new(()),
-                SafeCell::new(root_item), ),
             LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
                 Mutex::new(()),
                 SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
-                OptCell::new(root_item)),
-            LatchType::Hybrid => SmartFlavor::HybridCell(
-                OptCell::new(root_item),
-                RwLock::new(())),
-            LatchType::LightWeightHybrid => SmartFlavor::LightWeightHybridCell(
                 OptCell::new(root_item)),
             LatchType::None => SmartFlavor::FreeCell(
                 SafeCell::new(root_item))
@@ -776,19 +739,9 @@ impl<const FAN_OUT: usize,
             } if *write_level <= 1f32 &&
                 (height <= INIT_TREE_HEIGHT || INIT_TREE_HEIGHT as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
                 true,
-            LockingStrategy::LightweightHybridLock {
-                write_level,
-                write_attempt,
-                ..
-            } if *write_level <= 1f32 &&
-                (height <= INIT_TREE_HEIGHT || INIT_TREE_HEIGHT as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
-                true,
             LockingStrategy::MonoWriter => false,
-            LockingStrategy::LockCoupling => true,
             LockingStrategy::OLC => false,
             LockingStrategy::ORWC { .. } => false,
-            LockingStrategy::LightweightHybridLock { .. } => false,
-            LockingStrategy::HybridLocking { .. } => false
         }
     }
 
@@ -809,26 +762,10 @@ impl<const FAN_OUT: usize,
             } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
                 (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
                 curr.borrow_mut(),
-            LockingStrategy::LightweightHybridLock {
-                write_level,
-                write_attempt,
-                ..
-            } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
-                (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
-                curr.borrow_pin(),
-            LockingStrategy::HybridLocking {
-                read_attempt
-            } if curr.unsafe_borrow().as_ref().is_leaf() ||
-                attempts > *read_attempt || height <= curr_level || curr_level >= max_level =>
-                curr.borrow_mut(),
-            LockingStrategy::LockCoupling =>
-                curr.borrow_mut(),
             LockingStrategy::MonoWriter =>
                 curr.borrow_free(),
             LockingStrategy::OLC |
-            LockingStrategy::ORWC { .. } |
-            LockingStrategy::LightweightHybridLock { .. } |
-            LockingStrategy::HybridLocking { .. } => curr.borrow_read(),
+            LockingStrategy::ORWC { .. } => curr.borrow_read(),
         }
     }
     #[inline(always)]

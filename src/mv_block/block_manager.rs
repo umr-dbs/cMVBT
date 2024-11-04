@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, fence};
-use std::sync::atomic::Ordering::{Acquire, Relaxed};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use parking_lot::Mutex;
 use crate::mv_block::block::Block;
 use crate::mv_page_model::node::Node;
@@ -68,7 +68,7 @@ pub struct BlockManager<
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default + 'static
 > {
-    db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pub reuse_count: AtomicUsize,
     pub alloc_count: AtomicUsize,
     // block_id_counter: AtomicBlockID,
@@ -82,7 +82,7 @@ impl<const FAN_OUT: usize,
     fn clone(&self) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: None,
+            db_tracker: SafeCell::new(None),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
@@ -158,7 +158,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn new() -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: None,
+            db_tracker: SafeCell::new(None),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
@@ -168,23 +168,31 @@ impl<const FAN_OUT: usize,
     pub(crate) fn new_with_gc(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: Some(db_tracker),
+            db_tracker: SafeCell::new(Some(db_tracker)),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
     }
 
-    pub(crate) fn set_active_tx_for_gc(&mut self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
-        if db_tracker.is_some() {
-            self.db_tracker = db_tracker;
-        } else {
-            self.db_tracker.take();
-        }
+    pub(crate) fn pass_aux_tx_tracker(&self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
+        // if db_tracker.is_some() {
+        debug_assert!(db_tracker.is_some());
+        
+        *self.db_tracker.get_mut() = db_tracker;
+            // self.db_tracker = SafeCell::new(db_tracker);
+        // } else {
+        //     self.db_tracker.take();
+        // }
+    }
+    
+    pub(crate) fn del_aux(&self) {
+        self.db_tracker.get_mut().take();
     }
 
     #[inline(always)]
     pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
         self.db_tracker
+            .as_ref()
             .as_ref()
             .map(|tracker|
                 tracker.register_died_page_col(dead));
@@ -194,13 +202,14 @@ impl<const FAN_OUT: usize,
     pub(crate) fn register_dead(&self, dead_v: Version, dead_p: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         self.db_tracker
             .as_ref()
+            .as_ref()
             .map(|tracker|
                 tracker.register_died_page(dead_v, dead_p));
     }
 
     #[inline(always)]
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        match self.db_tracker.as_ref().map(|tracker| tracker.free_block()) {
+        match self.db_tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
                 self.reuse_count.fetch_add(1, Relaxed);
 

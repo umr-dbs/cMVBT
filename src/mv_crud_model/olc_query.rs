@@ -64,8 +64,15 @@ impl<const FAN_OUT: usize,
          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
          Height), ()>
     {
+        let root_h
+            = self.root.borrow_read();
+        
+        if !root_h.is_valid() {
+            return Err(())
+        }
+        
         let height
-            = self.root.unsafe_borrow().height();
+            = root_h.deref().unwrap().height();
 
         match self.is_lock(attempts, height) {
             true => {

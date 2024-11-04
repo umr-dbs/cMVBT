@@ -165,7 +165,7 @@ pub struct TransactionManager<
     Key: Default + Hash + Ord + Copy + Display + 'static,
     Payload: Clone + Default + 'static
 > {
-    db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pool: ThreadPool,
     index: Dispatcher<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
@@ -220,11 +220,18 @@ impl<const FAN_OUT: usize,
         self.index().clock_type()
     }
 
-    pub fn disable_gc(&mut self) {
-        self.db_tracker.take();
-        self.index_mut()
+    pub fn disable_gc(&self) {
+        self.db_tracker
+            .get_mut()
+            .take();
+
+        self.index()
             .block_manager
-            .set_active_tx_for_gc(None);
+            .del_aux();
+
+        // self.index_mut()
+        //     .block_manager
+        //     .set_active_tx_for_gc(None);
     }
 
     pub fn threads(&self) -> usize {
@@ -232,20 +239,22 @@ impl<const FAN_OUT: usize,
         self.pool.max_count()
     }
 
-    pub const fn is_gc_enabled(&self) -> bool {
+    pub fn is_gc_enabled(&self) -> bool {
         self.db_tracker.is_some()
     }
 
-    pub fn enable_gc(&mut self) {
-        self.db_tracker
-            = Some(Arc::new(DBTracker::new()));
+    pub fn enable_gc(&self) {
+        *self.db_tracker.get_mut() = Some(Arc::new(DBTracker::new()));
+
+        // self.db_tracker
+        //     = SafeCell::new(Some(Arc::new(DBTracker::new())));
 
         let clone
             = self.db_tracker.clone();
 
         self.index_mut()
             .block_manager
-            .set_active_tx_for_gc(clone);
+            .pass_aux_tx_tracker(clone);
     }
 
     pub fn join(&self) {
@@ -282,7 +291,7 @@ impl<const FAN_OUT: usize,
 
     pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
-            db_tracker: None,
+            db_tracker: SafeCell::new(None),
             pool: threadpool::Builder::new()
                 .num_threads(threads)
                 // .thread_name(|t| format!("TxRunner{}", t))
@@ -301,28 +310,28 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn new_with_gc(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
-        let mut manager = Self {
-            db_tracker: Some(Arc::new(DBTracker::new())),
+        let manager = Self {
+            db_tracker: SafeCell::new(Some(Arc::new(DBTracker::new()))),
             pool: threadpool::Builder::new()
                 .num_threads(threads)
                 .build(),
             index: AtomicPtr::new(Box::into_raw(Box::new(index))),
         };
 
-        unsafe {
-            let clone = manager.db_tracker();
-            manager
-                .index_mut()
-                .block_manager
-                .set_active_tx_for_gc(clone);
-        }
+        let clone
+            = manager.db_tracker();
+
+        manager
+            .index()
+            .block_manager
+            .pass_aux_tx_tracker(clone);
 
         manager
     }
 
     #[inline(always)]
     fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
-        Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref(), tx)
+        Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref().as_ref(), tx)
     }
 
     #[inline(always)]

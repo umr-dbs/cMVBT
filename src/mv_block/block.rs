@@ -182,12 +182,9 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match latch {
-            LatchType::Exclusive => self.into_exclusive(),
             LatchType::ReadersWriter => self.into_rw(),
             LatchType::Optimistic => self.into_olc(),
-            LatchType::Hybrid => self.into_hybrid(),
             LatchType::None => self.into_free(),
-            LatchType::LightWeightHybrid => self.into_lightweight_hybrid()
         }
     }
 }

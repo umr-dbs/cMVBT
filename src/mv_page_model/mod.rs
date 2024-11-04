@@ -1,8 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
-use std::sync::atomic::AtomicPtr;
-use parking_lot::lock_api::{Mutex, RwLock};
+use parking_lot::lock_api::Mutex;
 use crate::mv_block::block::Block;
 use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::{OptCell, SmartCell, SmartFlavor};
@@ -57,25 +56,5 @@ impl<const FAN_OUT: usize,
     pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         SmartCell(Arc::new(SmartFlavor::OLCCell(
             OptCell::new(self))))
-    }
-
-    #[inline(always)]
-    pub fn into_lightweight_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::LightWeightHybridCell(
-            OptCell::new(self))))
-    }
-
-    #[inline(always)]
-    pub fn into_exclusive(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::ExclusiveCell(
-            Mutex::new(()),
-            SafeCell::new(self))))
-    }
-
-    #[inline(always)]
-    pub fn into_hybrid(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::HybridCell(
-            OptCell::new(self),
-            RwLock::new(()))))
     }
 }

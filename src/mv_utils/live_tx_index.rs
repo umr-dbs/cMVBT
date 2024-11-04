@@ -20,7 +20,7 @@ const AUX_DP_FAN_OUT: usize = 250;
 const AUX_ATX_LEAF_SIZE: usize = 499;
 const AUX_DP_LEAF_SIZE: usize = 250;
 
-const AUX_PROTOCOL: LockingStrategy = ORWC { write_level: 0f32, write_attempt: 5 }; // LHL works too, but readers are disjoint with writers!
+const AUX_PROTOCOL: LockingStrategy = OLC; // LHL works too, but readers are disjoint with writers!
 
 type TxLiveKey = SnapShot;
 type TxLiveValue = NullValue;

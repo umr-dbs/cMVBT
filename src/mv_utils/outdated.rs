@@ -85,6 +85,33 @@ pub fn allocate_free(ptr: *mut c_void, gigs: size_t) {
     }
 }
 
+pub fn gen_data_exp(limit: u64, lambda: f64, rnd: &mut StdRng) -> Vec<u64> {
+    (1..=limit)
+        .map(|i|
+            gen_rand_key(i, 0, i, lambda, rnd))
+        .collect()
+}
+
+pub fn gen_rand_key(i: u64, range_start: u64, range_end: u64, lambda: f64, rnd: &mut StdRng) -> u64 {
+    #[inline(always)]
+    fn sample_next(lambda: f64, rnd: &mut StdRng) -> f64 {
+        let num
+            = rnd.gen_range(0_f64..1_f64);
+
+        (1_f64 - num)
+            .ln()
+            .div(-lambda)
+    }
+
+    let range = range_end - range_start;
+
+    (((loop {
+        let key = i as f64 * (1_f64 - sample_next(lambda, rnd));
+        if key >= 0_f64 {
+            break key;
+        }
+    }) / range as f64) * u64::MAX as f64) as _
+}
 
 #[inline(always)]
 pub fn bulk_atomic_tx(worker_threads: usize, tree: Tree, operations_queue: &[AtomicTransaction<Key, Payload>]) -> (u128, u64) {
