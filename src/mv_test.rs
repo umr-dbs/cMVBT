@@ -48,7 +48,7 @@ pub fn experiment(num_threads: usize,
                   total_tx: Arc<AtomicUsize>)
                   -> (IndexHandler, Vec<(JoinHandle<(usize, usize, u128)>, Sender<()>)>)
 {
-    assert_eq!(insert_ratio + update_ratio + delete_ratio + points_reads_ratio + range_reads_ratio,
+    debug_assert_eq!(insert_ratio + update_ratio + delete_ratio + points_reads_ratio + range_reads_ratio,
                100,
                "Ratios must add to 100%");
 

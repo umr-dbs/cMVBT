@@ -1,5 +1,4 @@
 use std::{env, fs, thread};
-use std::arch::x86_64::_mm_mfence;
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
 use std::sync::Arc;
@@ -8,9 +7,9 @@ use std::sync::atomic::Ordering::SeqCst;
 use chrono::{DateTime, Local};
 use itertools::{Either, Itertools};
 use serde::{Deserialize, Serialize};
-use crate::mv_test::{experiment, format_insertions, IndexHandler};
+use crate::mv_test::{experiment, IndexHandler};
 use crate::mv_tree::mvbplus_tree::ClockType;
-use crate::mv_tree::locking_strategy::{CRUDProtocol, LockingStrategy};
+use crate::mv_tree::locking_strategy::CRUDProtocol;
 use crate::mv_utils::smart_cell::ENABLE_YIELD;
 
 mod mv_block;
@@ -41,10 +40,25 @@ const CONFIG_PARAMETERS: &'static str = "config.json";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct GroupConfig {
-    group_id: usize,
-    sub_group_execute_order: usize,
     protocol: CRUDProtocol,
     clock: ClockType,
+    range_start: u64,
+    range_end: u64,
+    lambda: f64,
+    gc_enable: bool,
+    threads: usize,
+    total_tx: usize,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+    chain_groups: Vec<SubGroupConfig>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SubGroupConfig {
     range_start: u64,
     range_end: u64,
     lambda: f64,
@@ -91,8 +105,7 @@ impl GroupConfig {
 impl Default for GroupConfig {
     fn default() -> Self {
         Self {
-            group_id: 0,
-            sub_group_execute_order: 0,
+            chain_groups: vec![],
             protocol: Default::default(),
             clock: ClockType::FREE,
             range_start: 0,
@@ -128,7 +141,11 @@ fn main() {
         }
     };
 
-    println!("[Info] - Total Loaded #{} Experiments", configs.len());
+    configs.iter().enumerate().for_each(|(experiment_id, chain)| {
+        let chains = chain.chain_groups.len();
+        println!("[Loaded] - Experiment #{experiment_id} - Chains #{chains}");
+    });
+    
     execute_experiments(configs);
     // 
     // let mut groups = configs
@@ -206,38 +223,23 @@ fn main() {
 }
 
 fn execute_experiments(groups: Vec<GroupConfig>) {
-    println!("group_id,subgroup_id,tx_target,tx_executed,tx_success,tx_fail,time");
+    println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time");
     groups.into_iter()
-        .into_group_map_by(|c| c.group_id)
         .into_iter()
-        .sorted_by_key(|(group, _)| *group)
-        .map(|(_, mut groups)| {
-            groups.sort_by_key(|group| group.sub_group_execute_order);
-            VecDeque::from(groups)
-        })
-        .into_iter()
-        .for_each(|mut group| {
-            let init_group = group.front().unwrap();
-            let curr_group_id = init_group.group_id;
-            let subgroup = init_group.sub_group_execute_order;
-            let target_tx = init_group.total_tx;
-            print!("{curr_group_id},{subgroup},{target_tx}");
-
-            // println!("[Starting Experiment] - [Group: {curr_group_id}]");
-            // println!("\t[Initialize Experiment] - [Sub-Group: {}]",
-            //          group.front().unwrap().sub_group_execute_order);
+        .enumerate()
+        .for_each(|(experiment_id, experiment)| {
+            let target_tx = experiment.total_tx;
+            print!("{experiment_id},INIT,{target_tx}");
 
             let mut index_handler
-                = start_experiment_by_config(group.pop_front().unwrap());
+                = start_experiment_by_config(&experiment);
 
-            group.into_iter().for_each(|inner_group| {
-                // println!("\t[Chain Experiment] - [Sub-Group: {}]", inner_group.sub_group_execute_order);
-
-                let subgroup = inner_group.sub_group_execute_order;
+            experiment.chain_groups.into_iter().enumerate().for_each(|(num, inner_group)| {
+                let subgroup = num + 1;
                 let target_tx = inner_group.total_tx;
-                print!("{curr_group_id},{subgroup},{target_tx}");
+                print!("{experiment_id},{subgroup},{target_tx}");
 
-                if let Either::Left(m_manager) = &mut index_handler {
+                if let Either::Left(ref m_manager) = index_handler {
                     if inner_group.gc_enable && !m_manager.is_gc_enabled() {
                         m_manager.enable_gc();
                     } else if !inner_group.gc_enable && m_manager.is_gc_enabled() {
@@ -249,11 +251,10 @@ fn execute_experiments(groups: Vec<GroupConfig>) {
                     inner_group,
                     index_handler.clone());
             });
-            // println!("[Ending Experiment] - [Group: {}]", curr_group_id);
         })
 }
 
-fn start_experiment_by_config(config: GroupConfig) -> IndexHandler {
+fn start_experiment_by_config(config: &GroupConfig) -> IndexHandler {
     run_experiment_with_params(
         config.threads,
         config.index_handler(),
@@ -270,7 +271,7 @@ fn start_experiment_by_config(config: GroupConfig) -> IndexHandler {
         config.total_tx)
 }
 
-fn chain_experiment_by_config(config: GroupConfig, index_handler: IndexHandler) -> IndexHandler {
+fn chain_experiment_by_config(config: SubGroupConfig, index_handler: IndexHandler) -> IndexHandler {
     run_experiment_with_params(
         config.threads,
         index_handler,

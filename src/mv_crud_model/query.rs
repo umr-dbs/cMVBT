@@ -540,9 +540,9 @@ impl<const FAN_OUT: usize,
                 let mut master_guard
                     = self.root.borrow_read();
 
-                if !master_guard.is_valid() {
-                    return Err(())
-                }
+                // if !master_guard.is_valid() {
+                //     return Err(())
+                // }
 
                 let master_v
                     = master_guard.deref().unwrap().version();
@@ -553,9 +553,9 @@ impl<const FAN_OUT: usize,
                 let mut root_guard
                     = root_block.borrow_read();
 
-                if !root_guard.is_valid() {
-                    return Err(())
-                }
+                // if !root_guard.is_valid() {
+                //     return Err(())
+                // }
 
                 let len = root_guard.deref().unwrap().len();
                 match root_guard.deref().unwrap().unsafe_degree() {

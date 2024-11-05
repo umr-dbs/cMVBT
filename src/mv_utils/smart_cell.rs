@@ -272,16 +272,16 @@ impl<'a, E: Default + 'static> Clone for SmartGuard<'_, E> {
 }
 
 impl<'a, E: Default + 'static> SmartGuard<'_, E> {
-    #[inline(always)]
-    pub(crate) fn mark_obsolete(&mut self) {
-        match self {
-            OLCWriter(cell, ..) => match cell.0.as_ref() {
-                OLCCell(opt) => opt.write_obsolete(),
-                _ => {}
-            }
-            _ => {}
-        }
-    }
+    // #[inline(always)]
+    // pub(crate) fn mark_obsolete(&self) {
+    //     match self {
+    //         OLCWriter(cell, ..) => match cell.0.as_ref() {
+    //             OLCCell(opt) => opt.write_obsolete(),
+    //             _ => {}
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     #[inline(always)]
     pub fn downgrade(&mut self) {
@@ -326,7 +326,7 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
             OLCReader(Some((ref cell, read_latch))) => unsafe {
                 match cell.0.as_ref() {
                     OLCCell(opt) => if let Some(write_latch)
-                        = opt.write_lock(*read_latch)
+                        = opt.write_lock(*read_latch & !WRITE_FLAG_VERSION)
                     {
                         let writer = OLCWriter(transmute_copy(cell), write_latch);
                         ptr::write(self, writer);
@@ -351,9 +351,18 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     }
 
     #[inline(always)]
-    pub const fn is_valid(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         match self {
             OLCReader(None) => false,
+            OLCReader(Some((opt, version))) => {
+                if let OLCCell(opt) = opt.0.as_ref() {
+                    let loaded = opt.load_version();
+                    loaded & WRITE_FLAG_VERSION == 0 && loaded == *version
+                }
+                else {
+                    false
+                }
+            }
             _ => true
         }
     }
@@ -362,18 +371,6 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     pub fn deref(&self) -> Option<&'_ E> {
         match self {
             LockFree(ptr) => unsafe { ptr.as_ref() },
-            RwReaderFree(.., ptr) => unsafe { Some(ptr.unsafe_borrow()) },
-            RwWriterMut(.., ptr) => unsafe { Some(ptr.unsafe_borrow()) },
-            OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
-            OLCWriter(cell, ..) => Some(cell.0.as_ref()),
-            _ => None
-        }
-    }
-
-    #[inline(always)]
-    pub unsafe fn deref_unsafe(&self) -> Option<&'_ E> {
-        match self {
-            LockFree(ptr) => ptr.as_ref(),
             RwReaderFree(.., ptr) => Some(ptr.unsafe_borrow()),
             RwWriterMut(.., ptr) => Some(ptr.unsafe_borrow()),
             OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
@@ -382,11 +379,23 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
         }
     }
 
+    // #[inline(always)]
+    // pub unsafe fn deref_unsafe(&self) -> Option<&'_ E> {
+    //     match self {
+    //         LockFree(ptr) => ptr.as_ref(),
+    //         RwReaderFree(.., ptr) => Some(ptr.unsafe_borrow()),
+    //         RwWriterMut(.., ptr) => Some(ptr.unsafe_borrow()),
+    //         OLCReader(Some((cell, ..))) => Some(cell.0.as_ref()),
+    //         OLCWriter(cell, ..) => Some(cell.0.as_ref()),
+    //         _ => None
+    //     }
+    // }
+
     #[inline(always)]
     pub fn deref_mut(&self) -> Option<&mut E> {
         match self {
             LockFree(ptr) => unsafe { ptr.as_mut() },
-            RwWriterMut(.., ptr) => unsafe { Some(ptr.unsafe_borrow_mut()) },
+            RwWriterMut(.., ptr) => Some(ptr.unsafe_borrow_mut()),
             OLCWriter(cell, ..) => Some(cell.unsafe_borrow_mut()),
             _ => None
         }
@@ -421,6 +430,14 @@ impl<E: Default> SmartCell<E> {
     }
 
     #[inline(always)]
+    pub fn borrow_opt(&self) -> SmartGuard<'static, E> {
+        match self.0.deref() {
+            OLCCell(opt) => OLCReader(Some((self.clone(), opt.load_version()))),
+            _ => OLCReader(None)
+        }
+    }
+
+    #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
             OLCCell(opt) => {
@@ -431,7 +448,7 @@ impl<E: Default> SmartCell<E> {
             }
             ReadersWriterCell(..) => {
                 let ret = RwReaderFree(self.clone());
-                // fence(Acquire);
+                fence(Acquire);
                 ret
             }
             FreeCell(ptr) => LockFree(ptr.get_mut()),
