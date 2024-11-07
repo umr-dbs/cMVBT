@@ -64,13 +64,13 @@ impl<const FAN_OUT: usize,
             = self.root.unsafe_borrow().height();
         
         let mut master_guard
-            = self.root.borrow_opt();
+            = self.root.borrow_read();
 
         let root_block
             = master_guard.deref().unwrap().block();
 
         let mut root_guard
-            = root_block.borrow_opt();
+            = root_block.borrow_read();
 
         match root_guard.deref().unwrap().unsafe_degree() {
             BlockUnsafeDegree::Overflow

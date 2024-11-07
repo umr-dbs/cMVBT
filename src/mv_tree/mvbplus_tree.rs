@@ -764,8 +764,8 @@ impl<const FAN_OUT: usize,
                 curr.borrow_mut(),
             LockingStrategy::MonoWriter =>
                 curr.borrow_free(),
-            LockingStrategy::OLC => curr.borrow_opt(),
-            LockingStrategy::ORWC { .. } => curr.borrow_read(),
+            LockingStrategy::ORWC { .. } |
+            LockingStrategy::OLC=> curr.borrow_read(),
         }
     }
     #[inline(always)]

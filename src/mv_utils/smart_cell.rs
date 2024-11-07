@@ -430,21 +430,15 @@ impl<E: Default> SmartCell<E> {
     }
 
     #[inline(always)]
-    pub fn borrow_opt(&self) -> SmartGuard<'static, E> {
-        match self.0.deref() {
-            OLCCell(opt) => OLCReader(Some((self.clone(), opt.load_version()))),
-            _ => OLCReader(None)
-        }
-    }
-
-    #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         match self.0.deref() {
             OLCCell(opt) => {
-                let (success, read)
-                    = opt.read_lock();
-
-                OLCReader(success.then(|| (self.clone(), read)))
+                let ret = OLCReader(Some((
+                    self.clone(), 
+                    opt.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION)
+                ));
+                fence(Acquire);
+                ret
             }
             ReadersWriterCell(..) => {
                 let ret = RwReaderFree(self.clone());
