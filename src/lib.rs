@@ -1,16 +1,10 @@
-use std::ffi::{c_void, CString};
+use std::ffi::c_void;
 use std::{mem, ptr};
-use std::fmt::Display;
-use std::hash::Hash;
 use std::ops::Deref;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_record_model::record_point::RecordPointResult;
-use crate::mv_tree::locking_strategy::{orwc, CRUDProtocol};
-use crate::mv_tree::locking_strategy::LockingStrategy::MonoWriter;
-use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
+use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tx_model::transaction::AtomicTransaction;
-use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_tx_model::tx_manager::TransactionManager;
 use crate::mv_utils::interval::Interval;
 
@@ -52,8 +46,6 @@ impl Deref for MVBTreeWithGCApiExport {
 
 #[no_mangle]
 pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
-    const CONSTRUCTOR_THREAD_COUNT: usize = 1;
-
     let index = match (protocol, clock) {
         (ORWC, OPT_CLOCK) => MVBTreeApi::orwc_optimistic_clock(),
         (ORWC, EXCL_CLOCK) => MVBTreeApi::orwc(),
@@ -63,7 +55,7 @@ pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
     };
     
     Box::into_raw(Box::new(MVBTreeWithGCApiExport(
-        TransactionManager::new_with(CONSTRUCTOR_THREAD_COUNT, index, gc == GC_ENABLED)))) as _
+        TransactionManager::new_unmanaged(index, gc == GC_ENABLED)))) as _
 }
 
 #[no_mangle]
@@ -136,11 +128,6 @@ pub extern "C" fn tree_gc_api_scan(
 
 impl MVBTreeWithGCApiExport {
     #[inline(always)]
-    fn si(&self) -> IsolatedSnapShot<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE> {
-        self.index().snapshot_current()
-    }
-
-    #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
         let querying_v
             = self.index().current_version();
@@ -199,9 +186,6 @@ impl MVBTreeWithGCApiExport {
         let querying_v
             = self.index().current_version();
 
-        let mut result
-            = Vec::<*mut RecordPointResult<u64, f64>>::with_capacity(scan_sz as _);
-
         let key_start = unsafe { *(key as *const u64) };
         let key_end = key_start + scan_sz as u64 - 1;
 
@@ -210,25 +194,16 @@ impl MVBTreeWithGCApiExport {
             CRUDOperation::Range(Interval::new(key_start, key_end), querying_v))
         ).unwrap_atomic()
         {
-            Ok((.., CRUDOperationResult::MatchedRecords(mut buff))) if !buff.is_empty() => unsafe {
+            Ok((.., CRUDOperationResult::MatchedRecords(mut buff))) => unsafe {
                 buff.shrink_to_fit();
 
-                buff.iter()
-                    .for_each(|r| result.push(r as *const _ as *mut _));
+                let len = buff.len() as _;
+                *values_out = buff.as_mut_ptr() as _;
 
                 mem::forget(buff);
+                len
             }
-            _ => {}
+            _ => -1
         }
-
-        result.shrink_to_fit();
-        unsafe {
-            *values_out = result.as_mut_ptr() as _;
-        }
-
-        let len = result.len() as _;
-        mem::forget(result);
-
-        len
     }
 }

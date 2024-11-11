@@ -159,6 +159,7 @@ type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
 type TxDispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
 = &'static MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
+const POOL_DISABLED: usize = 0;
 pub struct TransactionManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -166,7 +167,7 @@ pub struct TransactionManager<
     Payload: Clone + Default + 'static
 > {
     db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
-    pool: ThreadPool,
+    pool: Option<ThreadPool>,
     index: Dispatcher<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
 
@@ -228,15 +229,13 @@ impl<const FAN_OUT: usize,
         self.index()
             .block_manager
             .del_aux();
-
-        // self.index_mut()
-        //     .block_manager
-        //     .set_active_tx_for_gc(None);
     }
 
     pub fn threads(&self) -> usize {
-        // self.pool.current_num_threads()
-        self.pool.max_count()
+        self.pool
+            .as_ref()
+            .map(|pool| pool.max_count())
+            .unwrap_or(0)
     }
 
     pub fn is_gc_enabled(&self) -> bool {
@@ -245,9 +244,6 @@ impl<const FAN_OUT: usize,
 
     pub fn enable_gc(&self) {
         *self.db_tracker.get_mut() = Some(Arc::new(DBTracker::new()));
-
-        // self.db_tracker
-        //     = SafeCell::new(Some(Arc::new(DBTracker::new())));
 
         let clone
             = self.db_tracker.clone();
@@ -258,8 +254,10 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn join(&self) {
-        // self.pool.join(|| {}, || {});
-        self.pool.join();
+        self.pool
+            .as_ref()
+            .map(|pool| pool.join())
+            .unwrap_or_default()
     }
 
     #[inline]
@@ -288,33 +286,38 @@ impl<const FAN_OUT: usize,
 
         r
     }
-
-    pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
-        Self {
-            db_tracker: SafeCell::new(None),
-            pool: threadpool::Builder::new()
-                .num_threads(threads)
-                // .thread_name(|t| format!("TxRunner{}", t))
-                .build(),
-            // .unwrap(),
-            index: AtomicPtr::new(Box::into_raw(Box::new(index))),
-        }
+    
+    pub fn managed(&mut self, threads: usize) {
+        self.join();
+        self.pool.replace(threadpool::Builder::new()
+            .num_threads(threads)
+            .build());
+    }
+    
+    pub fn unmanaged(&mut self) {
+        self.join();
+        self.pool.take();
     }
 
-    pub fn new_with(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
-        if gc {
-            Self::new_with_gc(threads, index)
-        } else {
-            Self::new(threads, index)
-        }
+    pub fn new_unmanaged(index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
+        Self::new(POOL_DISABLED, index, gc)
     }
-
-    pub fn new_with_gc(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
+    
+    pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         let manager = Self {
-            db_tracker: SafeCell::new(Some(Arc::new(DBTracker::new()))),
-            pool: threadpool::Builder::new()
-                .num_threads(threads)
-                .build(),
+            db_tracker: if gc {
+                SafeCell::new(Some(Arc::new(DBTracker::new())))
+            }
+            else {
+                SafeCell::new(None)
+            },
+            pool: if threads == POOL_DISABLED {
+                None
+            } else {
+                Some(threadpool::Builder::new()
+                    .num_threads(threads)
+                    .build())
+            },
             index: AtomicPtr::new(Box::into_raw(Box::new(index))),
         };
 
@@ -382,7 +385,7 @@ impl<const FAN_OUT: usize,
         let dispatcher
             = self.tx_dispatcher();
 
-        self.pool.execute(move || txs.into_inner().into_iter().for_each(|tx| {
+        self.pool.as_ref().unwrap().execute(move || txs.into_inner().into_iter().for_each(|tx| {
             let tx
                 = tx.into();
 
@@ -411,7 +414,7 @@ impl<const FAN_OUT: usize,
         let deq_active_query
             = self.db_tracker();
 
-        self.pool.execute(move || {
+        self.pool.as_ref().unwrap().execute(move || {
             let si
                 = tx.snapshot();
 
@@ -435,7 +438,7 @@ impl<const FAN_OUT: usize,
         let (sender, receiver)
             = crossbeam_channel::unbounded();
 
-        self.pool.execute(move || {
+        self.pool.as_ref().unwrap().execute(move || {
             let si
                 = tx.snapshot();
 

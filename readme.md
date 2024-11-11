@@ -1,6 +1,6 @@
 # Multi Version B+Tree
-- Release Date: 07.11.2024
-- Latest Version: 0.0.50 (Beta)
+- Release Date: 11.11.2024
+- Latest Version: 0.0.51 (Beta)
 #### Requirements:
 - OS:          Linux/Windows
 - Rustc:       >= 1.65.0 (2021 Edition)
@@ -12,7 +12,7 @@
 - **MonoWriter**:
   - One writer.
   - Unlimited lock-free readers.
-- **ORWC**, **OLC**, **LHL** and **HL**:
+- **ORWC** and **OLC**:
   - Unlimited writers.
   - Unlimited lock-free readers.
 # Operations (CC Built-in)

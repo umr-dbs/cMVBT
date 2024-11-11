@@ -1,22 +1,322 @@
-use std::ops::Div;
-use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::Relaxed;
-use std::thread::{spawn, JoinHandle};
-use std::time::SystemTime;
-use crossbeam_channel::{Sender, TryRecvError};
-use itertools::{Either, Itertools};
-use rand::{Rng, thread_rng};
-use rand::rngs::ThreadRng;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::locking_strategy::CRUDProtocol;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tx_model::transaction::AtomicTransaction;
 use crate::mv_tx_model::tx_manager::TransactionManager;
+use crossbeam_channel::{Sender, TryRecvError};
+use itertools::{Either, Itertools};
+use rand::rngs::ThreadRng;
+use rand::{thread_rng, Rng};
+use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
+use std::fs::OpenOptions;
+use std::ops::Div;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::Arc;
+use std::thread;
+use std::thread::{spawn, JoinHandle};
+use std::time::SystemTime;
 
-pub type IndexHandler =
-Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, u64, u64>>, (CRUDProtocol, ClockType)>;
+const CONFIG_PARAMETERS: &'static str = "config.json";
+
+#[derive(Clone, Serialize, Deserialize)]
+struct GroupConfig {
+    protocol: CRUDProtocol,
+    clock: ClockType,
+    range_start: u64,
+    range_end: u64,
+    lambda: f64,
+    gc_enable: bool,
+    threads: usize,
+    total_tx: usize,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+    chain_groups: Vec<SubGroupConfig>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SubGroupConfig {
+    range_start: u64,
+    range_end: u64,
+    lambda: f64,
+    gc_enable: bool,
+    threads: usize,
+    total_tx: usize,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+}
+
+impl GroupConfig {
+    fn is_valid(&self) -> bool {
+        100 == self.insert_ratio
+            + self.update_ratio
+            + self.delete_ratio
+            + self.point_reads_ratio
+            + self.range_reads_ratio
+            && self.threads > 1
+            && self.protocol.is_mono_writer()
+            && self.is_read_only()
+            || self.threads == 1 && self.protocol.is_mono_writer()
+            || !self.protocol.is_mono_writer()
+    }
+
+    fn index_handler(&self) -> IndexHandler {
+        Either::Right((self.protocol.clone(), self.clock.clone()))
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.insert_ratio == 0 && self.update_ratio == 0 && self.delete_ratio == 0
+    }
+
+    fn is_write_only(&self) -> bool {
+        self.point_reads_ratio == 0 && self.range_reads_ratio == 0
+    }
+
+    fn is_mix_read_write(&self) -> bool {
+        !self.is_read_only() && !self.is_write_only()
+    }
+
+    fn num_chains(&self) -> usize {
+        self.chain_groups.len()
+    }
+}
+
+impl Default for GroupConfig {
+    fn default() -> Self {
+        Self {
+            chain_groups: vec![],
+            protocol: Default::default(),
+            clock: ClockType::FREE,
+            range_start: 0,
+            range_end: u64::MAX,
+            lambda: 0.1,
+            gc_enable: false,
+            threads: 1,
+            total_tx: 10_000_000,
+            insert_ratio: 100,
+            update_ratio: 0,
+            delete_ratio: 0,
+            point_reads_ratio: 0,
+            range_reads_ratio: 0,
+            range_size: 0,
+        }
+    }
+}
+
+impl Display for GroupConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            self.protocol,
+            self.clock,
+            self.range_start,
+            self.range_end,
+            self.lambda,
+            self.gc_enable,
+            self.threads,
+            self.insert_ratio,
+            self.update_ratio,
+            self.delete_ratio,
+            self.point_reads_ratio,
+            self.range_reads_ratio,
+            self.range_size,
+        )
+    }
+}
+
+impl Display for SubGroupConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{},{},{},{},{},{},{},{},{},{},{}",
+            self.range_start,
+            self.range_end,
+            self.lambda,
+            self.gc_enable,
+            self.threads,
+            self.insert_ratio,
+            self.update_ratio,
+            self.delete_ratio,
+            self.point_reads_ratio,
+            self.range_reads_ratio,
+            self.range_size,
+        )
+    }
+}
+
+type IndexHandler =
+    Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, u64, u64>>, (CRUDProtocol, ClockType)>;
+
+fn load_config_experiments() -> Vec<GroupConfig> {
+    match OpenOptions::new().read(true).open(CONFIG_PARAMETERS) {
+        Ok(file) => serde_json::from_reader(file).unwrap_or_else(|error| {
+            println!("JSON Error: {}", error);
+            println!("Using default ConfigParameters");
+            vec![GroupConfig::default()]
+        }),
+        Err(error) => {
+            println!("File Error: {}", error);
+            println!("Using default ConfigParameters");
+            vec![GroupConfig::default()]
+        }
+    }
+}
+
+pub fn execute_experiments() {
+    // groups.iter().enumerate().for_each(|(experiment_id, chain)|
+    //     println!("[Loaded] - Experiment #{experiment_id} - Chains #{}", chain.num_chains()));
+    let groups = load_config_experiments();
+    println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time,protocol,clock,range_start,range_end,lambda,gc_enable,threads,insert_ratio,update_ratio,delete_ratio,point_reads_ratio,range_reads_ratio,range_size");
+    groups
+        .into_iter()
+        .into_iter()
+        .enumerate()
+        .for_each(|(experiment_id, experiment)| {
+            let target_tx = experiment.total_tx;
+            print!("{experiment_id},INIT,{target_tx}");
+
+            let mut index_handler = start_experiment_by_config(&experiment);
+            println!(",{},{},{}", experiment.protocol, experiment.clock, experiment);
+            
+            experiment
+                .chain_groups
+                .into_iter()
+                .enumerate()
+                .for_each(|(num, inner_group)| {
+                    let subgroup = num + 1;
+                    let target_tx = inner_group.total_tx;
+                    print!("{experiment_id},{subgroup},{target_tx}");
+
+                    if let Either::Left(ref m_manager) = index_handler {
+                        if inner_group.gc_enable && !m_manager.is_gc_enabled() {
+                            m_manager.enable_gc();
+                        } else if !inner_group.gc_enable && m_manager.is_gc_enabled() {
+                            m_manager.disable_gc();
+                        }
+                    }
+                    
+                    index_handler = chain_experiment_by_config(&inner_group, index_handler.clone());
+                    println!(",{},{},{}", experiment.protocol, experiment.clock, inner_group);
+                });
+        })
+}
+
+fn start_experiment_by_config(config: &GroupConfig) -> IndexHandler {
+    run_experiment_with_params(
+        config.threads,
+        config.index_handler(),
+        config.gc_enable,
+        config.lambda,
+        config.range_start,
+        config.range_end,
+        config.insert_ratio,
+        config.update_ratio,
+        config.delete_ratio,
+        config.point_reads_ratio,
+        config.range_reads_ratio,
+        config.range_size,
+        config.total_tx,
+    )
+}
+
+fn chain_experiment_by_config(config: &SubGroupConfig, index_handler: IndexHandler) -> IndexHandler {
+    run_experiment_with_params(
+        config.threads,
+        index_handler,
+        config.gc_enable,
+        config.lambda,
+        config.range_start,
+        config.range_end,
+        config.insert_ratio,
+        config.update_ratio,
+        config.delete_ratio,
+        config.point_reads_ratio,
+        config.range_reads_ratio,
+        config.range_size,
+        config.total_tx,
+    )
+}
+
+fn run_experiment_with_params(
+    threads: usize,
+    index: IndexHandler,
+    gc_enable: bool,
+    lambda: f64,
+    range_start: u64,
+    range_end: u64,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+    total_tx: usize,
+) -> IndexHandler {
+    let total_tx_counter 
+        = Arc::new(AtomicUsize::new(0));
+
+    let (index_handler, handles) = experiment(
+        threads,
+        index,
+        gc_enable,
+        lambda,
+        range_start,
+        range_end,
+        insert_ratio,
+        update_ratio,
+        delete_ratio,
+        point_reads_ratio,
+        range_reads_ratio,
+        range_size,
+        total_tx_counter.clone(),
+    );
+
+    while total_tx_counter.load(SeqCst) < total_tx {
+        thread::yield_now();
+    }
+
+    let bulk_killer = handles
+        .into_iter()
+        .map(|(handle, killer)| {
+            drop(killer);
+            handle
+        })
+        .collect_vec();
+
+    let result = bulk_killer
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect_vec();
+
+    let mut total_time = 0;
+    let mut total_success = 0;
+    let mut total_error = 0;
+    for (_index, (tx_success, tx_error, time)) in result.iter().enumerate() {
+        // println!("\t[tid_{index}]: tx_success = {tx_success}, tx_error = {tx_error}, time = {time}");
+        total_success += tx_success;
+        total_error += tx_error;
+        total_time = total_time.max(*time);
+    }
+
+    let total_executed_tx = total_success + total_error;
+
+    print!(",{total_executed_tx},{total_success},{total_error},{total_time}");
+    // println!("\t---------------------------------------------------------------------------------");
+    // println!("\t[Summary] - Tx Executed = {total_executed_tx}, Target Tx = {total_tx}, Total Time = {total_time}");
+    // println!("\t---------------------------------------------------------------------------------");
+
+    index_handler
+}
 
 pub const FAN_OUT: usize = 127;
 pub const NUM_RECORDS: usize = 127;
@@ -32,36 +332,37 @@ pub fn dec_key(k: Key) -> Key {
     k.checked_sub(1).unwrap_or(Key::MIN)
 }
 
-
-pub fn experiment(num_threads: usize,
-                  index_handler: IndexHandler,
-                  gc_enable: bool,
-                  lambda: f64,
-                  range_start: u64,
-                  range_end: u64,
-                  insert_ratio: usize,
-                  update_ratio: usize,
-                  delete_ratio: usize,
-                  points_reads_ratio: usize,
-                  range_reads_ratio: usize,
-                  range_size: u64,
-                  total_tx: Arc<AtomicUsize>)
-                  -> (IndexHandler, Vec<(JoinHandle<(usize, usize, u128)>, Sender<()>)>)
-{
-    debug_assert_eq!(insert_ratio + update_ratio + delete_ratio + points_reads_ratio + range_reads_ratio,
-               100,
-               "Ratios must add to 100%");
+fn experiment(
+    num_threads: usize,
+    index_handler: IndexHandler,
+    gc_enable: bool,
+    lambda: f64,
+    range_start: u64,
+    range_end: u64,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    points_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+    total_tx: Arc<AtomicUsize>,
+) -> (
+    IndexHandler,
+    Vec<(JoinHandle<(usize, usize, u128)>, Sender<()>)>,
+) {
+    debug_assert_eq!(
+        insert_ratio + update_ratio + delete_ratio + points_reads_ratio + range_reads_ratio,
+        100,
+        "Ratios must add to 100%"
+    );
 
     #[inline(always)]
     fn gen_key(i: u64, range_start: u64, range_end: u64, lambda: f64, rnd: &mut ThreadRng) -> u64 {
         #[inline(always)]
         fn sample_next(lambda: f64, rnd: &mut ThreadRng) -> f64 {
-            let num
-                = rnd.gen_range(0_f64..1_f64);
+            let num = rnd.gen_range(0_f64..1_f64);
 
-            (1_f64 - num)
-                .ln()
-                .div(-lambda)
+            (1_f64 - num).ln().div(-lambda)
         }
         let range = range_end - range_start;
         (((loop {
@@ -69,13 +370,13 @@ pub fn experiment(num_threads: usize,
             if key >= 0_f64 {
                 break key;
             }
-        }) / range as f64) * u64::MAX as f64) as _
+        }) / range as f64)
+            * u64::MAX as f64) as _
     }
 
     let manager = match index_handler {
         Either::Left(m_manager) => m_manager,
-        Either::Right((protocol, clock_type)) => Arc::new(TransactionManager::new_with(
-            1,
+        Either::Right((protocol, clock_type)) => Arc::new(TransactionManager::new_unmanaged(
             MVBPlusTree::make_standard(protocol, clock_type),
             gc_enable,
         )),
@@ -83,69 +384,79 @@ pub fn experiment(num_threads: usize,
 
     type WorkerSignal = ();
 
-    let handles = (0..num_threads).map(|_| {
-        let manager
-            = manager.clone();
+    let handles = (0..num_threads)
+        .map(|_| {
+            let manager = manager.clone();
 
-        let (thread_killer, thread_control)
-            = crossbeam_channel::bounded::<WorkerSignal>(0);
+            let (thread_killer, thread_control) = crossbeam_channel::bounded::<WorkerSignal>(0);
 
-        let total_tx = total_tx.clone();
-        // tx_success, tx_error, time_spent
-        let handle = spawn(move || {
-            let mut rng
-                = thread_rng();
+            let total_tx = total_tx.clone();
 
-            let mut generator = ||
-                gen_key(range_end, range_start, range_end, lambda, &mut rng);
+            // tx_success, tx_error, time_spent
+            let handle = spawn(move || {
+                let mut rng = thread_rng();
 
-            let (mut tx_success, mut tx_error, start_execution_time)
-                = (0usize, 0usize, SystemTime::now());
+                let mut generator = || gen_key(range_end, range_start, range_end, lambda, &mut rng);
 
-            let local_tx = |key: u64| -> AtomicTransaction<u64, u64> {
-                let random_number
-                    = thread_rng().gen_range(0..100);
+                let (mut tx_success, mut tx_error, start_execution_time) =
+                    (0usize, 0usize, SystemTime::now());
 
-                if random_number < insert_ratio {
-                    AtomicTransaction::from_crud(CRUDOperation::Insert(key, u64::default()))
-                } else if random_number < insert_ratio + points_reads_ratio {
-                    AtomicTransaction::from_crud(CRUDOperation::PointSi(key))
-                } else if random_number < insert_ratio + points_reads_ratio + range_reads_ratio {
-                    if u64::MAX - range_size <= key {
-                        AtomicTransaction::from_crud(CRUDOperation::RangeSi((key..=u64::MAX).into()))
-                    } else {
-                        AtomicTransaction::from_crud(CRUDOperation::RangeSi((key..key + range_size).into()))
-                    }
-                } else if random_number < insert_ratio + points_reads_ratio + range_reads_ratio + delete_ratio {
-                    AtomicTransaction::from_crud(CRUDOperation::Delete(key))
-                } else {
-                    AtomicTransaction::from_crud(CRUDOperation::Update(key, u64::default()))
-                }
-            };
-            loop {
-                match thread_control.try_recv() {
-                    Err(TryRecvError::Disconnected) => break,
-                    _ => {
-                        let next
-                            = local_tx(generator());
+                let local_tx = |key: u64| -> AtomicTransaction<u64, u64> {
+                    let random_number = thread_rng().gen_range(0..100);
 
-                        match manager.execute_on_caller_thread(next).unwrap_atomic() {
-                            Ok(_) => tx_success += 1,
-                            Err(_) => tx_error += 1
+                    if random_number < insert_ratio {
+                        AtomicTransaction::from_crud(CRUDOperation::Insert(key, u64::default()))
+                    } else if random_number < insert_ratio + points_reads_ratio {
+                        AtomicTransaction::from_crud(CRUDOperation::PointSi(key))
+                    } else if random_number < insert_ratio + points_reads_ratio + range_reads_ratio
+                    {
+                        if u64::MAX - range_size <= key {
+                            AtomicTransaction::from_crud(CRUDOperation::RangeSi(
+                                (key..=u64::MAX).into(),
+                            ))
+                        } else {
+                            AtomicTransaction::from_crud(CRUDOperation::RangeSi(
+                                (key..key + range_size).into(),
+                            ))
                         }
+                    } else if random_number
+                        < insert_ratio + points_reads_ratio + range_reads_ratio + delete_ratio
+                    {
+                        AtomicTransaction::from_crud(CRUDOperation::Delete(key))
+                    } else {
+                        AtomicTransaction::from_crud(CRUDOperation::Update(key, u64::default()))
+                    }
+                };
 
-                        total_tx.fetch_add(1, Relaxed);
+                loop {
+                    match thread_control.try_recv() {
+                        Err(TryRecvError::Disconnected) => break,
+                        _ => {
+                            let next = local_tx(generator());
+
+                            match manager.execute_on_caller_thread(next).unwrap_atomic() {
+                                Ok(_) => tx_success += 1,
+                                Err(_) => tx_error += 1,
+                            }
+
+                            total_tx.fetch_add(1, Relaxed);
+                        }
                     }
                 }
-            }
 
-            (tx_success,
-             tx_error,
-             SystemTime::now().duration_since(start_execution_time).unwrap().as_millis())
-        });
+                (
+                    tx_success,
+                    tx_error,
+                    SystemTime::now()
+                        .duration_since(start_execution_time)
+                        .unwrap()
+                        .as_millis(),
+                )
+            });
 
-        (handle, thread_killer)
-    }).collect_vec();
+            (handle, thread_killer)
+        })
+        .collect_vec();
 
     (IndexHandler::Left(manager), handles)
 }

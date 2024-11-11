@@ -14,9 +14,6 @@ use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::SmartFlavor::{FreeCell, OLCCell, ReadersWriterCell};
 use crate::mv_utils::smart_cell::SmartGuard::{LockFree, OLCReader, OLCWriter, RwReaderFree, RwWriterMut};
 
-pub const CPU_THREADS: bool = true;
-pub const ENABLE_YIELD: bool = !CPU_THREADS;
-
 pub(crate) const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
 const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
 
