@@ -659,11 +659,19 @@ impl<const FAN_OUT: usize,
                         _ => return Err((curr_level, attempts + 1))
                     }
                 }
-                _ => return if curr_guard.upgrade_write_lock() {
-                    Ok(curr_guard)
-                } else {
-                    Err((curr_level, attempts + 1))
-                }
+                _ => return if curr_level == 1 {
+                        if curr_guard.is_write_lock() {
+                            Ok(curr_guard)
+                        } else {
+                            Err((curr_level, attempts + 1))
+                        }
+                    } else {
+                        if curr_guard.upgrade_write_lock() && curr_guard.deref().unwrap().unsafe_degree().is_ok() {
+                            Ok(curr_guard)
+                        } else {
+                            Err((curr_level, attempts + 1))
+                        }
+                    }
             }
         }
     }

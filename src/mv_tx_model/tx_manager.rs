@@ -1,3 +1,4 @@
+use std::arch::x86_64::_mm_mfence;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
@@ -229,6 +230,8 @@ impl<const FAN_OUT: usize,
         self.index()
             .block_manager
             .del_aux();
+
+        unsafe { _mm_mfence() }
     }
 
     pub fn threads(&self) -> usize {
@@ -251,6 +254,8 @@ impl<const FAN_OUT: usize,
         self.index_mut()
             .block_manager
             .pass_aux_tx_tracker(clone);
+
+        unsafe { _mm_mfence() }
     }
 
     pub fn join(&self) {

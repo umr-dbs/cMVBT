@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
 use std::ops::Div;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{fence, AtomicUsize};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
 use std::thread;
@@ -186,8 +186,8 @@ pub fn execute_experiments() {
             print!("{experiment_id},INIT,{target_tx}");
 
             let mut index_handler = start_experiment_by_config(&experiment);
-            println!(",{},{},{}", experiment.protocol, experiment.clock, experiment);
-            
+            println!(",{experiment}");
+            fence(SeqCst);
             experiment
                 .chain_groups
                 .into_iter()
@@ -207,6 +207,7 @@ pub fn execute_experiments() {
                     
                     index_handler = chain_experiment_by_config(&inner_group, index_handler.clone());
                     println!(",{},{},{}", experiment.protocol, experiment.clock, inner_group);
+                    fence(SeqCst);
                 });
         })
 }

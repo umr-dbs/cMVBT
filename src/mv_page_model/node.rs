@@ -1,9 +1,11 @@
+use std::arch::x86_64::_mm_mfence;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
 use std::sync;
 use std::sync::atomic::{AtomicUsize, fence};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use serde::de::Unexpected::Seq;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::InternalPage;
 use crate::mv_page_model::leaf_page::LeafPage;
@@ -89,7 +91,9 @@ impl<const FAN_OUT: usize,
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn m_type(&self) -> usize {
-        self.m_type.load(Acquire)
+        let tag = self.m_type.load(Acquire);
+        fence(Acquire);
+        tag
     }
 
     #[inline(always)]

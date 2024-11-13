@@ -1,6 +1,6 @@
 # Multi Version B+Tree
-- Release Date: 11.11.2024
-- Latest Version: 0.0.51 (Beta)
+- Release Date: 13.11.2024
+- Latest Version: 0.0.52 (Beta)
 #### Requirements:
 - OS:          Linux/Windows
 - Rustc:       >= 1.65.0 (2021 Edition)
@@ -8,6 +8,7 @@
 #### Build:
 - Standalone as `cargo build --release`.
 ---------------------------------------
+## PiBench Integration: https://github.com/umr-dbs/pibench_ext
 # Concurrency Controls
 - **MonoWriter**:
   - One writer.
