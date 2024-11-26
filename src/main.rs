@@ -53,6 +53,7 @@ fn make_splash() {
     println!(" |               # E-Mail: elshaikh@mathematik.uni-marburg.de            |");
     println!(" |               # Written by: Amir El-Shaikh                            |");
     println!(" |               # First released: 02-01-2024                            |");
+    println!("                 # Repository: https://github.com/umr-dbs/MV-BPlusTree   |");
     println!(" |               ----------------------------                            |");
     println!(" |                                                                       |");
     println!(" |               ...MV-B+Tree Application Launching...                   |");

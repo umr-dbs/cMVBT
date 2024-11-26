@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::{mem, ptr};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU16, fence};
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
 use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
@@ -134,6 +134,7 @@ impl<const FAN_OUT: usize,
                     .write(MaybeUninit::new(pointer.clone()));
             });
 
+        fence(Release);
         new_page.len.store(keys.len() as u16, Release);
 
         new_page
@@ -187,6 +188,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn commit_until(&self, index: usize) {
+        fence(Release);
         self.len.store(1 + index as u16, Release)
     }
 
@@ -204,7 +206,7 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.len();
-        self.len.store(0, Release);
+        self.len.store(0, SeqCst);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -257,7 +259,8 @@ impl<const FAN_OUT: usize,
                     .write(pointer.clone());
             });
 
-        self.len.store(len as u16 + add as u16, Release)
+        fence(Release);
+        self.len.store(len as u16 + add as u16, Release);
     }
 
     #[inline]
@@ -290,11 +293,13 @@ impl<const FAN_OUT: usize,
                     .write(MaybeUninit::new((*pointer).clone()));
             });
 
+        fence(Release);
         self.len.store(len as u16 + add as u16, Release)
     }
 
     #[inline(always)]
     pub fn len(&self) -> usize {
+        fence(Acquire);
         self.len.load(Acquire) as _
     }
 

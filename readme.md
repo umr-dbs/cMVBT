@@ -1,37 +1,16 @@
 # Multi Version B+Tree
-- Release Date: 13.11.2024
-- Latest Version: 0.0.52 (Beta)
-#### Requirements:
-- OS:          Linux/Windows
-- Rustc:       >= 1.65.0 (2021 Edition)
-
-#### Build:
-- Standalone as `cargo build --release`.
+- Release Date: 26.11.2024
+- Latest Version: 0.0.53 (Beta)
 ---------------------------------------
 ## PiBench Integration: https://github.com/umr-dbs/pibench_ext
 # Concurrency Controls
-- **MonoWriter**:
-  - One writer.
-  - Unlimited lock-free readers.
-- **ORWC** and **OLC**:
-  - Unlimited writers.
-  - Unlimited lock-free readers.
-# Operations (CC Built-in)
-- ### CreateReadUpdateDelete (CRUD) 
-  - Insert (Key, Payload)
-  - Delete (Key)
-  - Update (Key, Payload)
-  - Point Query (Key, Version)
-  - Range Query ([key_min, key_max], Version)
-  - _Lazy Iterator_ Range Query ([key_min, key_max], Version)
-- ### Snapshot Isolation
-  - Atomic Transaction: A single CRUD Operation on a Snapshot.
-  - Transaction: Collection of CRUD on a Snapshot.
-# Transaction Manager with Basic GC
-  - Execute Transactions
-  - Execute AtomicTransactions
-  - Execute Non-reader Transactions
-  - Execute Non-reader AtomicTransactions
+- **MonoWriter**: 1x writer, unlimited readers.
+- **(DEXA-24: https://link.springer.com/chapter/10.1007/978-3-031-68312-1_17) ORWC**: Unlimited all.
+- **OLC**: Unlimited all.
+# Transactions support:
+  - Transactions via Si.
+  - (CRUD) AtomicTransactions via Si.
+# Built-in (On/Off) GC via TransactionsManager.
 ---------------------------------------
 # Contact
     Name:               Amir El-Shaikh

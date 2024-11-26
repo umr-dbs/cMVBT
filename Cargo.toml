@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.52"
+version = "0.0.53"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -32,7 +32,7 @@ chrono = "0.4.38"
 rand = "0.8.5"
 itertools = "0.13.0"
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision"] }
-serde_json = "1.0.132"
+serde_json = "1.0.133"
 serde = "1.0.215"
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.162"
+libc = "0.2.165"

@@ -2,8 +2,8 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr, slice};
 use std::mem::MaybeUninit;
-use std::sync::atomic::AtomicU16;
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::{fence, AtomicU16};
+use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
 use crate::mv_block::block_manager::BlockManager;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::record_point::RecordPoint;
@@ -74,6 +74,7 @@ impl<const NUM_RECORDS: usize,
                 );
         }
 
+        fence(Release);
         new_page.len.store(leaf_page.len() as u16, Release);
 
         new_page
@@ -120,6 +121,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
+        fence(Acquire);
         self.len.load(Acquire) as _
     }
 
@@ -172,6 +174,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn commit_until(&self, index: usize) {
+        fence(Release);
         self.len.store(1 + index as u16, Release)
     }
 
@@ -187,7 +190,7 @@ impl<const NUM_RECORDS: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.len();
-        self.len.store(0, Release);
+        self.len.store(0, SeqCst);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -230,6 +233,7 @@ impl<const NUM_RECORDS: usize,
             });
         }
 
+        fence(Release);
         self.len.store(len as u16 + add as u16, Release)
     }
 
@@ -247,6 +251,7 @@ impl<const NUM_RECORDS: usize,
             });
         }
 
+        fence(Release);
         self.len.store(len as u16 + records.len() as u16, Release)
     }
 
@@ -264,6 +269,7 @@ impl<const NUM_RECORDS: usize,
             });
         }
 
+        fence(Release);
         self.len.store(len as u16 + records.len() as u16, Release)
     }
 
