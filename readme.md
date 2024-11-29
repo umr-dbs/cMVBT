@@ -1,11 +1,11 @@
 # Multi Version B+Tree
-- Release Date: 26.11.2024
-- Latest Version: 0.0.53 (Beta)
+- Release Date: 29.11.2024
+- Latest Version: 0.0.54 (Beta)
 ---------------------------------------
 ## PiBench Integration: https://github.com/umr-dbs/pibench_ext
 # Concurrency Controls
 - **MonoWriter**: 1x writer, unlimited readers.
-- **(DEXA-24: https://link.springer.com/chapter/10.1007/978-3-031-68312-1_17) ORWC**: Unlimited all.
+- **(https://link.springer.com/chapter/10.1007/978-3-031-68312-1_17) ORWC**: Unlimited all.
 - **OLC**: Unlimited all.
 # Transactions support:
   - Transactions via Si.

@@ -452,10 +452,12 @@ impl<E: Default> SmartCell<E> {
             FreeCell(ptr) => LockFree(ptr.get_mut()),
             ReadersWriterCell(rw, ..) => unsafe {
                 let lock = rw.lock();
-                transmute(RwWriterMut(
+                let ret = transmute(RwWriterMut(
                     transmute(lock),
                     self.clone(),
-                ))
+                ));
+                fence(Acquire);
+                ret
             },
             OLCCell(opt) => {
                 let read_version
@@ -480,6 +482,7 @@ impl<'a, E: Default> Drop for SmartGuard<'a, E> {
                if let OLCCell(opt) = cell.0.as_ref() {
                     opt.write_unlock(*write_version)
                 }
+            RwWriterMut(..) => fence(Release),
             _ => {}
         }
     }

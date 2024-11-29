@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::{mem, ptr};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU16, fence};
-use std::sync::atomic::Ordering::{Acquire, Release, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
@@ -206,7 +206,7 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.len();
-        self.len.store(0, SeqCst);
+        self.len.store(0, Release);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -299,8 +299,9 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
+        let len = self.len.load(Acquire) as _;
         fence(Acquire);
-        self.len.load(Acquire) as _
+        len
     }
 
     #[inline(always)]
