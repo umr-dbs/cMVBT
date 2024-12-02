@@ -91,24 +91,22 @@ impl<const FAN_OUT: usize,
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn m_type(&self) -> usize {
-        let tag = self.m_type.load(Acquire);
-        fence(Acquire);
-        tag
+        self.m_type.load(Acquire)
     }
 
     #[inline(always)]
     pub fn as_page_ref(&self) -> PageType<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type() {
-            PAGE_TYPE_INTERNAL => PageType::IndexRef(self.as_internal_page_ref()),
-            _ => PageType::LeafRef(self.as_leaf_page_ref())
+            PAGE_TYPE_INTERNAL => PageType::IndexRef(unsafe { &self.page.internal }),
+            _ => PageType::LeafRef(unsafe { &self.page.leaf })
         }
     }
 
     #[inline(always)]
     pub fn as_page_mut(&mut self) -> PageType<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self.m_type() {
-            PAGE_TYPE_INTERNAL => PageType::IndexMut(self.as_internal_page()),
-            _ => PageType::LeafMut(self.as_leaf_page())
+            PAGE_TYPE_INTERNAL => PageType::IndexMut(unsafe { &mut self.page.internal }),
+            _ => PageType::LeafMut(unsafe { &mut self.page.leaf })
         }
     }
 

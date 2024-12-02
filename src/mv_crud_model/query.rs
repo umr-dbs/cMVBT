@@ -749,7 +749,7 @@ impl<const FAN_OUT: usize,
                 internal_page.push_uncommitted(
                     fence,
                     commit_handle.read_handle_version(),
-                    fresh.clone(),
+                    fresh,
                     current_len);
 
                 let mut commit_attempts

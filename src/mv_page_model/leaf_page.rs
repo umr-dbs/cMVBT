@@ -121,8 +121,9 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
+        let len = self.len.load(Acquire) as _;
         fence(Acquire);
-        self.len.load(Acquire) as _
+        len
     }
 
     #[inline(always)]

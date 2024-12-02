@@ -273,10 +273,10 @@ impl<const FAN_OUT: usize,
 
         all_candidates.clear();
 
-        let candidate_guard = candidate_block
-            .borrow_mut();
+        let mut candidate_guard = candidate_block
+            .borrow_read();
 
-        if !candidate_guard.is_valid() {
+        if !candidate_guard.upgrade_write_lock() {
             return MergeResult::Error
         }
 
