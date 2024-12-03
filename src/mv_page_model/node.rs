@@ -39,12 +39,13 @@ impl<const FAN_OUT: usize,
     Payload: Clone + Default
 > Drop for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn drop(&mut self) {
-        fence(SeqCst);
-        match self.m_type.load(SeqCst) {
+        match self.m_type() {
             PAGE_TYPE_INTERNAL => unsafe {
+                fence(Acquire);
                 ManuallyDrop::drop(&mut self.page.internal)
             },
             PAGE_TYPE_LEAF => unsafe {
+                fence(Acquire);
                 ManuallyDrop::drop(&mut self.page.leaf)
             },
             _ => {}
