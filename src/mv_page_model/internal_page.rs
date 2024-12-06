@@ -299,7 +299,6 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        fence(Acquire);
         let len = self.len.load(Acquire) as _;
         fence(Acquire);
         len

@@ -557,12 +557,12 @@ impl<const FAN_OUT: usize,
                 //     return Err(())
                 // }
 
-                let len = root_guard.deref().unwrap().len();
+                // let len = root_guard.deref().unwrap().len();
                 match root_guard.deref().unwrap().unsafe_degree() {
                     BlockUnsafeDegree::Overflow
                     if master_guard.upgrade_write_lock() &&
                         root_guard.upgrade_write_lock() &&
-                        len == root_guard.deref().unwrap().len() &&
+                        // len == root_guard.deref().unwrap().len() &&
                         master_v == master_guard.deref().unwrap().version()
                     => Ok(self.split_root(master_guard, root_guard, height)),
                     BlockUnsafeDegree::Overflow => Err(()),
@@ -649,8 +649,10 @@ impl<const FAN_OUT: usize,
                         BlockUnsafeDegree::ActiveUnderflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
                             && curr_len == curr_guard.deref().unwrap().len() =>
-                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
-                                .unwrap(),
+                            match self.on_underflow_node(curr_guard, next_curr_guard, index) {
+                                Ok(guard) => curr_guard = guard,
+                                Err(..) => return Err((curr_level - 1, attempts + 1))
+                            },
                         BlockUnsafeDegree::Ok if curr_guard.deref().unwrap().len() == curr_len => {
                             curr_level += 1;
                             curr_guard = next_curr_guard;
