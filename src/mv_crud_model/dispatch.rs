@@ -21,12 +21,12 @@ impl<'a,
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let is_optimistic = self.locking_strategy
-            .is_optimistic();
+        let is_concurrent = self.locking_strategy
+            .is_concurrent();
 
         match crud {
             CRUDOperation::Insert(key, payload) => {
-                let leaf_guard = if is_optimistic {
+                let leaf_guard = if is_concurrent {
                     self.traversal_write_olc(key)
                 } else {
                     self.traversal_write(key)
@@ -80,7 +80,7 @@ impl<'a,
                 CRUDOperationResult::Inserted(committed_version)
             }
             CRUDOperation::Update(key, payload) => {
-                let leaf_guard = if is_optimistic {
+                let leaf_guard = if is_concurrent {
                     self.traversal_write_olc(key)
                 } else {
                     self.traversal_write(key)
@@ -146,7 +146,7 @@ impl<'a,
                 }
             }
             CRUDOperation::Delete(key) => {
-                let leaf_guard = if is_optimistic {
+                let leaf_guard = if is_concurrent {
                     self.traversal_write_olc(key)
                 } else {
                     self.traversal_write(key)

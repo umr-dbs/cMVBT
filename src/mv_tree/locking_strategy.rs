@@ -8,16 +8,6 @@ pub const fn OLC() -> LockingStrategy {
     LockingStrategy::OLC
 }
 
-#[inline(always)]
-pub const fn orwc() -> LockingStrategy {
-    orwc_attempts(4)
-}
-
-#[inline(always)]
-pub const fn orwc_attempts(attempts: Attempts) -> LockingStrategy {
-    LockingStrategy::ORWC { write_level: 1f32, write_attempt: attempts }
-}
-
 pub trait LevelExtras {
     fn is_lock(&self, height: Height, lock_from: f32) -> bool;
 }
@@ -33,10 +23,6 @@ impl LevelExtras for Level {
 pub enum LockingStrategy {
     #[default]
     MonoWriter,
-    ORWC {
-        write_level: f32,
-        write_attempt: Attempts,
-    },
     OLC,
 }
 
@@ -46,8 +32,6 @@ impl Display for LockingStrategy {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             LockingStrategy::MonoWriter => write!(f, "MonoWriter"),
-            LockingStrategy::ORWC { write_level, write_attempt } =>
-                write!(f, "ORWC(Attempts={};Level={}*height)", write_attempt, write_level),
             LockingStrategy::OLC => write!(f, "OLC"),
         }
     }
@@ -58,13 +42,12 @@ impl LockingStrategy {
     pub const fn latch_type(&self) -> LatchType {
         match self {
             LockingStrategy::MonoWriter => LatchType::None,
-            LockingStrategy::ORWC { .. } => LatchType::ReadersWriter,
             LockingStrategy::OLC => LatchType::Optimistic,
         }
     }
 
     #[inline(always)]
-    pub(crate) const fn is_optimistic(&self) -> bool {
+    pub(crate) const fn is_concurrent(&self) -> bool {
         match self {
             Self::OLC => true,
             _ => false

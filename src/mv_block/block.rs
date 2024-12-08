@@ -182,7 +182,6 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn into_cell(self, latch: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         match latch {
-            LatchType::ReadersWriter => self.into_rw(),
             LatchType::Optimistic => self.into_olc(),
             LatchType::None => self.into_free(),
         }
@@ -246,18 +245,16 @@ impl<const FAN_OUT: usize,
 }
 
 pub type BlockGuard<
-    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key,
     Payload: Clone
-> = SmartGuard<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+> = SmartGuard<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
-impl<'a,
-    const FAN_OUT: usize,
+impl<    const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
-> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
+> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
 
 }

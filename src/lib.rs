@@ -26,7 +26,6 @@ type EX_VALUE = u64;
 type MVBTreeApi = MVBPlusTree<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE>;
 
 pub const MONO: u8 = 0;
-pub const ORWC: u8 = 1;
 pub const OLC: u8 = 2;
 
 pub const OPT_CLOCK: u8 = 0;
@@ -47,8 +46,6 @@ impl Deref for MVBTreeWithGCApiExport {
 #[no_mangle]
 pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
     let index = match (protocol, clock) {
-        (ORWC, OPT_CLOCK) => MVBTreeApi::orwc_optimistic_clock(),
-        (ORWC, EXCL_CLOCK) => MVBTreeApi::orwc(),
         (OLC, OPT_CLOCK) => MVBTreeApi::olc_optimistic_clock(),
         (OLC, EXCL_CLOCK) => MVBTreeApi::olc_optimistic_clock(),
         _ => MVBTreeApi::default()

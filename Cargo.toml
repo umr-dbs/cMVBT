@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.57"
+version = "0.0.58"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -22,12 +22,9 @@ crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#CCBPlusTree = { path = "../../CLionProjects/CC-BPlusTree" }
 CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.119" }
-#crossbeam-utils = "0.8.20"
 crossbeam-channel = "0.5.13"
 threadpool = "1.8.1"
-num_cpus = "1.16.0"
 chrono = "0.4.38"
 rand = "0.8.5"
 itertools = "0.13.0"

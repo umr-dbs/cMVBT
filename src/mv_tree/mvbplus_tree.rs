@@ -13,7 +13,7 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tree::global_clock::GlobalClock;
-use crate::mv_tree::locking_strategy::{LockingStrategy, OLC, orwc};
+use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
 use crate::mv_utils::safe_cell::SafeCell;
@@ -28,16 +28,16 @@ pub const MAX_TREE_HEIGHT: Height = Height::MAX;
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ClockType {
     FREE,
-    OPTIMISTIC,
-    SYNCED,
+    OPT,
+    SYNC,
 }
 
 impl Display for ClockType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ClockType::FREE => write!(f, "FREE"),
-            ClockType::OPTIMISTIC => write!(f, "OPTIMISTIC"),
-            ClockType::SYNCED => write!(f, "SYNCED"),
+            ClockType::OPT => write!(f, "OPT"),
+            ClockType::SYNC => write!(f, "SYNC"),
         }
     }
 }
@@ -95,7 +95,7 @@ pub(crate) type RootItemGuard<
     const NUM_RECORDS: usize,
     Key,
     Payload
-> = SmartGuard<'a, RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+> = SmartGuard<RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 pub struct MVBPlusTree<
     const FAN_OUT: usize,
@@ -112,17 +112,6 @@ pub struct MVBPlusTree<
     pub(crate) min_key: Key,
     pub(crate) max_key: Key,
 }
-
-// impl<const FAN_OUT: usize,
-//     const NUM_RECORDS: usize,
-//     Key: Default + Ord + Copy + Hash + Display
-// > Drop for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key> {
-//     fn drop(&mut self) {
-//         self.block_manager = self.block_manager.clone();
-//         let y = self.root.unsafe_borrow_mut().prev.take();
-//         let x = &self.root.unsafe_borrow_mut().root.mv_block;
-//     }
-// }
 
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -168,25 +157,16 @@ impl<const FAN_OUT: usize,
         Self::make_standard(LockingStrategy::MonoWriter, ClockType::FREE)
     }
 
-    pub fn orwc() -> Self {
-        Self::make_standard(orwc(), ClockType::SYNCED)
-    }
-
-    pub fn orwc_optimistic_clock() -> Self {
-        Self::make_standard(orwc(), ClockType::OPTIMISTIC)
-    }
-
     pub fn olc_optimistic_clock() -> Self {
-        Self::make_standard(OLC(), ClockType::OPTIMISTIC)
+        Self::make_standard(OLC(), ClockType::OPT)
     }
 
     pub fn olc() -> Self {
-        Self::make_standard(OLC(), ClockType::SYNCED)
+        Self::make_standard(OLC(), ClockType::SYNC)
     }
 }
 
 pub(crate) enum MergeResult<
-    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
@@ -195,10 +175,10 @@ pub(crate) enum MergeResult<
     Merged(usize,
            Interval<Key>,
            BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
+           BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>),
     KeySplit(usize,
              BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload>,
-             BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
+             BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>),
     Error,
 }
 
@@ -238,7 +218,7 @@ impl<const FAN_OUT: usize,
             .zip(mufasa_internal_page.keys())
             .filter(|(((index, ..), ..), ..)|
                 *index != simba_index)
-            // .filter(|((.., version), ..)| version.is_active())
+            .filter(|((.., version), ..)| version.is_active())
             .sorted_by_key(|(.., fence)| fence.lower())
             .map(|(((index, bro), ..), fence)|
                 (index, bro, fence))
@@ -633,17 +613,14 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn clock_type(&self) -> ClockType {
         match self.version_manager.committed_version {
-            GlobalClock::Locked(_) => ClockType::SYNCED,
-            GlobalClock::Atomic(_) => ClockType::OPTIMISTIC,
+            GlobalClock::Locked(_) => ClockType::SYNC,
+            GlobalClock::Atomic(_) => ClockType::OPT,
             GlobalClock::Free(_) => ClockType::FREE
         }
     }
 
     pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {
         SmartCell(Arc::new(match latch_type {
-            LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
-                Mutex::new(()),
-                SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
                 OptCell::new(root_item)),
             LatchType::None => SmartFlavor::FreeCell(
@@ -668,9 +645,6 @@ impl<const FAN_OUT: usize,
         };
 
         SmartCell(Arc::new(match locking_strategy.latch_type() {
-            LatchType::ReadersWriter => SmartFlavor::ReadersWriterCell(
-                Mutex::new(()),
-                SafeCell::new(root_item)),
             LatchType::Optimistic => SmartFlavor::OLCCell(
                 OptCell::new(root_item)),
             LatchType::None => SmartFlavor::FreeCell(
@@ -691,8 +665,8 @@ impl<const FAN_OUT: usize,
 
         let version_manager = match clock_type {
             ClockType::FREE => VersionManager::new_free(),
-            ClockType::OPTIMISTIC => VersionManager::new_optimistic(),
-            ClockType::SYNCED => VersionManager::new_locked()
+            ClockType::OPT => VersionManager::new_optimistic(),
+            ClockType::SYNC => VersionManager::new_locked()
         };
 
 
@@ -733,39 +707,20 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
         match self.locking_strategy() {
-            LockingStrategy::ORWC {
-                write_level,
-                write_attempt
-            } if *write_level <= 1f32 &&
-                (height <= INIT_TREE_HEIGHT || INIT_TREE_HEIGHT as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
-                true,
             LockingStrategy::MonoWriter => false,
             LockingStrategy::OLC => false,
-            LockingStrategy::ORWC { .. } => false,
         }
     }
 
     #[inline]
     pub(crate) fn apply_for_ref(
         &self,
-        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        height: Height,
-        curr_level: Level,
-        attempts: Attempts,
-        max_level: Level,
-    ) -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
-            LockingStrategy::ORWC {
-                write_level,
-                write_attempt
-            } if curr.unsafe_borrow().as_ref().is_leaf() || *write_level <= 1f32 &&
-                (height <= curr_level || curr_level >= max_level || curr_level as f32 * write_level >= height as f32 || attempts > *write_attempt) =>
-                curr.borrow_mut(),
-            LockingStrategy::MonoWriter =>
-                curr.borrow_free(),
-            LockingStrategy::ORWC { .. } |
-            LockingStrategy::OLC=> curr.borrow_read(),
+            LockingStrategy::MonoWriter => curr.borrow_free(),
+            LockingStrategy::OLC => curr.borrow_read(),
         }
     }
     #[inline(always)]
@@ -775,7 +730,7 @@ impl<const FAN_OUT: usize,
                     min_key: Key,
                     max_key: Key,
     ) -> Self {
-        Self::make(locking_strategy, ClockType::SYNCED, inc_key, dec_key, min_key, max_key)
+        Self::make(locking_strategy, ClockType::SYNC, inc_key, dec_key, min_key, max_key)
     }
 
     #[inline(always)]

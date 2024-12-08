@@ -2,6 +2,7 @@ use std::collections::{LinkedList, VecDeque};
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
+use std::ops::BitAnd;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::{Acquire, SeqCst};
 use itertools::Itertools;
@@ -164,7 +165,7 @@ impl<const FAN_OUT: usize,
         loop {
             let root_h
                 = root_anker.borrow_read();
-            
+
             let root_item
                 = root_h.deref().unwrap();
 
@@ -218,20 +219,20 @@ impl<const FAN_OUT: usize,
     // {
     //     let mut blocks
     //         = VecDeque::new();
-    // 
+    //
     //     blocks.push_back(curr);
-    // 
+    //
     //     let mut leafs
     //         = vec![];
-    // 
+    //
     //     while !blocks.is_empty() {
     //         curr = blocks.pop_front().unwrap();
-    // 
+    //
     //         match curr.borrow_read().deref().unwrap().as_page_ref() {
     //             PageType::IndexRef(internal_page) => {
     //                 let (keys_page, versions_page) = internal_page
     //                     .keys_versions();
-    // 
+    //
     //                 blocks.extend(versions_page
     //                     .iter()
     //                     .enumerate()
@@ -250,7 +251,7 @@ impl<const FAN_OUT: usize,
     //             _ => leafs.push(curr)
     //         }
     //     }
-    // 
+    //
     //     leafs
     // }
 
@@ -294,7 +295,7 @@ impl<const FAN_OUT: usize,
     //         root.borrow_read().deref().unwrap().block(),
     //         &lookup_range,
     //         lookup_version);
-    // 
+    //
     //     CRUDOperationResult::MatchedRecords(blocks
     //         .into_iter()
     //         .map(|leaf| leaf
@@ -316,51 +317,15 @@ impl<const FAN_OUT: usize,
     //         .collect())
     // }
 
-    #[inline]
-    pub(crate) fn traversal_write(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let mut attempt = 0;
-        let mut lock_level = MAX_TREE_HEIGHT;
-
-        loop {
-            match self.traversal_write_internal(key, attempt, lock_level) {
-                Err((n_lock_level, n_attempt)) => {
-                    attempt = n_attempt;
-                    lock_level = n_lock_level;
-                }
-                Ok(guard) => break guard,
-            }
-        }
-    }
-
-    fn retrieve_root_write(
-        &self,
-        mut attempts: Attempts,
-    ) -> (
-        //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        Height,
-        Attempts)
-    {
-        loop {
-            match self.retrieve_root_write_internal(attempts) {
-                Ok((block, guard, height)) =>
-                    break (block, guard, height, attempts),
-                _ => attempts += 1
-            }
-        }
-    }
-
     pub(crate) fn split_root<'a>(
         &self,
-        master_guard: RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
-        root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
     ) -> (
         //RootItemGuard<'a, FAN_OUT, NUM_RECORDS, Key>,
         BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
-        Height)
+        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
         let root_guard_deref_mut
             = root_guard.deref_mut().unwrap();
@@ -497,111 +462,39 @@ impl<const FAN_OUT: usize,
             }
         };
 
-        (root_block, root_guard, height)
+        (root_block, root_guard)
     }
 
     #[inline]
-    fn retrieve_root_write_internal(&self, attempts: Attempts) -> Result<
-        (
-            //RootItemGuard<FAN_OUT, NUM_RECORDS, Key>,
-            BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-            BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-            Height), ()>
+    fn retrieve_root_write(&self) ->
+        (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
         let height
             = self.root.unsafe_borrow().height();
 
-        match self.is_lock(attempts, height) {
-            true => {
-                let master_guard
-                    = self.root.borrow_mut();
 
-                if !master_guard.is_valid() {
-                    return Err(())
-                }
+        let master_guard
+            = self.root.borrow_free();
 
-                let root_block
-                    = master_guard.deref_mut().unwrap().block();
+        let root_block
+            = master_guard.deref_mut().unwrap().block();
 
-                let root_guard
-                    = root_block.borrow_mut();
+        let root_guard
+            = root_block.borrow_free();
 
-                if !root_guard.is_valid() {
-                    return Err(())
-                }
-
-                match root_guard.deref().unwrap().unsafe_degree() {
-                    BlockUnsafeDegree::Overflow =>
-                        Ok(self.split_root(master_guard, root_guard, height)),
-                    _ => Ok((root_block, root_guard, height))
-                }
-            }
-            false if !self.locking_strategy.is_mono_writer() => {
-                let mut master_guard
-                    = self.root.borrow_read();
-
-                // if !master_guard.is_valid() {
-                //     return Err(())
-                // }
-
-                let master_v
-                    = master_guard.deref().unwrap().version();
-
-                let root_block
-                    = master_guard.deref().unwrap().block();
-
-                let mut root_guard
-                    = root_block.borrow_read();
-
-                // if !root_guard.is_valid() {
-                //     return Err(())
-                // }
-
-                // let len = root_guard.deref().unwrap().len();
-                match root_guard.deref().unwrap().unsafe_degree() {
-                    BlockUnsafeDegree::Overflow
-                    if master_guard.upgrade_write_lock() &&
-                        root_guard.upgrade_write_lock() &&
-                        // len == root_guard.deref().unwrap().len() &&
-                        master_v == master_guard.deref().unwrap().version()
-                    => Ok(self.split_root(master_guard, root_guard, height)),
-                    BlockUnsafeDegree::Overflow => Err(()),
-                    _ => {
-                        // fence(Acquire);
-                        Ok((root_block, root_guard, height))
-                    }
-                }
-            }
-            _ => {
-                let master_guard
-                    = self.root.borrow_free();
-
-                let root_block
-                    = master_guard.deref_mut().unwrap().block();
-
-                let root_guard
-                    = root_block.borrow_free();
-
-                match root_guard.deref().unwrap().unsafe_degree() {
-                    BlockUnsafeDegree::Overflow =>
-                        Ok(self.split_root(master_guard, root_guard, height)),
-                    _ => Ok((root_block, root_guard, height)),
-                }
-            }
+        match root_guard.deref().unwrap().unsafe_degree() {
+            BlockUnsafeDegree::Overflow => self.split_root(master_guard, root_guard, height),
+            _ => (root_block, root_guard),
         }
     }
 
     #[inline]
-    fn traversal_write_internal(&self, key: Key, attempts: Attempts, max_level: Level)
-                                -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, (LockLevel, Attempts)>
+    pub(crate) fn traversal_write(&self, key: Key)
+        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let (mut _curr_block,
-            mut curr_guard,
-            height,
-            attempts) = self.retrieve_root_write(attempts);
-
-        let mut curr_level
-            = 1 as Height;
+            mut curr_guard) = self.retrieve_root_write();
 
         loop {
             match curr_guard.deref().unwrap().as_page_ref() {
@@ -614,75 +507,38 @@ impl<const FAN_OUT: usize,
                         .enumerate()
                         .rev()
                         .find(|(.., range)| range.contains(key))
-                        .map(|(pos, ..)| pos);
-
-                    if let None = index {
-                        return Err((curr_level, attempts + 1))
-                    }
-
-                    let index
-                        = index.unwrap();
+                        .map(|(pos, ..)| pos)
+                        .unwrap();
 
                     let next_curr_block = internal_page
                         .get_pointer(index)
                         .clone();
 
                     let mut next_curr_guard = self.apply_for_ref(
-                        &next_curr_block,
-                        height,
-                        curr_level,
-                        attempts,
-                        max_level);
-
-                    let curr_len
-                        = keys_page.len();
-
-                    if let None = next_curr_guard.deref() {
-                        return Err((curr_level, attempts + 1))
-                    }
+                        &next_curr_block);
 
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
-                        BlockUnsafeDegree::Overflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
-                            && curr_len == curr_guard.deref().unwrap().len() =>
+                        BlockUnsafeDegree::Overflow =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
-                        BlockUnsafeDegree::ActiveUnderflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
-                            && curr_len == curr_guard.deref().unwrap().len() =>
-                            match self.on_underflow_node(curr_guard, next_curr_guard, index) {
-                                Ok(guard) => curr_guard = guard,
-                                Err(..) => return Err((curr_level - 1, attempts + 1))
-                            },
-                        BlockUnsafeDegree::Ok if curr_guard.deref().unwrap().len() == curr_len => {
-                            curr_level += 1;
+                        BlockUnsafeDegree::ActiveUnderflow =>
+                            curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
+                                .unwrap(),
+                        BlockUnsafeDegree::Ok => {
                             curr_guard = next_curr_guard;
                             _curr_block = next_curr_block;
                         }
-                        _ => return Err((curr_level, attempts + 1))
                     }
                 }
-                _ => return if curr_level == 1 {
-                        if curr_guard.is_write_lock() {
-                            Ok(curr_guard)
-                        } else {
-                            Err((curr_level, attempts + 1))
-                        }
-                    } else {
-                        if curr_guard.upgrade_write_lock() && curr_guard.deref().unwrap().unsafe_degree().is_ok() {
-                            Ok(curr_guard)
-                        } else {
-                            Err((curr_level, attempts + 1))
-                        }
-                    }
+                _ => return curr_guard
             }
         }
     }
 
     pub(crate) fn on_overflow_node<'a>(
         &self,
-        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        child_index: usize) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
+        child_index: usize) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
@@ -786,12 +642,12 @@ impl<const FAN_OUT: usize,
         mufasa
     }
 
-    pub(crate) fn on_underflow_node<'a>(
+    pub(crate) fn on_underflow_node(
         &self,
-        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         index_simba: usize)
-        -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
+        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
