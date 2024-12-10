@@ -1,9 +1,9 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_tree::locking_strategy::CRUDProtocol;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tx_model::transaction::AtomicTransaction;
-use crate::mv_tx_model::tx_manager::TransactionManager;
-use crossbeam_channel::{Sender, TryRecvError};
+use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
+use crate::mv_tx_model::tx_manager::{TransactionHolder, TransactionManager};
+use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::rngs::ThreadRng;
 use rand::{thread_rng, Rng};
@@ -14,14 +14,46 @@ use std::ops::Div;
 use std::sync::atomic::{fence, AtomicUsize};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
-use std::thread;
+use std::{mem, thread};
 use std::thread::{spawn, JoinHandle};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+pub fn olap(index: IndexHandler, snapshot: SnapShot, time_seconds: u64) -> Sender<()> {
+    assert!(index.is_left(),
+            "OLAP init failed! Provide an initialized TxManager!");
+
+    let (sender, receiver)
+        = bounded(0);
+
+    let olap_tx = AtomicTransaction::from_crud(
+        CRUDOperation::Point(u64::default(), snapshot)
+    ).into();
+
+    let _join_handle = spawn(move || if let Either::Left(manager) = index {
+        let _tracked = manager.enq_bookkeeping(&olap_tx);
+        let started = SystemTime::now();
+        loop {
+            if let Err(TryRecvError::Disconnected) = receiver.try_recv() {
+                break
+            }
+            else if SystemTime::now().duration_since(started).unwrap().as_secs() < time_seconds {
+                thread::sleep(Duration::from_millis(1))
+            } else {
+                break
+            }
+        }
+
+        manager.deq_book_keeping(snapshot)
+    });
+
+    sender
+}
 
 const CONFIG_PARAMETERS: &'static str = "config.json";
 
 #[derive(Clone, Serialize, Deserialize)]
-struct GroupConfig {
+pub struct GroupConfig {
+    olap: Option<(SnapShot, u64)>,
     protocol: CRUDProtocol,
     clock: ClockType,
     range_start: u64,
@@ -41,6 +73,7 @@ struct GroupConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SubGroupConfig {
+    olap: Option<(SnapShot, u64)>,
     range_start: u64,
     range_end: u64,
     lambda: f64,
@@ -93,6 +126,7 @@ impl GroupConfig {
 impl Default for GroupConfig {
     fn default() -> Self {
         Self {
+            olap: None,
             chain_groups: vec![],
             protocol: Default::default(),
             clock: ClockType::FREE,
@@ -173,21 +207,40 @@ fn load_config_experiments() -> Vec<GroupConfig> {
 }
 
 pub fn execute_experiments() {
-    // groups.iter().enumerate().for_each(|(experiment_id, chain)|
-    //     println!("[Loaded] - Experiment #{experiment_id} - Chains #{}", chain.num_chains()));
-    let groups = load_config_experiments();
+    let groups
+        = load_config_experiments();
+
+    let total_exps = groups
+        .iter()
+        .fold(groups.len(), |acc, group| acc + group.num_chains());
+
+    println!("[Loaded] - Experiments loaded #{total_exps}");
     println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time,protocol,clock,range_start,range_end,lambda,gc_enable,threads,insert_ratio,update_ratio,delete_ratio,point_reads_ratio,range_reads_ratio,range_size");
     groups
         .into_iter()
-        .into_iter()
         .enumerate()
         .for_each(|(experiment_id, experiment)| {
+            let mut olap_handle = None;
             let target_tx = experiment.total_tx;
-            print!("{experiment_id},INIT,{target_tx}");
+            if let Some((snapshot, halt)) = experiment.olap {
+                if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
+                    print!("{experiment_id},INIT_OLAP_s{snapshot}_t{halt},{target_tx}");
+                    olap_handle = Some(olap(Either::Left(Arc::new(TransactionManager::new_unmanaged(
+                        MVBPlusTree::make_standard(protocol, clock_type),
+                        experiment.gc_enable
+                    ))), snapshot, halt));
+                }
+            }
+            else {
+                print!("{experiment_id},INIT,{target_tx}");
+            }
 
-            let mut index_handler = start_experiment_by_config(&experiment);
+            let mut index_handler
+                = start_experiment_by_config(&experiment);
+
+            drop(olap_handle.take());
             println!(",{experiment}");
-            fence(SeqCst);
+
             experiment
                 .chain_groups
                 .into_iter()
@@ -195,7 +248,14 @@ pub fn execute_experiments() {
                 .for_each(|(num, inner_group)| {
                     let subgroup = num + 1;
                     let target_tx = inner_group.total_tx;
-                    print!("{experiment_id},{subgroup},{target_tx}");
+
+                    if let Some((snapshot, halt)) = inner_group.olap {
+                        print!("{experiment_id},{subgroup}_OLAP_s{snapshot}_t{halt},{target_tx}");
+                        olap_handle = Some(olap(index_handler.clone(), snapshot, halt));
+                    }
+                    else {
+                        print!("{experiment_id},{subgroup},{target_tx}");
+                    }
 
                     if let Either::Left(ref m_manager) = index_handler {
                         if inner_group.gc_enable && !m_manager.is_gc_enabled() {
@@ -205,9 +265,11 @@ pub fn execute_experiments() {
                         }
                     }
                     
-                    index_handler = chain_experiment_by_config(&inner_group, index_handler.clone());
+                    index_handler
+                        = chain_experiment_by_config(&inner_group, index_handler.clone());
+
+                    drop(olap_handle.take());
                     println!(",{},{},{}", experiment.protocol, experiment.clock, inner_group);
-                    fence(SeqCst);
                 });
         })
 }

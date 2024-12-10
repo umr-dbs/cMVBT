@@ -338,7 +338,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+    pub(crate) fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref().as_ref(), tx)
     }
 
@@ -361,6 +361,12 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     fn deq_bookkeeping(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>, si: SnapShot) {
         db_tracker.on_tx_completed(si)
+    }
+
+    pub(crate) fn deq_book_keeping(&self, si: SnapShot) {
+        if let Some(db_tracker) = self.db_tracker.as_ref() {
+            Self::deq_bookkeeping(db_tracker.clone(), si)
+        }
     }
 
     #[inline]
