@@ -15,6 +15,7 @@ use crate::mv_tx_model::tx_api::TransactionDispatcher;
 use crate::mv_utils::live_tx_index::{DBTracker, MDBTracker};
 use crate::mv_utils::safe_cell::SafeCell;
 
+#[derive(Clone)]
 pub(crate) enum TransactionHolder<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

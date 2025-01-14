@@ -1,5 +1,6 @@
-use std::{env, fs};
+use std::{env, fs, mem};
 use chrono::{DateTime, Local};
+use crate::mv_block::block::Block;
 
 mod mv_block;
 mod mv_crud_model;
@@ -27,7 +28,10 @@ mod mv_tx_model;
 
 fn main() {
     make_splash();
-    
+
+    // println!("Size of Node = {}", mem::size_of::<Block<127, 127, u64, u64>>());
+
+    // return
     mv_test::execute_experiments();
 }
 
@@ -45,18 +49,18 @@ fn make_splash() {
     println!(" |               # Build:   {}                          |", datetime.format("%d-%m-%Y %T"));
     println!(" |               # Current version: {}                               |", env!("CARGO_PKG_VERSION"));
     println!(" |               -------------------------                               |");
-    println!(" |               # OLC-HLE:   {}                                     |", hle());
-    println!(" |               # RW-HLE:    AUTO                                       |");
+    println!(" |               # HLE:   {}                                         |", hle());
+    // println!(" |               # RW-HLE:    AUTO                                       |");
     println!(" |               -----------------                                       |");
     println!(" |                                                                       |");
     println!(" |               --------------------------------------------            |");
     println!(" |               # E-Mail: elshaikh@mathematik.uni-marburg.de            |");
     println!(" |               # Written by: Amir El-Shaikh                            |");
     println!(" |               # First released: 02-01-2024                            |");
-    println!("                 # Repository: https://github.com/umr-dbs/MV-BPlusTree   |");
-    println!(" |               ----------------------------                            |");
+    println!(" |               # Repository: https://github.com/umr-dbs/MV-BPlusTree   |");
+    println!(" |               -----------------------------------------------------   |");
     println!(" |                                                                       |");
-    println!(" |               ...MV-B+Tree Application Launching...                   |");
+    println!(" |               ...MV-B⁺Tree Application Launching...                   |");
     println!(" +-------------+                                           +-------------+");
     println!("                \\_______                           _______/");
     println!("                        \\_________________________/");

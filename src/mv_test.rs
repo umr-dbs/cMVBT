@@ -11,42 +11,48 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
 use std::ops::Div;
-use std::sync::atomic::{fence, AtomicUsize};
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::{fence, AtomicU64, AtomicUsize};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use std::sync::Arc;
 use std::{mem, thread};
+use std::os::unix::thread::JoinHandleExt;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 
-pub fn olap(index: IndexHandler, snapshot: SnapShot, time_seconds: u64) -> Sender<()> {
+pub fn olap(index: IndexHandler, snapshot: SnapShot, number_olaps: u64) -> Arc<AtomicU64> {
     assert!(index.is_left(),
             "OLAP init failed! Provide an initialized TxManager!");
 
-    let (sender, receiver)
-        = bounded(0);
+    let olaps = Arc::new(AtomicU64::new(0));
+    let olaps_clone_1 = olaps.clone();
+    let olaps_clone_2 = olaps.clone();
 
-    let olap_tx = AtomicTransaction::from_crud(
-        CRUDOperation::Point(u64::default(), snapshot)
-    ).into();
+    let _join_handle = spawn(move || if let Either::Left(m_manager) = index {
+        let manager = m_manager.clone();
+        let olap_runner = spawn(move || {
+            let olap_tx = AtomicTransaction::new(
+                Some(snapshot),
+                CRUDOperation::Range((u64::MIN..=u64::MAX).into(), snapshot)).into();
 
-    let _join_handle = spawn(move || if let Either::Left(manager) = index {
-        let _tracked = manager.enq_bookkeeping(&olap_tx);
-        let started = SystemTime::now();
-        loop {
-            if let Err(TryRecvError::Disconnected) = receiver.try_recv() {
-                break
+            let _tracked = manager.enq_bookkeeping(&olap_tx);
+            loop {
+                let _tx_res = manager.execute_on_caller_thread(olap_tx.clone());
+                olaps_clone_1.fetch_add(1, Release);
             }
-            else if SystemTime::now().duration_since(started).unwrap().as_secs() < time_seconds {
+        });
+
+        loop {
+            if olaps_clone_2.load(Acquire) < number_olaps {
                 thread::sleep(Duration::from_millis(1))
             } else {
+                unsafe { let _e = libc::pthread_cancel(olap_runner.as_pthread_t()); }
                 break
             }
         }
-
-        manager.deq_book_keeping(snapshot)
+        let _untracked = m_manager.deq_book_keeping(snapshot);
     });
 
-    sender
+    olaps
 }
 
 const CONFIG_PARAMETERS: &'static str = "config.json";
@@ -238,7 +244,14 @@ pub fn execute_experiments() {
             let mut index_handler
                 = start_experiment_by_config(&experiment);
 
-            drop(olap_handle.take());
+            while let (Some(olap_handle), Some((.., n_olaps)))
+                = (&olap_handle, &experiment.olap)
+            {
+                if olap_handle.load(Acquire) < *n_olaps {
+                    thread::yield_now();
+                }
+            }
+            // drop(olap_handle.take());
             println!(",{experiment}");
 
             experiment
@@ -250,7 +263,7 @@ pub fn execute_experiments() {
                     let target_tx = inner_group.total_tx;
 
                     if let Some((snapshot, halt)) = inner_group.olap {
-                        print!("{experiment_id},{subgroup}_OLAP_s{snapshot}_t{halt},{target_tx}");
+                        print!("{experiment_id},{subgroup}_OLAP_s{snapshot}_n{halt},{target_tx}");
                         olap_handle = Some(olap(index_handler.clone(), snapshot, halt));
                     }
                     else {
@@ -268,7 +281,15 @@ pub fn execute_experiments() {
                     index_handler
                         = chain_experiment_by_config(&inner_group, index_handler.clone());
 
-                    drop(olap_handle.take());
+                    while let (Some(olap_handle), Some((.., n_olaps)))
+                        = (&olap_handle, &experiment.olap)
+                    {
+                        if olap_handle.load(Acquire) < *n_olaps {
+                            thread::yield_now();
+                        }
+                    }
+
+                    // drop(olap_handle.take());
                     println!(",{},{},{}", experiment.protocol, experiment.clock, inner_group);
                 });
         })
@@ -381,8 +402,8 @@ fn run_experiment_with_params(
     index_handler
 }
 
-pub const FAN_OUT: usize = 127;
-pub const NUM_RECORDS: usize = 127;
+pub const FAN_OUT: usize = 127 - 5;
+pub const NUM_RECORDS: usize = 127 - 5;
 
 pub type Key = u64;
 pub type Payload = u64;
