@@ -2,6 +2,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::mv_page_model::{Attempts, BlockRef, Height};
+use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::smart_cell::sched_yield;
@@ -88,15 +89,16 @@ impl<const FAN_OUT: usize,
                 = curr_guard.deref();
 
             match curr_guard_result.unwrap().as_page_ref() {
-                PageType::IndexRef(internal_page) => {
-                    let keys_page = internal_page
-                        .keys();
+                PageType::IndexRef(internal_page) => unsafe {
+                    let (keys_page, versions_page) = internal_page
+                        .keys_versions();
 
                     let index = keys_page
                         .iter()
                         .enumerate()
-                        .rev()
-                        .find(|(.., range)| range.contains(key))
+                        .rfind(|(pos, range)|
+                            versions_page.get_unchecked(*pos).is_active() &&
+                                range.contains(key))
                         .map(|(pos, ..)| pos);
 
                     if let None = index {

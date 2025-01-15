@@ -149,18 +149,18 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
-        match self.m_type()  {
-            PAGE_TYPE_INTERNAL => unsafe {
-                let deref
-                    = &self.page.internal;
-
-                deref.keys_versions()
-            },
-            _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions")
-        }
-    }
+    // #[inline(always)]
+    // pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
+    //     match self.m_type()  {
+    //         PAGE_TYPE_INTERNAL => unsafe {
+    //             let deref
+    //                 = &self.page.internal;
+    //
+    //             deref.keys_versions()
+    //         },
+    //         _ => unreachable!("Sleepy Joe hit me -> Not tree Page .keys_versions")
+    //     }
+    // }
 
     #[inline(always)]
     pub unsafe fn keys(&self) -> &[Interval<Key>] {

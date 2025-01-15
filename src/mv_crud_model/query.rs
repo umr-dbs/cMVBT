@@ -115,16 +115,19 @@ impl<'a,
 
                     match versions_page
                         .iter()
+                        .zip(keys_page.iter())
                         .enumerate()
-                        .rev()
-                        .zip(keys_page
-                            .iter()
-                            .rev())
-                        .filter(|((.., v), ..)| v.matched(self.snapshot()))
-                        .find(|(.., range)| range.contains(self.range.lower))
-                        .map(|((pos, ..), key)| (key.clone(), internal_page
-                            .get_pointer(pos)
-                            .clone()))
+                        .rfind(|(_, (v, _))| v.matched(self.snapshot()))
+                        .and_then(|(pos, (_, range))| {
+                            if range.contains(self.range.lower) {
+                                Some((
+                                    range.clone(),
+                                    internal_page.get_pointer(pos).clone(),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
                     {
                         Some(next) => self.path.push(next),
                         _ => self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(fence.upper)
@@ -135,10 +138,11 @@ impl<'a,
                         .as_records()
                         .iter()
                         .rev()
-                        .filter(|r| r.version().matches(self.snapshot()))
-                        .filter(|r| self.range.contains(r.key()))
+                        .filter(|r|
+                            r.version().matches(self.snapshot()) && self.range.contains(r.key()))
+                        // .filter(|r| self.range.contains(r.key()))
                         .sorted_by_key(|r| r.key())
-                        .map(|r| RecordPointResult::from(r)));
+                        .map(RecordPointResult::from));
 
                     self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(fence.upper);
                     self.path.pop();
@@ -199,11 +203,9 @@ impl<const FAN_OUT: usize,
                 .iter()
                 .zip(keys_page)
                 .enumerate()
-                .rev()
-                .filter(|(.., (v, ..))| v.matched(lookup_version))
-                .find(|(.., (.., range))| range.contains(key))
-                .map(|(pos, ..)| internal_page.get_pointer(pos))
-                .cloned()
+                .rfind(|(_, (v, (range)))|
+                    v.matched(lookup_version) && range.contains(key))
+                .map(|(pos, _)| internal_page.get_pointer(pos).clone())
                 .ok_or(())?
         }
 
@@ -273,9 +275,7 @@ impl<const FAN_OUT: usize,
                 .unwrap()
                 .as_records()
                 .iter()
-                .rev()
-                .filter(|r| r.key() == key)
-                .find(|r| r.version().matches(lookup_version))
+                .rfind(|r| r.key() == key && r.version().matches(lookup_version))
             {
                 None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
                 Some(result) => CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
@@ -330,7 +330,7 @@ impl<const FAN_OUT: usize,
         let root_guard_deref_mut
             = root_guard.deref_mut().unwrap();
 
-        let (height, root_block) = match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
+        let (_height, root_block) = match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,
@@ -505,8 +505,8 @@ impl<const FAN_OUT: usize,
                     let index = keys_page
                         .iter()
                         .enumerate()
-                        .rev()
-                        .find(|(.., range)| range.contains(key))
+                        // .rev()
+                        .rfind(|(.., range)| range.contains(key))
                         .map(|(pos, ..)| pos)
                         .unwrap();
 

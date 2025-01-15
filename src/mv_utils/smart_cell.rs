@@ -274,7 +274,7 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
         match self {
             OLCWriter(cell, latch) => unsafe {
                 let down = OLCReader(
-                    transmute_copy(cell),
+                    cell.clone(),
                     (*latch & !WRITE_OBSOLETE_FLAG_VERSION) + 1
                 );
                 *self = down;

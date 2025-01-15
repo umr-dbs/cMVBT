@@ -176,7 +176,7 @@ impl<const FAN_OUT: usize,
 
     pub(crate) fn pass_aux_tx_tracker(&self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
         // if db_tracker.is_some() {
-        debug_assert!(db_tracker.is_some());
+        // debug_assert!(db_tracker.is_some());
         
         *self.db_tracker.get_mut() = db_tracker;
             // self.db_tracker = SafeCell::new(db_tracker);

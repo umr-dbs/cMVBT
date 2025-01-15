@@ -19,6 +19,7 @@ use std::os::unix::thread::JoinHandleExt;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 
+pub const DEBUG: bool = true;
 pub fn olap(index: IndexHandler, snapshot: SnapShot, number_olaps: u64) -> Arc<AtomicU64> {
     assert!(index.is_left(),
             "OLAP init failed! Provide an initialized TxManager!");
@@ -402,8 +403,17 @@ fn run_experiment_with_params(
     index_handler
 }
 
-pub const FAN_OUT: usize = 127 - 5;
-pub const NUM_RECORDS: usize = 127 - 5;
+pub const FILLED_BLOCK: usize = 127;
+pub const F_MUL: usize = 2;
+pub const N_MUL: usize = 2;
+pub const N_OFF: usize = 5;
+pub const F_OFF: usize = 5;
+
+pub const N_ABS_OFF: usize = 0;
+pub const F_ABS_OFF: usize = 0;
+
+pub const FAN_OUT: usize = F_MUL * (FILLED_BLOCK - F_OFF) - F_ABS_OFF;
+pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
 
 pub type Key = u64;
 pub type Payload = u64;
