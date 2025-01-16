@@ -18,6 +18,7 @@ use std::{mem, thread};
 use std::os::unix::thread::JoinHandleExt;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
+use rand::distributions::Alphanumeric;
 
 pub const DEBUG: bool = true;
 pub fn olap(index: IndexHandler, snapshot: SnapShot, number_olaps: u64) -> Arc<AtomicU64> {
@@ -196,7 +197,7 @@ impl Display for SubGroupConfig {
 }
 
 type IndexHandler =
-    Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, u64, u64>>, (CRUDProtocol, ClockType)>;
+    Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>>, (CRUDProtocol, ClockType)>;
 
 fn load_config_experiments() -> Vec<GroupConfig> {
     match OpenOptions::new().read(true).open(CONFIG_PARAMETERS) {
@@ -416,7 +417,50 @@ pub const FAN_OUT: usize = F_MUL * (FILLED_BLOCK - F_OFF) - F_ABS_OFF;
 pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
 
 pub type Key = u64;
-pub type Payload = u64;
+pub type Payload = PayloadIndirection;
+
+pub const PAYLOAD_STR_LEN_MIN: usize = 704;
+pub const PAYLOAD_STR_LEN_MAX: usize = 7078;
+pub const PAYLOAD_ATTR_STR_COUNT: usize = 67;
+
+fn rnd_str(len_min: usize, len_max: usize) -> String {
+    let len = thread_rng().gen_range(len_min..=len_max);
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
+}
+
+fn rnd_str_vec(items: usize, str_len_min: usize, str_len_max: usize) -> Vec<String> {
+    (0..items)
+        .map(|i| rnd_str(str_len_min, str_len_max))
+        .collect()
+}
+#[derive(Clone)]
+pub struct PayloadIndirection(Box<PayloadData>);
+
+#[derive(Clone)]
+pub struct PayloadData {
+    attributes: Vec<String>
+}
+
+impl PayloadData {
+    pub fn attr(&self, i: usize) -> &str {
+        self.attributes.get(i).unwrap()
+    }
+}
+
+impl Default for PayloadIndirection {
+    fn default() -> Self {
+        Self(Box::new(PayloadData {
+            attributes: rnd_str_vec(
+                PAYLOAD_ATTR_STR_COUNT,
+                PAYLOAD_STR_LEN_MIN,
+                PAYLOAD_STR_LEN_MAX),
+        }))
+    }
+}
 
 pub fn inc_key(k: Key) -> Key {
     k.checked_add(1).unwrap_or(Key::MAX)
@@ -495,11 +539,11 @@ fn experiment(
                 let (mut tx_success, mut tx_error, start_execution_time) =
                     (0usize, 0usize, SystemTime::now());
 
-                let local_tx = |key: u64| -> AtomicTransaction<u64, u64> {
+                let local_tx = |key: Key| -> AtomicTransaction<Key, Payload> {
                     let random_number = thread_rng().gen_range(0..100);
 
                     if random_number < insert_ratio {
-                        AtomicTransaction::from_crud(CRUDOperation::Insert(key, u64::default()))
+                        AtomicTransaction::from_crud(CRUDOperation::Insert(key, Payload::default()))
                     } else if random_number < insert_ratio + points_reads_ratio {
                         AtomicTransaction::from_crud(CRUDOperation::PointSi(key))
                     } else if random_number < insert_ratio + points_reads_ratio + range_reads_ratio
@@ -518,7 +562,7 @@ fn experiment(
                     {
                         AtomicTransaction::from_crud(CRUDOperation::Delete(key))
                     } else {
-                        AtomicTransaction::from_crud(CRUDOperation::Update(key, u64::default()))
+                        AtomicTransaction::from_crud(CRUDOperation::Update(key, Payload::default()))
                     }
                 };
 
