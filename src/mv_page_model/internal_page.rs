@@ -142,12 +142,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub const fn new() -> Self {
-        debug_assert!(mem::size_of::<[Interval<Key>; FAN_OUT]>() +
-                          mem::size_of::<[Version; FAN_OUT]>() +
-                          mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>; FAN_OUT]>() +
-                          mem::size_of::<Len>()
-                          <= 4096, "FAN_OUT Invalid!"
-        );
+        // debug_assert!(mem::size_of::<[Interval<Key>; FAN_OUT]>() +
+        //                   mem::size_of::<[Version; FAN_OUT]>() +
+        //                   mem::size_of::<[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>; FAN_OUT]>() +
+        //                   mem::size_of::<Len>()
+        //                   <= 4096, "FAN_OUT Invalid!"
+        // );
         unsafe {
             InternalPage {
                 len: Len::new(0),
@@ -323,6 +323,11 @@ impl<const FAN_OUT: usize,
             (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
              std::slice::from_raw_parts(self.version_region.as_ptr() as _, len))
         }
+    }
+
+    #[inline(always)]
+    pub fn last_child(&self) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        self.get_pointer(self.len() - 1)
     }
 
     #[inline(always)]

@@ -19,6 +19,7 @@ use std::os::unix::thread::JoinHandleExt;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 use rand::distributions::Alphanumeric;
+use crate::mv_page_model::node::PageType;
 
 pub const DEBUG: bool = true;
 pub fn olap(index: IndexHandler, snapshot: SnapShot, number_olaps: u64) -> Arc<AtomicU64> {
@@ -223,7 +224,7 @@ pub fn execute_experiments() {
         .fold(groups.len(), |acc, group| acc + group.num_chains());
 
     println!("[Loaded] - Experiments loaded #{total_exps}");
-    println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time,protocol,clock,range_start,range_end,lambda,gc_enable,threads,insert_ratio,update_ratio,delete_ratio,point_reads_ratio,range_reads_ratio,range_size");
+    println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time,protocol,clock,range_start,range_end,lambda,gc_enable,threads,insert_ratio,update_ratio,delete_ratio,point_reads_ratio,range_reads_ratio,range_size,log_height,actual_height");
     groups
         .into_iter()
         .enumerate()
@@ -254,7 +255,8 @@ pub fn execute_experiments() {
                 }
             }
             // drop(olap_handle.take());
-            println!(",{experiment}");
+            let (h, r) = height_root(&index_handler);
+            println!(",{experiment},{h},{r}");
 
             experiment
                 .chain_groups
@@ -292,7 +294,8 @@ pub fn execute_experiments() {
                     }
 
                     // drop(olap_handle.take());
-                    println!(",{},{},{}", experiment.protocol, experiment.clock, inner_group);
+                    let (h, r) = height_root(&index_handler);
+                    println!(",{},{},{},{h},{r}", experiment.protocol, experiment.clock, inner_group);
                 });
         })
 }
@@ -405,11 +408,10 @@ fn run_experiment_with_params(
 }
 
 pub const FILLED_BLOCK: usize = 127;
-pub const F_MUL: usize = 2;
-pub const N_MUL: usize = 2;
-pub const N_OFF: usize = 5;
-pub const F_OFF: usize = 5;
-
+pub const F_MUL: usize = 1;
+pub const N_MUL: usize = 4;
+pub const N_OFF: usize = 0;
+pub const F_OFF: usize = 0;
 pub const N_ABS_OFF: usize = 0;
 pub const F_ABS_OFF: usize = 0;
 
@@ -417,7 +419,8 @@ pub const FAN_OUT: usize = F_MUL * (FILLED_BLOCK - F_OFF) - F_ABS_OFF;
 pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
 
 pub type Key = u64;
-pub type Payload = PayloadIndirection;
+// pub type Payload = PayloadIndirection;
+pub type Payload = u64;
 
 pub const PAYLOAD_STR_LEN_MIN: usize = 704;
 pub const PAYLOAD_STR_LEN_MAX: usize = 7078;
@@ -609,4 +612,26 @@ pub fn format_insertions(i: usize) -> String {
     } else {
         i.to_string()
     }
+}
+
+fn height_root(index_handler: &IndexHandler) -> (usize, usize) {
+    if let Either::Left(m_manager) = index_handler {
+        let index = m_manager.index();
+        let log_height = index.root.0.height() as usize;
+        let mut real_height = 1usize;
+
+        let mut curr_block = index.root.borrow_read().deref().unwrap().block();
+        let mut curr_guard = curr_block.borrow_read();
+        loop {
+            match curr_guard.deref().unwrap().as_page_ref() {
+                PageType::IndexRef(page) => {
+                    curr_block = page.get_pointer(0).clone();
+                    curr_guard = curr_block.borrow_read();
+                },
+                _ => return (log_height, real_height),
+            }
+            real_height += 1;
+        }
+    }
+    unreachable!()
 }

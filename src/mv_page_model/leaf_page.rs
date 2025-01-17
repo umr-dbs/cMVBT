@@ -82,9 +82,9 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub const fn new() -> Self {
-        debug_assert!(mem::size_of::<Len>() +
-                          mem::size_of::<[RecordPoint<Key, Payload>; NUM_RECORDS]>()
-                          <= 4096, "FAN_OUT Invalid!");
+        // debug_assert!(mem::size_of::<Len>() +
+        //                   mem::size_of::<[RecordPoint<Key, Payload>; NUM_RECORDS]>()
+        //                   <= 4096, "FAN_OUT Invalid!");
         Self {
             len: Len::new(0),
             record_data: unsafe { MaybeUninit::uninit().assume_init() }, // <[MaybeUninit<Entry>; NUM_RECORDS]>::

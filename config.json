@@ -6,8 +6,8 @@
     "range_start":        0,
     "range_end":          18446744073709551615,
     "lambda":             1024,
-    "gc_enable":          false,
-    "threads":            64,
+    "gc_enable":          true,
+    "threads":            16,
     "total_tx":           1000000,
     "insert_ratio":       100,
     "update_ratio":       0,
@@ -15,38 +15,6 @@
     "point_reads_ratio":  0,
     "range_reads_ratio":  0,
     "range_size":         0,
-    "chain_groups":  [
-                                
-      {
-        "olap":               null,
-        "range_start":        0,
-        "range_end":          18446744073709551615,
-        "lambda":             1024,
-        "gc_enable":          false,
-        "threads":            64,
-        "total_tx":           1000000,
-        "insert_ratio":       0,
-        "update_ratio":       100,
-        "delete_ratio":       0,
-        "point_reads_ratio":  0,
-        "range_reads_ratio":  0,
-        "range_size":         0
-      },
-      {
-        "olap":               [0, 10000],
-        "range_start":        0,
-        "range_end":          18446744073709551615,
-        "lambda":             1024,
-        "gc_enable":          false,
-        "threads":            128,
-        "total_tx":           1000000,
-        "insert_ratio":       0,
-        "update_ratio":       100,
-        "delete_ratio":       0,
-        "point_reads_ratio":  0,
-        "range_reads_ratio":  0,
-        "range_size":         0
-      }
-    ]
+    "chain_groups":  []
   }
 ]

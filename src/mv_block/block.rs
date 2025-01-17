@@ -5,6 +5,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use crate::mv_block::block_manager::BlockManager;
 
 use crate::mv_page_model::{BlockRef, node};
+use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::mv_page_model::leaf_page::LeafPage;
 use crate::mv_page_model::node::{Node, PageType};
 use crate::mv_test::Payload;
@@ -129,7 +130,46 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn min_active_units(&self) -> usize {
+    pub fn unsafe_degree_root(&self) -> BlockUnsafeDegree {
+        let active
+            = self.active_count();
+
+        let is_leaf
+            = self.is_leaf();
+
+        // if !is_leaf {
+        //     match self.try_as_internal_page_ref() {
+        //         Ok(page) => {
+        //             let (root_keys, root_versions, root_children)
+        //                 = page.keys_versions_pointers();
+        //             let count_child_active = root_keys
+        //                 .iter()
+        //                 .zip(root_versions)
+        //                 .zip(root_children)
+        //                 .filter(|((_, version), _)| version.is_active())
+        //                 .count() + active;
+        //
+        //             if count_child_active < self.max_active_units() {
+        //                 return BlockUnsafeDegree::ActiveUnderflow
+        //             }
+        //         },
+        //         _ => {}
+        //     };
+        // }
+
+        if active == 1 && !is_leaf { // single child
+            BlockUnsafeDegree::ActiveUnderflow
+        }
+        else if active > self.max_active_units() || self.len() >= self.max_units_safe() {
+            BlockUnsafeDegree::Overflow
+        }
+        else {
+            BlockUnsafeDegree::Ok
+        }
+    }
+
+    #[inline(always)]
+    pub fn min_active_units(&self) -> usize { // 40%
         match self.is_leaf() {
             true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records(),
             false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys()
@@ -137,10 +177,10 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn max_active_units(&self) -> usize {
+    pub fn max_active_units(&self) -> usize { // 80%
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records() * 4,
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys() * 4
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records() * 2,
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys() * 2
         }
     }
 

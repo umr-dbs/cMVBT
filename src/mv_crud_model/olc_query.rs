@@ -50,10 +50,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn retrieve_root_write_internal_olc(&self, _attempts: Attempts) -> Result<
+    fn retrieve_root_write_internal_olc(&self, attempts: Attempts) -> Result<
         (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
     {
+        if attempts > 0 {
+            sched_yield(attempts);
+        }
+
         let height
             = self.root.unsafe_borrow().height();
         
@@ -66,12 +70,16 @@ impl<const FAN_OUT: usize,
         let mut root_guard
             = root_block.borrow_read();
 
-        match root_guard.deref().unwrap().unsafe_degree() {
+        match root_guard.deref().unwrap().unsafe_degree_root() {
             BlockUnsafeDegree::Overflow
             if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking
                 root_guard.upgrade_write_lock()
             => Ok(self.split_root(master_guard, root_guard, height)),
-            _ if master_guard.is_valid() => Ok((root_block, root_guard)),
+            BlockUnsafeDegree::ActiveUnderflow
+            if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
+                self.merge_root(master_guard, root_guard, height)
+                    .or(self.retrieve_root_write_internal_olc(attempts + 1)),
+            BlockUnsafeDegree::Ok if master_guard.is_valid() => Ok((root_block, root_guard)),
             _ => Err(()),
         }
     }

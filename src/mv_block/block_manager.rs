@@ -134,13 +134,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub const fn min_active_records() -> usize { // 20%
-        Self::max_records() / 5
+    pub const fn min_active_records() -> usize { // 40%
+        (2 * Self::max_records()) / 5
     }
 
     #[inline(always)]
-    pub const fn min_active_keys() -> usize { // 20%
-        (Self::max_keys()) / 5
+    pub const fn min_active_keys() -> usize { // 40%
+        (2 * Self::max_keys()) / 5
     }
 
     #[inline(always)]

@@ -1,7 +1,7 @@
 use std::{env, fs, mem};
 use chrono::{DateTime, Local};
 use crate::mv_block::block::Block;
-use crate::mv_test::{DEBUG, FAN_OUT, NUM_RECORDS};
+use crate::mv_test::{Key, Payload, DEBUG, FAN_OUT, NUM_RECORDS};
 
 mod mv_block;
 mod mv_crud_model;
@@ -30,11 +30,11 @@ mod mv_tx_model;
 fn main() {
     if DEBUG {
         println!(">>HLE: {}", hle());
-        println!(">>size_of::<Block<127, 127, u64, u64>>()) = {}",
-                 size_of::<Block<127, 127, u64, u64>>());
-        println!();
+        // println!(">>size_of::<Block<127, 127, u64, u64>>()) = {}",
+        //          size_of::<Block<127, 127, u64, u64>>());
+        // println!();
         println!(">>FAN_OUT: {FAN_OUT}\n>>NUM_RECORDS: {NUM_RECORDS}\n>>size_of(BLOCK): {}",
-                 size_of::<Block<FAN_OUT, NUM_RECORDS, u64, u64>>());
+                 size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>());
         println!();
     }
     else {

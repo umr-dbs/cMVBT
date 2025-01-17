@@ -1,23 +1,22 @@
-use std::collections::{LinkedList, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
-use std::ops::BitAnd;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::{Acquire, SeqCst};
+use std::ops::DerefMut;
 use itertools::Itertools;
-use crate::mv_block::block::{Block, BlockGuard, BlockSplit, BlockUnsafeDegree};
+use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_page_model::{Attempts, BlockRef, Height, Level};
+use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_tree::mvbplus_tree::{MVBPlusTree, LockLevel, MAX_TREE_HEIGHT, SmartRoot, RootItemGuard, MergeResult};
+use crate::mv_tree::mvbplus_tree::{MVBPlusTree, SmartRoot, RootItemGuard, MergeResult, RootItem};
+use crate::mv_tree::root::Root;
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::smart_cell::{sched_yield, SmartCell};
+use crate::mv_utils::smart_cell::sched_yield;
 
 pub struct RangeQueryIter<
     'a,
@@ -317,6 +316,73 @@ impl<const FAN_OUT: usize,
     //         .collect())
     // }
 
+    #[inline]
+    pub(crate) fn merge_root(
+        &self,
+        master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        height: Height,
+    ) -> Result<
+        (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
+    {
+        // println!("merge root");
+        let child_ptr = root_guard
+            .deref()
+            .unwrap()
+            .as_internal_page_ref()
+            .last_child();
+
+        let mut child_guard = child_ptr
+            .borrow_read();
+
+        if !child_guard.upgrade_write_lock() {
+            return Err(())
+        }
+
+        Ok(self.split_root(master_guard, child_guard, height - 1))
+
+        // let new_root = Self::make_smart_root(
+        //     self.locking_strategy.latch_type(),
+        //     RootItem {
+        //         root: Root {
+        //             block: root_guard
+        //                 .deref()
+        //                 .unwrap()
+        //                 .as_internal_page_ref()
+        //                 .clone()
+        //                 .into_cell(self.locking_strategy().latch_type()),
+        //             version: 0,
+        //             height: height - 1,
+        //         },
+        //         prev: Some(self.root.clone()),
+        //     });
+        //
+        // let mut commit_handle
+        //     = self.begin_commit();
+        //
+        // let mut commit_attempts = 0;
+        // loop {
+        //     match self.try_end_commit(commit_handle) {
+        //         Ok(commit) => {
+        //             new_root.unsafe_borrow_mut().root.version = commit;
+        //             break
+        //         },
+        //         Err(opt) => {
+        //             commit_attempts += 1;
+        //             sched_yield(commit_attempts);
+        //             commit_handle = opt
+        //         }
+        //     }
+        // };
+        //
+        // let mut n_root_guard = new_root.0.root.block.borrow_read();
+        // let _wf = n_root_guard.upgrade_write_lock();
+        //
+        // let _ = mem::replace(self.root.get_mut(), new_root.clone());
+        // (new_root.0.block(), n_root_guard)
+    }
+
     pub(crate) fn split_root<'a>(
         &self,
         master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -473,7 +539,6 @@ impl<const FAN_OUT: usize,
         let height
             = self.root.unsafe_borrow().height();
 
-
         let master_guard
             = self.root.borrow_free();
 
@@ -483,8 +548,10 @@ impl<const FAN_OUT: usize,
         let root_guard
             = root_block.borrow_free();
 
-        match root_guard.deref().unwrap().unsafe_degree() {
+        match root_guard.deref().unwrap().unsafe_degree_root() {
             BlockUnsafeDegree::Overflow => self.split_root(master_guard, root_guard, height),
+            BlockUnsafeDegree::ActiveUnderflow => self.merge_root(master_guard, root_guard, height)
+                .unwrap(),
             _ => (root_block, root_guard),
         }
     }

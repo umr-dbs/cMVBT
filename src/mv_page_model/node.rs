@@ -265,6 +265,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn try_as_internal_page_ref(&self) -> Result<&InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>, ()> {
+        match self.m_type()  {
+            PAGE_TYPE_INTERNAL => unsafe { Ok(&self.page.internal) },
+            _ => Err(())
+        }
+    }
+
+    #[inline(always)]
     pub fn len(&self) -> usize {
         match self.m_type()  {
             PAGE_TYPE_INTERNAL => unsafe { self.page.internal.len() },
