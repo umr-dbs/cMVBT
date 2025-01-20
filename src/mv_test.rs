@@ -224,7 +224,32 @@ pub fn execute_experiments() {
         .fold(groups.len(), |acc, group| acc + group.num_chains());
 
     println!("[Loaded] - Experiments loaded #{total_exps}");
-    println!("experiment_id,chain_id,tx_target,tx_executed,tx_success,tx_fail,time,protocol,clock,range_start,range_end,lambda,gc_enable,threads,insert_ratio,update_ratio,delete_ratio,point_reads_ratio,range_reads_ratio,range_size,log_height,actual_height");
+    println!("\
+    experiment_id,\
+    chain_id,\
+    tx_target,\
+    tx_executed,\
+    tx_success,\
+    tx_fail,\
+    time,\
+    protocol,\
+    clock,\
+    range_start,\
+    range_end,\
+    lambda,\
+    gc_enable,\
+    threads,\
+    insert_ratio,\
+    update_ratio,\
+    delete_ratio,\
+    point_reads_ratio,\
+    range_reads_ratio,\
+    range_size,\
+    log_height,\
+    actual_height,\
+    blocks_allocated,\
+    blocks_reused");
+
     groups
         .into_iter()
         .enumerate()
@@ -256,7 +281,8 @@ pub fn execute_experiments() {
             }
             // drop(olap_handle.take());
             let (h, r) = height_root(&index_handler);
-            println!(",{experiment},{h},{r}");
+            let (alloc, reuse) = block_alloc_reuses(&index_handler);
+            println!(",{experiment},{h},{r},{alloc},{reuse}");
 
             experiment
                 .chain_groups
@@ -295,7 +321,11 @@ pub fn execute_experiments() {
 
                     // drop(olap_handle.take());
                     let (h, r) = height_root(&index_handler);
-                    println!(",{},{},{},{h},{r}", experiment.protocol, experiment.clock, inner_group);
+                    let (alloc, reuse) = block_alloc_reuses(&index_handler);
+                    println!(",{},{},{},{h},{r},{alloc},{reuse}",
+                             experiment.protocol,
+                             experiment.clock,
+                             inner_group);
                 });
         })
 }
@@ -611,6 +641,16 @@ pub fn format_insertions(i: usize) -> String {
         format!("{} K", i as f64 / 1_000_f64)
     } else {
         i.to_string()
+    }
+}
+
+fn block_alloc_reuses(index_handler: &IndexHandler) -> (usize, usize) {
+    if let Either::Left(manager) = index_handler {
+        (manager.index().block_manager.alloc_count.load(SeqCst) as _,
+         manager.index().block_manager.reuse_count.load(SeqCst) as _)
+    }
+    else {
+        unreachable!()
     }
 }
 
