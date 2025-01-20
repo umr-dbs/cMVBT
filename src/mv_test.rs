@@ -1,8 +1,8 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_tree::locking_strategy::CRUDProtocol;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
-use crate::mv_tx_model::tx_manager::{TransactionHolder, TransactionManager};
+use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot};
+use crate::mv_tx_model::tx_manager::{TransactionHolder, TransactionManager, TxExecutionResult};
 use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::rngs::ThreadRng;
@@ -20,32 +20,46 @@ use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 use rand::distributions::Alphanumeric;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
+use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 
 pub const DEBUG: bool = true;
-pub fn olap(index: IndexHandler, snapshot: SnapShot, number_olaps: u64) -> JoinHandle<()> {
+pub fn olap(index: IndexHandler, number_olaps: usize) -> Vec<JoinHandle<()>> {
     assert!(index.is_left(),
             "OLAP init failed! Provide an initialized TxManager!");
 
-    spawn(move || if let Either::Left(manager) = index {
-        let mut olaps = 0;
-        let index = manager.index();
-        while olaps < number_olaps {
-            let _c_res = index.dispatch_crud(CRUDOperation::Range(
-                (u64::MIN..=u64::MAX).into(),
-                index.current_version()));
+    // let manager = index.left().unwrap();
+    (0..number_olaps).map(|_|{
+        let index = index.clone();
+        spawn(move || if let Either::Left(manager) = index {
+            let index = manager.index();
+            let tx_res = manager
+                .execute_on_caller_thread(AtomicTransaction::from_crud(CRUDOperation::RangeIter(
+                    (index.min_key..=index.max_key).into(),
+                    index.current_version())));
 
-            olaps += 1;
-        }
-    })
+            match tx_res.unwrap_atomic() {
+                Ok((_si, res)) => match res {
+                    CRUDOperationResult::MatchedRecordIter(iter) => {
+                        let _trashed = iter.take(usize::MAX);
+                    },
+                    _ => unreachable!()
+                }
+                Err(_) => unreachable!()
+            }
+            // let _c_res = index.dispatch_crud(CRUDOperation::Range(
+            //     (index.min_key..=index.max_key).into(),
+            //     index.current_version()));
+        })
+    }).collect()
 }
 
 const CONFIG_PARAMETERS: &'static str = "config.json";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GroupConfig {
-    olap: Option<(SnapShot, u64)>,
+    olap: Option<usize>,
     protocol: CRUDProtocol,
     clock: ClockType,
     range_start: u64,
@@ -65,7 +79,7 @@ pub struct GroupConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SubGroupConfig {
-    olap: Option<(SnapShot, u64)>,
+    olap: Option<usize>,
     range_start: u64,
     range_end: u64,
     lambda: f64,
@@ -240,14 +254,14 @@ pub fn execute_experiments() {
             let mut olap_handle = None;
             let mut index_handler = None;
             let target_tx = experiment.total_tx;
-            if let Some((snapshot, halt)) = experiment.olap {
+            if let Some(num_olaps) = experiment.olap {
                 if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
-                    print!("{experiment_id},INIT_OLAP_s{snapshot}_t{halt},{target_tx}");
+                    print!("{experiment_id},INIT_OLAP_n{num_olaps},{target_tx}");
                     index_handler = Some(Either::Left(Arc::new(TransactionManager::new_unmanaged(
                         MVBPlusTree::make_standard(protocol, clock_type),
                         experiment.gc_enable
                     ))));
-                    olap_handle = Some(olap(index_handler.clone().unwrap(), snapshot, halt));
+                    olap_handle = Some(olap(index_handler.clone().unwrap(), num_olaps));
                 }
             }
             else {
@@ -258,7 +272,10 @@ pub fn execute_experiments() {
                 = start_experiment_by_config(&experiment, index_handler);
 
             if let Some(olap_handle) = olap_handle {
-                olap_handle.join().unwrap();
+                let _ = olap_handle
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .collect::<Vec<_>>();
             }
             // drop(olap_handle.take());
             let (h, r) = height_root(&index_handler);
@@ -274,9 +291,9 @@ pub fn execute_experiments() {
                     let target_tx = inner_group.total_tx;
                     let mut olap_handle = None;
 
-                    if let Some((snapshot, halt)) = inner_group.olap {
-                        print!("{experiment_id},{subgroup}_OLAP_s{snapshot}_n{halt},{target_tx}");
-                        olap_handle = Some(olap(index_handler.clone(), snapshot, halt));
+                    if let Some(num_olaps) = inner_group.olap {
+                        print!("{experiment_id},{subgroup}_OLAP_n{num_olaps},{target_tx}");
+                        olap_handle = Some(olap(index_handler.clone(), num_olaps));
                     }
                     else {
                         print!("{experiment_id},{subgroup},{target_tx}");
@@ -294,7 +311,10 @@ pub fn execute_experiments() {
                         = chain_experiment_by_config(&inner_group, index_handler.clone());
 
                     if let Some(olap_handle) = olap_handle {
-                        olap_handle.join().unwrap();
+                        let _ = olap_handle
+                            .into_iter()
+                            .map(|handle| handle.join().unwrap())
+                            .collect::<Vec<_>>();
                     }
 
                     // drop(olap_handle.take());
