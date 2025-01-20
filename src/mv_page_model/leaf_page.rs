@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::{mem, ptr, slice};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{fence, AtomicU32};
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::{Version, VersionInfo};
 
@@ -178,7 +178,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn commit_delta(&self, active_delta: i32, dead_delta: u32) {
-        let len= self.len.load(Acquire);
+        let len= self.len.load(Relaxed);
         let active = active_len(len) as i32 + active_delta;
         let dead = dead_len(len) + dead_delta;
 
