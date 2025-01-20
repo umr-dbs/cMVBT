@@ -2,15 +2,36 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr, slice};
 use std::mem::MaybeUninit;
-use std::sync::atomic::{fence, AtomicU16};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
-use crate::mv_block::block_manager::BlockManager;
-use crate::mv_page_model::BlockRef;
+use std::sync::atomic::{fence, AtomicU32};
+use std::sync::atomic::Ordering::{Acquire, Release};
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::{Version, VersionInfo};
-use crate::mv_utils::interval::Interval;
 
-type Len = AtomicU16;
+type Len = AtomicU32;
+type LenP = u32;
+type Active = u32;
+type Dead = u32;
+
+#[inline(always)]
+const fn from_len_sum(len: LenP) -> usize {
+    (active_len(len) + dead_len(len)) as usize
+}
+#[inline(always)]
+const fn from_len(len: LenP) -> (Active, Dead) {
+    (active_len(len), dead_len(len))
+}
+#[inline(always)]
+const fn active_len(len: LenP) -> Active {
+    len >> 16
+}
+#[inline(always)]
+const fn dead_len(len: LenP) -> Dead {
+    len & 0xFF_FF
+}
+#[inline(always)]
+const fn from_active_dead(active: Active, dead: Dead) -> LenP {
+    (active << 16) | dead
+}
 
 pub struct LeafPage<
     const NUM_RECORDS: usize,
@@ -75,7 +96,10 @@ impl<const NUM_RECORDS: usize,
         }
 
         fence(Release);
-        new_page.len.store(leaf_page.len() as u16, Release);
+        let (active, dead)
+            = leaf_page.active_dead_count();
+
+        new_page.len.store(from_active_dead(active, dead), Release);
 
         new_page
     }
@@ -123,7 +147,8 @@ impl<const NUM_RECORDS: usize,
     pub fn len(&self) -> usize {
         let len = self.len.load(Acquire) as _;
         fence(Acquire);
-        len
+
+        from_len_sum(len)
     }
 
     #[inline(always)]
@@ -137,30 +162,8 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub fn active_count(&self) -> usize {
-        self.as_records()
-            .iter()
-            .filter(|r| !r.version().is_deleted())
-            .count()
-    }
-
-    #[inline(always)]
-    pub fn active_dead(&self) -> (usize, usize) {
-        self.as_records()
-            .iter()
-            .fold((0, 0), |(active, dead), next_record|
-                match next_record.version().is_deleted() {
-                    true => (active, dead + 1),
-                    false => (active + 1, dead)
-                })
-    }
-
-    #[inline(always)]
-    pub fn dead_count(&self) -> usize {
-        self.as_records()
-            .iter()
-            .filter(|r| r.version().is_deleted())
-            .count()
+    pub fn active_dead_count(&self) -> (Active, Dead) {
+        from_len(self.len.load(Acquire))
     }
 
     #[inline]
@@ -174,9 +177,13 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub fn commit_until(&self, index: usize) {
+    pub fn commit_delta(&self, active_delta: i32, dead_delta: u32) {
+        let len= self.len.load(Acquire);
+        let active = active_len(len) as i32 + active_delta;
+        let dead = dead_len(len) + dead_delta;
+
         fence(Release);
-        self.len.store(1 + index as u16, Release)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
     #[inline]
@@ -202,27 +209,13 @@ impl<const NUM_RECORDS: usize,
         }
     }
 
-    // #[inline]
-    // pub fn push(&mut self, record: RecordPoint<Key>) {
-    //     unsafe {
-    //         let n_len
-    //             = self.len();
-    //
-    //         self.record_data
-    //             .as_mut_ptr()
-    //             .add(n_len)
-    //             .write(MaybeUninit::new(record));
-    //
-    //         self.len.store(n_len as u16 + 1, Release)
-    //     }
-    // }
-
     #[inline(always)]
     pub(crate) fn bulk_push(&mut self, records: Vec<&RecordPoint<Key, Payload>>) {
         let len
             = self.len();
 
-        let add
+        debug_assert_eq!(len, 0);
+        let n_records_len
             = records.len();
 
         unsafe {
@@ -235,7 +228,8 @@ impl<const NUM_RECORDS: usize,
         }
 
         fence(Release);
-        self.len.store(len as u16 + add as u16, Release)
+        self.len.store(
+            from_active_dead(len as LenP + n_records_len as LenP, 0), Release)
     }
 
     #[inline(always)]
@@ -243,6 +237,7 @@ impl<const NUM_RECORDS: usize,
         let len
             = self.len();
 
+        debug_assert_eq!(len, 0);
         unsafe {
             records.into_iter().enumerate().for_each(|(index, record)| {
                 self.record_data
@@ -253,33 +248,35 @@ impl<const NUM_RECORDS: usize,
         }
 
         fence(Release);
-        self.len.store(len as u16 + records.len() as u16, Release)
+        self.len.store(
+            from_active_dead(len as LenP + records.len() as LenP, 0), Release)
     }
 
-    #[inline(always)]
-    pub(crate) fn bulk_push_from_slice(&mut self, records: &[RecordPoint<Key, Payload>]) {
-        let len
-            = self.len();
-
-        unsafe {
-            records.into_iter().enumerate().for_each(|(index, record)| {
-                self.record_data
-                    .as_mut_ptr()
-                    .add(index + len)
-                    .write(MaybeUninit::new(record.clone()));
-            });
-        }
-
-        fence(Release);
-        self.len.store(len as u16 + records.len() as u16, Release)
-    }
+    // #[inline(always)]
+    // pub(crate) fn bulk_push_from_slice(&mut self, records: &[RecordPoint<Key, Payload>]) {
+    //     let len
+    //         = self.len();
+    //
+    //     unsafe {
+    //         records.into_iter().enumerate().for_each(|(index, record)| {
+    //             self.record_data
+    //                 .as_mut_ptr()
+    //                 .add(index + len)
+    //                 .write(MaybeUninit::new(record.clone()));
+    //         });
+    //     }
+    //
+    //     fence(Release);
+    //     self.len.store(
+    //         from_active_dead(len as LenP + records.len() as LenP, 0),
+    //         Release)
+    // }
 
     #[inline]
     pub(crate) fn delete(&mut self, key: Key, del: Version) -> Result<Option<VersionInfo>, ()>  {
         match self.as_records_mut()
             .iter_mut()
-            .rev()
-            .find(|record| record.key == key)
+            .rfind(|record| record.key == key)
         {
             Some(record) => {
                 let ver_info = record

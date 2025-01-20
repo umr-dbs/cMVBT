@@ -76,7 +76,7 @@ impl<'a,
                     }
                 };
 
-                leaf_page.commit_until(current_len);
+                leaf_page.commit_delta(1, 0);
                 CRUDOperationResult::Inserted(committed_version)
             }
             CRUDOperation::Update(key, payload) => {
@@ -132,7 +132,7 @@ impl<'a,
 
                 match leaf_page.delete(key, version) {
                     Ok(Some(..)) => {
-                        leaf_page.commit_until(current_len);
+                        leaf_page.commit_delta(0, 1);
                         CRUDOperationResult::Updated(committed_version)
                     }
                     Ok(None) => {
@@ -178,7 +178,10 @@ impl<'a,
                 };
 
                 match leaf_page.delete(key, committed_version) {
-                    Ok(Some(..)) => CRUDOperationResult::Deleted(committed_version),
+                    Ok(Some(..)) => {
+                        leaf_page.commit_delta(-1, 1);
+                        CRUDOperationResult::Deleted(committed_version)
+                    },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }

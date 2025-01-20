@@ -3,14 +3,37 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::{mem, ptr};
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU16, fence};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
-use itertools::Itertools;
+use std::sync::atomic::{AtomicU16, fence, AtomicU32};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_utils::interval::Interval;
 
-type Len = AtomicU16;
+type Len = AtomicU32;
+type LenP = u32;
+type Active = u32;
+type Dead = u32;
+
+#[inline(always)]
+const fn from_len_sum(len: LenP) -> usize {
+    (active_len(len) + dead_len(len)) as usize
+}
+#[inline(always)]
+const fn from_len(len: LenP) -> (Active, Dead) {
+    (active_len(len), dead_len(len))
+}
+#[inline(always)]
+const fn active_len(len: LenP) -> Active {
+    len >> 16
+}
+#[inline(always)]
+const fn dead_len(len: LenP) -> Dead {
+    len & 0xFF_FF
+}
+#[inline(always)]
+const fn from_active_dead(active: Active, dead: Dead) -> LenP {
+    (active << 16) | dead
+}
 
 const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
 // pub const OOO_REUSED_VERSION_MARK: Version = 0x40_00000000000000;
@@ -135,7 +158,12 @@ impl<const FAN_OUT: usize,
             });
 
         fence(Release);
-        new_page.len.store(keys.len() as u16, Release);
+
+        let (active, dead)
+            = from.active_dead_count();
+
+        new_page.len.store(
+            from_active_dead(active, dead), Release);
 
         new_page
     }
@@ -187,9 +215,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn commit_until(&self, index: usize) {
+    pub fn commit_delta(&self, active_delta: i32, dead_delta: u32) {
+        let len= self.len.load(Acquire);
+        let active = active_len(len) as i32 + active_delta;
+        let dead = dead_len(len) + dead_delta;
+
         fence(Release);
-        self.len.store(1 + index as u16, Release)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
     // #[inline]
@@ -205,7 +237,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub fn on_reuse(&mut self) {
-        let len = self.len();
+        let len = self.sum_len();
         self.len.store(0, Release);
 
         unsafe {
@@ -217,26 +249,27 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>) {
-        let children = self
-            .children()
-            .iter()
-            .map(|c| ptr::read(c))
-            .collect_vec();
-
-        debug_assert!(children.len() == 1);
-
-        self.len.store(0, Release);
-        self.bulk_push(entries);
-        mem::drop(children);
-    }
+    // #[inline(always)]
+    // pub unsafe fn override_clone(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>) {
+    //     let children = self
+    //         .children()
+    //         .iter()
+    //         .map(|c| ptr::read(c))
+    //         .collect_vec();
+    //
+    //     debug_assert!(children.len() == 1);
+    //
+    //     self.len.store(0, Release);
+    //     self.bulk_push(entries);
+    //     mem::drop(children);
+    // }
 
     #[inline]
     pub fn bulk_push(&self, entries: Vec<((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>) {
         let len
-            = self.len();
+            = self.active_len();
 
+        debug_assert_eq!(self.dead_len(), 0);
         let add
             = entries.len();
 
@@ -260,7 +293,8 @@ impl<const FAN_OUT: usize,
             });
 
         fence(Release);
-        self.len.store(len as u16 + add as u16, Release);
+        self.len.store(
+            from_active_dead(len as LenP + add as LenP, 0), Release);
     }
 
     #[inline]
@@ -269,8 +303,9 @@ impl<const FAN_OUT: usize,
         entries: &[((&Interval<Key>, &Version), &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)])
     {
         let len
-            = self.len();
+            = self.active_len();
 
+        debug_assert_eq!(self.dead_len(), 0);
         let add
             = entries.len();
 
@@ -294,30 +329,53 @@ impl<const FAN_OUT: usize,
             });
 
         fence(Release);
-        self.len.store(len as u16 + add as u16, Release)
+        self.len.store(
+            from_active_dead(len as LenP + add as LenP, 0), Release)
     }
 
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub fn active_dead_count(&self) -> (Active, Dead) {
+        from_len(self.len.load(Acquire))
+    }
+
+    #[inline(always)]
+    pub fn active_len(&self) -> usize {
+        let len = self.len.load(Acquire);
+        // fence(Acquire);
+
+        active_len(len) as _
+    }
+
+    #[inline(always)]
+    pub fn dead_len(&self) -> usize {
+        let len = self.len.load(Acquire);
+        // fence(Acquire);
+
+        dead_len(len) as _
+    }
+
+    #[inline(always)]
+    pub fn sum_len(&self) -> usize {
         let len = self.len.load(Acquire) as _;
         fence(Acquire);
-        len
+
+        from_len_sum(len)
     }
 
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    // #[inline(always)]
+    // pub fn is_empty(&self) -> bool {
+    //     self.sum_len() == 0
+    // }
 
-    #[inline(always)]
-    pub fn is_full(&self) -> bool {
-        self.len() == FAN_OUT
-    }
+    // #[inline(always)]
+    // pub fn is_full(&self) -> bool {
+    //     self.sum_len() == FAN_OUT
+    // }
 
     #[inline(always)]
     pub fn keys_versions(&self) -> (&[Interval<Key>], &[Version]) {
         let len
-            = self.len();
+            = self.sum_len();
 
         unsafe {
             (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
@@ -327,13 +385,13 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn last_child(&self) -> &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        self.get_pointer(self.len() - 1)
+        self.get_pointer(self.sum_len() - 1)
     }
 
     #[inline(always)]
     pub fn keys_versions_pointers(&self) -> (&[Interval<Key>], &[Version], &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>]) {
         let len
-            = self.len();
+            = self.sum_len();
 
         unsafe {
             (std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, len),
@@ -344,7 +402,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn keys(&self) -> &[Interval<Key>] {
-        unsafe { std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.len()) }
+        unsafe { std::slice::from_raw_parts(self.key_interval_region.as_ptr() as _, self.sum_len()) }
     }
 
     #[inline(always)]
@@ -354,17 +412,17 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn versions(&self) -> &[Version] {
-        unsafe { std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.len()) }
+        unsafe { std::slice::from_raw_parts(self.version_region.as_ptr() as _, self.sum_len()) }
     }
 
     #[inline(always)]
     pub unsafe fn versions_mut(&mut self) -> &mut [Version] {
-        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.len())
+        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.sum_len())
     }
 
     #[inline(always)]
     pub unsafe fn versions_byKey_uncommitted_mut(&mut self) -> &mut [Version] {
-        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.len() + 2)
+        std::slice::from_raw_parts_mut(self.version_region.as_mut_ptr() as _, self.sum_len() + 2)
     }
 
     #[inline(always)]
@@ -385,7 +443,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn children(&self) -> &[BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>] {
         unsafe {
-            std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, self.len())
+            std::slice::from_raw_parts(self.pointer_region.as_ptr() as _, self.sum_len())
         }
     }
 
@@ -397,32 +455,24 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub fn active_count(&self) -> usize {
-        unsafe {
-            self.versions().iter().fold(0, |c, next|
-                if next.is_active() { c + 1 } else { c })
-        }
-    }
-
-    #[inline(always)]
-    pub fn active_dead(&self) -> (usize, usize) {
-        self.versions()
-            .iter()
-            .fold((0, 0), |(active, dead), next_version|
-                match next_version.is_obsolete() {
-                    true => (active, dead + 1),
-                    false => (active + 1, dead)
-                })
-    }
-
-    #[inline(always)]
-    pub fn obsolete_count(&self) -> usize {
-        unsafe {
-            self.versions().iter().fold(0, |c, next|
-                if next.is_obsolete() { c + 1 } else { c })
-        }
-    }
+    // #[inline(always)]
+    // pub fn active_dead(&self) -> (usize, usize) {
+    //     self.versions()
+    //         .iter()
+    //         .fold((0, 0), |(active, dead), next_version|
+    //             match next_version.is_obsolete() {
+    //                 true => (active, dead + 1),
+    //                 false => (active + 1, dead)
+    //             })
+    // }
+    //
+    // #[inline(always)]
+    // pub fn obsolete_count(&self) -> usize {
+    //     unsafe {
+    //         self.versions().iter().fold(0, |c, next|
+    //             if next.is_obsolete() { c + 1 } else { c })
+    //     }
+    // }
 
     // #[inline(always)]
     // pub const fn is_obsolete(version: Version) -> bool {

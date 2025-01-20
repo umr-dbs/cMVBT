@@ -116,10 +116,13 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn unsafe_degree(&self) -> BlockUnsafeDegree {
-        let active
-            = self.active_count();
+        let (active, dead)
+            = self.active_dead_count();
 
-        if active > self.max_active_units() || self.len() >= self.max_units_safe() {
+        let (active, dead)
+            = (active as usize,  dead as usize);
+
+        if active > self.max_active_units() || active + dead >= self.max_units_safe() {
             BlockUnsafeDegree::Overflow
         }
         else if active < self.min_active_units() {
@@ -131,36 +134,19 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn unsafe_degree_root(&self) -> BlockUnsafeDegree {
-        let active
-            = self.active_count();
+        let (active, dead)
+            = self.active_dead_count();
+
+        let (active, dead)
+            = (active as usize,  dead as usize);
 
         let is_leaf
             = self.is_leaf();
 
-        // if !is_leaf {
-        //     match self.try_as_internal_page_ref() {
-        //         Ok(page) => {
-        //             let (root_keys, root_versions, root_children)
-        //                 = page.keys_versions_pointers();
-        //             let count_child_active = root_keys
-        //                 .iter()
-        //                 .zip(root_versions)
-        //                 .zip(root_children)
-        //                 .filter(|((_, version), _)| version.is_active())
-        //                 .count() + active;
-        //
-        //             if count_child_active < self.max_active_units() {
-        //                 return BlockUnsafeDegree::ActiveUnderflow
-        //             }
-        //         },
-        //         _ => {}
-        //     };
-        // }
-
         if active == 1 && !is_leaf { // single child
             BlockUnsafeDegree::ActiveUnderflow
         }
-        else if active > self.max_active_units() || self.len() >= self.max_units_safe() {
+        else if active > self.max_active_units() || active + dead >= self.max_units_safe() {
             BlockUnsafeDegree::Overflow
         }
         else {
@@ -201,10 +187,10 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn active_count(&self) -> usize {
+    pub(crate) fn active_dead_count(&self) -> (u32, u32) {
         match self.as_page_ref() {
-            PageType::IndexRef(internal_page) => internal_page.active_count(),
-            PageType::LeafRef(leaf_page) => leaf_page.active_count(),
+            PageType::IndexRef(internal_page) => internal_page.active_dead_count(),
+            PageType::LeafRef(leaf_page) => leaf_page.active_dead_count(),
             _ => unreachable!()
         }
     }

@@ -462,7 +462,7 @@ impl<const FAN_OUT: usize,
                 old_root.root.version
                     = committed;
 
-                root_internal_page.commit_until(1);
+                root_internal_page.commit_delta(2, 0);
 
                 *old_root.root.block.unsafe_borrow_mut()
                     = mem::take(new_root_block.unsafe_borrow_mut());
@@ -618,7 +618,7 @@ impl<const FAN_OUT: usize,
             .clone();
 
         let current_len
-            = internal_page.len();
+            = internal_page.sum_len();
 
         match self.split(simba.deref().unwrap(), &fence) {
             BlockSplit::ByKey(left_fence,
@@ -665,7 +665,7 @@ impl<const FAN_OUT: usize,
                 }
 
                 internal_page.mark_version_obsolete(child_index);
-                internal_page.commit_until(current_len + 1);
+                internal_page.commit_delta(1, 1);
             }
             BlockSplit::ByVersion(fresh) => {
                 let mut commit_handle
@@ -698,7 +698,7 @@ impl<const FAN_OUT: usize,
                 }
 
                 internal_page.mark_version_obsolete(child_index);
-                internal_page.commit_until(current_len);
+                internal_page.commit_delta(0, 1);
             }
         }
 
@@ -730,7 +730,7 @@ impl<const FAN_OUT: usize,
                     .as_internal_page();
 
                 let mufasa_len
-                    = mufasa_internal_page.len();
+                    = mufasa_internal_page.sum_len();
 
                 let mut merged_fence = mufasa_internal_page
                     .get_key(index_simba)
@@ -774,7 +774,7 @@ impl<const FAN_OUT: usize,
                     .mark_version_obsolete(index_simba);
 
                 mufasa_internal_page
-                    .commit_until(mufasa_len);
+                    .commit_delta(-1, 2);
 
                 self.block_manager.register_dead_col([
                     (mufasa_internal_page.get_version(index_simba),
@@ -797,7 +797,7 @@ impl<const FAN_OUT: usize,
                     .as_internal_page();
 
                 let mufasa_len
-                    = mufasa_internal_page.len();
+                    = mufasa_internal_page.sum_len();
 
                 let mut commit_handle
                     = self.begin_commit();
@@ -846,7 +846,7 @@ impl<const FAN_OUT: usize,
                     .mark_version_obsolete(index_simba);
 
                 mufasa_internal_page
-                    .commit_until(mufasa_len + 1);
+                    .commit_delta(0, 2);
 
                 self.block_manager.register_dead_col([
                     (mufasa_internal_page.get_version(index_simba),

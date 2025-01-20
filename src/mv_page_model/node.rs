@@ -275,7 +275,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn len(&self) -> usize {
         match self.m_type()  {
-            PAGE_TYPE_INTERNAL => unsafe { self.page.internal.len() },
+            PAGE_TYPE_INTERNAL => unsafe { self.page.internal.sum_len() },
             _ => unsafe { self.page.leaf.len() },
         }
     }

@@ -207,8 +207,11 @@ impl<const FAN_OUT: usize,
         let max_active_units
             = simba.max_active_units();
 
-        let simba_active_count
-            = simba.active_count();
+        let (simba_active_count, _simba_dead_count)
+            = simba.active_dead_count();
+
+        let (simba_active_count, _simba_dead_count)
+            = (simba_active_count as usize, _simba_dead_count as usize);
 
         let mut all_candidates = mufasa_internal_page
             .children()
@@ -260,9 +263,12 @@ impl<const FAN_OUT: usize,
             return MergeResult::Error
         }
 
-        let candidate_active_count = candidate_block
+        let (candidate_active_count, candidate_dead_count) = candidate_block
             .unsafe_borrow()
-            .active_count();
+            .active_dead_count();
+
+        let (candidate_active_count, candidate_dead_count)
+            = (candidate_active_count as usize, candidate_dead_count as usize);
 
         if candidate_active_count + simba_active_count <= max_active_units { // <= 4d
             let combined_block = match is_simba_leaf {
@@ -461,7 +467,10 @@ impl<const FAN_OUT: usize,
         let is_leaf
             = block.is_leaf();
 
-        if block.active_count() > block.max_active_units() {
+        let (active_block, _dead_block)
+            = block.active_dead_count();
+
+        if active_block as usize > block.max_active_units() {
             // KEY_SPLIT
             match is_leaf {
                 true => unsafe { // LeafPage

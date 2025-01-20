@@ -409,7 +409,7 @@ fn run_experiment_with_params(
 
 pub const FILLED_BLOCK: usize = 127;
 pub const F_MUL: usize = 1;
-pub const N_MUL: usize = 4;
+pub const N_MUL: usize = 1;
 pub const N_OFF: usize = 0;
 pub const F_OFF: usize = 0;
 pub const N_ABS_OFF: usize = 0;
