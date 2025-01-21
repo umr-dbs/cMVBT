@@ -1,6 +1,6 @@
 # Multi Version B+Tree
-- Release Date: 20.01.2025
-- Latest Version: 0.0.62 (Beta)
+- Release Date: 21.01.2025
+- Latest Version: 0.0.63 (Beta)
 ---------------------------------------
 ## PiBench Integration: https://github.com/umr-dbs/pibench_ext
 # Transactions support:
