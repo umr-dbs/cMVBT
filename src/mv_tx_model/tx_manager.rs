@@ -197,7 +197,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn tx_dispatcher(&self) -> TxDispatcher<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn tx_dispatcher(&self) -> TxDispatcher<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe { mem::transmute(self.index()) }
     }
 

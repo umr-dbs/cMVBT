@@ -186,16 +186,10 @@ impl<'a,
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
             }
-            CRUDOperation::Range(range, version) => 
-                CRUDOperationResult::MatchedRecords(RangeQueryIter::new(
-                    self,
-                    version,
-                    range).collect_vec())
-                // Self::key_range_read_from_root(
-                //     self.retrieve_root_for(version),
-                //     range,
-                //     version)
-            ,
+            CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
+                self.retrieve_root_for(version),
+                range,
+                version),
             CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
                 self.retrieve_root_for(version),
                 key,

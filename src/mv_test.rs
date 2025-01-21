@@ -25,34 +25,34 @@ use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 
 pub const DEBUG: bool = true;
-pub fn olap(index: IndexHandler, number_olaps: usize) -> Vec<JoinHandle<()>> {
-    assert!(index.is_left(),
-            "OLAP init failed! Provide an initialized TxManager!");
+pub fn olap(handler: IndexHandler, number_olaps: usize) -> Vec<JoinHandle<()>> {
+    let manager = handler
+        .left()
+        .expect("OLAP init failed! Provide an initialized TxManager!");
 
-    // let manager = index.left().unwrap();
-    (0..number_olaps).map(|_|{
-        let index = index.clone();
-        spawn(move || if let Either::Left(manager) = index {
-            let index = manager.index();
-            let tx_res = manager
-                .execute_on_caller_thread(AtomicTransaction::from_crud(CRUDOperation::RangeIter(
+    let index
+        = manager.tx_dispatcher();
+
+    (0..number_olaps).map(|_|
+        if manager.is_gc_enabled() {
+            let manager
+                = manager.clone();
+
+            spawn(move || {
+                let _tx_res = manager
+                    .execute_on_caller_thread(AtomicTransaction::from_crud(CRUDOperation::Range(
+                        (index.min_key..=index.max_key).into(),
+                        index.current_version())));
+            })
+        }
+        else {
+            spawn(|| {
+                let _crud_res = index.dispatch_crud(CRUDOperation::Range(
                     (index.min_key..=index.max_key).into(),
-                    index.current_version())));
-
-            match tx_res.unwrap_atomic() {
-                Ok((_si, res)) => match res {
-                    CRUDOperationResult::MatchedRecordIter(iter) => {
-                        let _trashed = iter.take(usize::MAX);
-                    },
-                    _ => unreachable!()
-                }
-                Err(_) => unreachable!()
-            }
-            // let _c_res = index.dispatch_crud(CRUDOperation::Range(
-            //     (index.min_key..=index.max_key).into(),
-            //     index.current_version()));
-        })
-    }).collect()
+                    index.current_version()));
+            })
+        }
+    ).collect()
 }
 
 const CONFIG_PARAMETERS: &'static str = "config.json";
@@ -272,10 +272,9 @@ pub fn execute_experiments() {
                 = start_experiment_by_config(&experiment, index_handler);
 
             if let Some(olap_handle) = olap_handle {
-                let _ = olap_handle
+                olap_handle
                     .into_iter()
-                    .map(|handle| handle.join().unwrap())
-                    .collect::<Vec<_>>();
+                    .for_each(|handle| handle.join().unwrap());
             }
             // drop(olap_handle.take());
             let (h, r) = height_root(&index_handler);
@@ -305,16 +304,17 @@ pub fn execute_experiments() {
                         } else if !inner_group.gc_enable && m_manager.is_gc_enabled() {
                             m_manager.disable_gc();
                         }
+
+                        m_manager.index().block_manager.reset_alloc_reuse_counts();
                     }
                     
                     index_handler
                         = chain_experiment_by_config(&inner_group, index_handler.clone());
 
                     if let Some(olap_handle) = olap_handle {
-                        let _ = olap_handle
+                        olap_handle
                             .into_iter()
-                            .map(|handle| handle.join().unwrap())
-                            .collect::<Vec<_>>();
+                            .for_each(|handle| handle.join().unwrap());
                     }
 
                     // drop(olap_handle.take());

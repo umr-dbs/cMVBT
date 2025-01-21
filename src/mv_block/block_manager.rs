@@ -113,6 +113,11 @@ impl<const FAN_OUT: usize,
     //     self.block_id_counter.fetch_add(1, Ordering::Relaxed)
     // }
 
+    pub fn reset_alloc_reuse_counts(&self) {
+        self.reuse_count.store(0, SeqCst);
+        self.alloc_count.store(0, SeqCst);
+    }
+
     #[inline(always)]
     pub const fn allocation_leaf(&self) -> usize {
         NUM_RECORDS

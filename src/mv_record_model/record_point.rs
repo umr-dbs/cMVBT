@@ -98,14 +98,14 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPoint<Key
     }
 
     #[inline(always)]
-    pub fn version(&self) -> &VersionInfo {
+    pub const fn version(&self) -> &VersionInfo {
         unsafe {
             &*addr_of!(self.version)
         }
     }
 
     #[inline(always)]
-    pub fn payload(&self) -> &Payload {
+    pub const fn payload(&self) -> &Payload {
         unsafe {
             &*addr_of!(self.payload)
         }
