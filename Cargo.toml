@@ -26,10 +26,11 @@ CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version =
 crossbeam-channel = "0.5.14"
 threadpool = "1.8.1"
 chrono = "0.4.39"
-rand = "0.8.5"
+rand_distr = "0.5.0"
+rand = "0.9.0"
 itertools = "0.14.0"
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision"] }
-serde_json = "1.0.137"
+serde_json = "1.0.138"
 serde = "1.0.217"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.169"

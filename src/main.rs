@@ -1,5 +1,6 @@
 use std::{env, fs, mem};
 use chrono::{DateTime, Local};
+use rand_distr::Zipf;
 use crate::mv_block::block::Block;
 use crate::mv_test::{Key, Payload, DEBUG, FAN_OUT, NUM_RECORDS};
 
