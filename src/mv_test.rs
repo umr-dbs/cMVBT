@@ -1,18 +1,19 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_tree::locking_strategy::{CRUDProtocol, OLC};
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tx_model::transaction::AtomicTransaction;
+use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
 use crate::mv_tx_model::tx_manager::TransactionManager;
 use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
-use std::thread;
+use std::{fs, thread};
+use std::io::Write;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 use rand::distr::{Alphanumeric, Distribution, Uniform};
@@ -25,7 +26,7 @@ use crate::mv_record_model::version_info::Version;
 
 pub const DEBUG: bool = true;
 
-pub fn olap(handler: IndexHandler, number_olaps: usize, n: usize) -> Vec<JoinHandle<()>> {
+pub fn olap(handler: IndexHandler, number_olaps: usize, n: usize) -> Vec<JoinHandle<(SnapShot, u64, u128)>> {
     let manager = handler
         .left()
         .expect("OLAP init failed! Provide an initialized TxManager!");
@@ -40,33 +41,40 @@ pub fn olap(handler: IndexHandler, number_olaps: usize, n: usize) -> Vec<JoinHan
 
             spawn(move || {
                 let si
-                    = index.current_version();
+                    = rand::random_range(0..=index.current_version()) as Key;
 
-                let wait_maker=
+                let uni_form =
                     Uniform::new(1000_usize, n).unwrap();
 
                 let range_max
-                    = wait_maker.sample(&mut rand::rng()) as Key;
+                    = uni_form.sample(&mut rand::rng()) as Key;
 
-                thread::sleep(Duration::from_micros(wait_maker.sample(&mut rand::rng()) as u64));
+                let time_start = SystemTime::now();
                 let _tx_res = manager
                     .execute_on_caller_thread(AtomicTransaction::from_crud(CRUDOperation::Range(
                         (index.min_key..=range_max).into(),
                         si)));
+
+                (si, range_max, SystemTime::now().duration_since(time_start).unwrap().as_nanos())
             })
         }
         else {
             spawn(move || {
-                let wait_maker=
+                let si
+                    = rand::random_range(0..=index.current_version()) as Key;
+
+                let uni_form =
                     Uniform::new_inclusive(1000_usize, n).unwrap();
 
                 let range_max
-                    = wait_maker.sample(&mut rand::rng()) as Key;
+                    = uni_form.sample(&mut rand::rng()) as Key;
 
-                thread::sleep(Duration::from_micros(wait_maker.sample(&mut rand::rng()) as u64));
+                let time_start = SystemTime::now();
                 let _crud_res = index.dispatch_crud(CRUDOperation::Range(
                     (index.min_key..=range_max).into(),
-                    index.current_version()));
+                    si));
+
+                (si, range_max, SystemTime::now().duration_since(time_start).unwrap().as_nanos())
             })
         }
     ).collect()
@@ -250,12 +258,14 @@ pub fn execute_experiments() {
     log_height,\
     actual_height,\
     blocks_allocated,\
-    blocks_reused");
+    blocks_reused,\
+    olaps_total_time");
 
     groups
         .into_iter()
         .enumerate()
         .for_each(|(experiment_id, experiment)| {
+            let olap_start_time = SystemTime::now();
             let mut olap_handle = None;
             let mut index_handler = None;
             let init_target_tx = experiment.total_tx;
@@ -277,14 +287,35 @@ pub fn execute_experiments() {
                 = start_experiment_by_config(&experiment, index_handler);
 
             if let Some(olap_handle) = olap_handle {
-                olap_handle
+                let olap_data_result = olap_handle
                     .into_iter()
-                    .for_each(|handle| handle.join().unwrap());
+                    .map(|handle| handle.join().unwrap())
+                    .collect_vec();
+
+                let _nc = fs::remove_file(format!("olap_{experiment_id}_INIT.csv"));
+                let mut olap_file = fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .write(true)
+                    .open(format!("olap_{experiment_id}_INIT.csv"))
+                    .unwrap();
+
+                olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
+                for (si, range_max, olap_latency) in olap_data_result {
+                    olap_file.write_all(format!("\
+                                      {si},\
+                                      {range_max},\
+                                      {olap_latency}\n").as_bytes())
+                        .unwrap();
+                }
             }
             // drop(olap_handle.take());
+            let olap_time = SystemTime::now()
+                .duration_since(olap_start_time).unwrap().as_millis();
+
             let (h, r) = height_root(&index_handler);
             let (alloc, reuse) = block_alloc_reuses(&index_handler);
-            println!(",{experiment},{h},{r},{alloc},{reuse}");
+            println!(",{experiment},{h},{r},{alloc},{reuse},{olap_time}");
 
             experiment
                 .chain_groups
@@ -317,15 +348,33 @@ pub fn execute_experiments() {
                         = chain_experiment_by_config(&inner_group, index_handler.clone());
 
                     if let Some(olap_handle) = olap_handle {
-                        olap_handle
+                        let olap_data_result = olap_handle
                             .into_iter()
-                            .for_each(|handle| handle.join().unwrap());
+                            .map(|handle| handle.join().unwrap())
+                            .collect_vec();
+
+                        let _nc = fs::remove_file(format!("olap_{experiment_id}_{subgroup}.csv"));
+                        let mut olap_file = fs::OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .write(true)
+                            .open(format!("olap_{experiment_id}_{subgroup}.csv"))
+                            .unwrap();
+
+                        olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
+                        for (si, range_max, olap_latency) in olap_data_result {
+                            olap_file.write_all(format!("\
+                            {si},{range_max},{olap_latency}\n").as_bytes()).unwrap();
+                        }
                     }
 
                     // drop(olap_handle.take());
+                    let olap_time = SystemTime::now()
+                        .duration_since(olap_start_time).unwrap().as_millis();
+
                     let (h, r) = height_root(&index_handler);
                     let (alloc, reuse) = block_alloc_reuses(&index_handler);
-                    println!(",{},{},{},{h},{r},{alloc},{reuse}",
+                    println!(",{},{},{},{h},{r},{alloc},{reuse},{olap_time}",
                              experiment.protocol,
                              experiment.clock,
                              inner_group);
