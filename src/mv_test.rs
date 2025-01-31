@@ -253,7 +253,6 @@ pub fn execute_experiments() {
         .into_iter()
         .enumerate()
         .for_each(|(experiment_id, experiment)| {
-            let olap_start_time = SystemTime::now();
             let mut olap_handle = None;
             let mut index_handler = None;
             let init_target_tx = experiment.total_tx;
@@ -282,11 +281,12 @@ pub fn execute_experiments() {
                 let olap_data_result = olap_handle
                     .into_iter()
                     .flat_map(|jh| jh.join().unwrap())
-                    .collect_vec();
+                    .map(|t@(.., time)| {
+                        olap_time += time;
+                        t
+                    }).collect_vec();
 
-                olap_time = SystemTime::now()
-                    .duration_since(olap_start_time).unwrap().as_millis();
-
+                olap_time /= 1_000_000;
                 let _nc = fs::remove_file(format!("olap_{experiment_id}_INIT.csv"));
                 let mut olap_file = fs::OpenOptions::new()
                     .append(true)
@@ -348,11 +348,11 @@ pub fn execute_experiments() {
                     if let Some(olap_handle) = olap_handle {
                         let olap_data_result = olap_handle.into_iter()
                             .flat_map(|jh| jh.join().unwrap())
-                            .collect_vec();
-
-                        olap_time = SystemTime::now()
-                            .duration_since(olap_start_time).unwrap().as_millis();
-
+                            .map(|t@(.., time)| {
+                                olap_time += time;
+                                t
+                            }).collect_vec();
+                        olap_time /= 1_000_000;
                         let _nc = fs::remove_file(format!("olap_{experiment_id}_{subgroup}.csv"));
                         let mut olap_file = fs::OpenOptions::new()
                             .append(true)
