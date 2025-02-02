@@ -18,6 +18,7 @@ use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 use rand::distr::{Alphanumeric, Distribution, Uniform};
 use rand::prelude::SliceRandom;
+use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -25,6 +26,40 @@ use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 
 pub const DEBUG: bool = true;
+
+pub enum Sampler {
+    Uniform(Uniform<u64>, ThreadRng),
+    Zipf(Zipf<f64>, ThreadRng),
+}
+
+impl Sampler {
+    fn new(skew: f64, n: Key) -> Self {
+        if skew == 0_f64 {
+            Sampler::Uniform(Uniform::new_inclusive(1, n).unwrap(), rand::rng())
+        }
+        else {
+            Sampler::Zipf(Zipf::new(n as f64, skew).unwrap(), rand::rng())
+        }
+    }
+    #[inline(always)]
+    fn sample(&mut self) -> Key {
+        match self {
+            Sampler::Uniform(dist, rng) =>
+                dist.sample(rng) as Key,
+            Sampler::Zipf(dist, rng) =>
+                dist.sample(rng) as Key,
+        }
+    }
+}
+
+impl Display for Sampler {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Sampler::Uniform(..) => write!(f, "Uniform"),
+            Sampler::Zipf(..) => write!(f, "Zipf"),
+        }
+    }
+}
 
 pub fn run_olaps(handler: IndexHandler, number_workers: usize, number_olaps_per_worker: usize, n: usize)
                  -> Vec<JoinHandle<Vec<(SnapShot, u64, u128)>>> 
@@ -591,17 +626,16 @@ fn experiment(
 
             // tx_success, tx_error, time_spent
             let handle = spawn(move || {
-                let mut rng = rand::rng();
-
-                let mut zipf = Zipf::new(n as f64, skew).unwrap();
-                let mut generator = || zipf.sample(&mut rng) as Key;
+                let mut sampler
+                    = Sampler::new(skew, n as Key);
 
                 let (mut tx_success, mut tx_error, start_execution_time) =
                     (0usize, 0usize, SystemTime::now());
 
-                let local_tx = |key: Key| -> AtomicTransaction<Key, Payload> {
-                    let random_number = rand::rng().random_range(0..100);
-
+                let random_number 
+                    = rand::rng().random_range(0..100);
+                
+                let local_tx = move |key: Key| -> AtomicTransaction<Key, Payload> {
                     if random_number < insert_ratio {
                         AtomicTransaction::from_crud(CRUDOperation::Insert(key, Payload::default()))
                     } else if random_number < insert_ratio + points_reads_ratio {
@@ -630,7 +664,8 @@ fn experiment(
                     match thread_control.try_recv() {
                         Err(TryRecvError::Disconnected) => break,
                         _ => {
-                            let next = local_tx(generator());
+                            let next
+                                = local_tx(sampler.sample());
 
                             match manager.execute_on_caller_thread(next).unwrap_atomic() {
                                 Ok(_) => tx_success += 1,
