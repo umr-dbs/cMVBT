@@ -322,12 +322,12 @@ pub fn execute_experiments() {
                     }).collect_vec();
 
                 olap_time /= 1_000_000;
-                let _nc = fs::remove_file(format!("olap_{experiment_id}_INIT.csv"));
+                let _nc = fs::remove_file(format!("mv_olap_{experiment_id}_INIT.csv"));
                 let mut olap_file = fs::OpenOptions::new()
                     .append(true)
                     .create(true)
                     .write(true)
-                    .open(format!("olap_{experiment_id}_INIT.csv"))
+                    .open(format!("mv_olap_{experiment_id}_INIT.csv"))
                     .unwrap();
 
                 olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
@@ -388,12 +388,12 @@ pub fn execute_experiments() {
                                 t
                             }).collect_vec();
                         olap_time /= 1_000_000;
-                        let _nc = fs::remove_file(format!("olap_{experiment_id}_{subgroup}.csv"));
+                        let _nc = fs::remove_file(format!("mv_olap_{experiment_id}_{subgroup}.csv"));
                         let mut olap_file = fs::OpenOptions::new()
                             .append(true)
                             .create(true)
                             .write(true)
-                            .open(format!("olap_{experiment_id}_{subgroup}.csv"))
+                            .open(format!("mv_olap_{experiment_id}_{subgroup}.csv"))
                             .unwrap();
 
                         olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
