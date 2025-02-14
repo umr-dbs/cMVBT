@@ -306,8 +306,8 @@ pub fn execute_experiments() {
             let mut olap_handle = None;
             let mut index_handler = None;
             let init_target_tx = experiment.total_tx;
-            let mut start_time = SystemTime::now();
             let mut total_running_time = 0u128;
+            
             if experiment.olap_workers > 0 {
                 if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
                     print!("{experiment_id},INIT,{init_target_tx}");
@@ -325,6 +325,7 @@ pub fn execute_experiments() {
                 print!("{experiment_id},INIT,{init_target_tx}");
             }
 
+            let mut start_time = SystemTime::now();
             let mut index_handler
                 = start_experiment_by_config(&experiment, index_handler);
 
