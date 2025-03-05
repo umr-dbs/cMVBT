@@ -3,13 +3,13 @@ use crate::mv_tree::locking_strategy::{CRUDProtocol, OLC};
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
 use crate::mv_tx_model::tx_manager::TransactionManager;
-use crossbeam_channel::{bounded, Sender, TryRecvError};
+use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, thread};
@@ -17,6 +17,7 @@ use std::alloc::System;
 use std::io::Write;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
+use libc::confstr;
 use rand::distr::{Alphanumeric, Distribution, Uniform};
 use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
@@ -102,7 +103,7 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
                 = uni_form.sample(&mut rand::rng()) as RangeMax;
 
             let sleep_time
-                = rand::random_range(olap..(olap+olap_id)*5u64);
+                = rand::random_range(olap..(olap+olap_id)*1u64);
 
             thread::sleep(Duration::from_millis(sleep_time));
             
@@ -127,11 +128,13 @@ const CONFIG_PARAMETERS: &'static str = "config.json";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GroupConfig {
+    olap_joint_workload: bool,
     olap_workers: usize,
     olaps_tx_per_worker: usize,
     protocol: CRUDProtocol,
     clock: ClockType,
     skew: f64,
+    skew_n: usize,
     gc_enable: bool,
     threads: usize,
     total_tx: usize,
@@ -146,9 +149,11 @@ pub struct GroupConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SubGroupConfig {
+    olap_joint_workload: bool,
     olap_workers: usize,
     olaps_tx_per_worker: usize,
     skew: f64,
+    skew_n: usize,
     gc_enable: bool,
     threads: usize,
     total_tx: usize,
@@ -198,12 +203,14 @@ impl GroupConfig {
 impl Default for GroupConfig {
     fn default() -> Self {
         Self {
+            olap_joint_workload: false,
             olap_workers: 0,
             olaps_tx_per_worker: 0,
             chain_groups: vec![],
             protocol: Default::default(),
             clock: ClockType::FREE,
             skew: 0.1,
+            skew_n: 10000,
             gc_enable: false,
             threads: 1,
             total_tx: 10_0000,
@@ -221,10 +228,11 @@ impl Display for GroupConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
             self.protocol,
             self.clock,
             self.skew,
+            self.skew_n,
             self.gc_enable,
             self.threads,
             self.insert_ratio,
@@ -241,8 +249,9 @@ impl Display for SubGroupConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{}",
             self.skew,
+            self.skew_n,
             self.gc_enable,
             self.threads,
             self.insert_ratio,
@@ -293,6 +302,7 @@ pub fn execute_experiments() {
     protocol,\
     clock,\
     skew,\
+    skew_n,\
     gc_enable,\
     threads,\
     insert_ratio,\
@@ -308,7 +318,8 @@ pub fn execute_experiments() {
     olaps_total_time,\
     olaps_workers,\
     olaps_per_worker,\
-    olaps_total_sleep_time,\
+    olaps_avg_sleep_time,\
+    olaps_joint_workload,\
     total_running_time");
 
     groups
@@ -337,28 +348,45 @@ pub fn execute_experiments() {
                 print!("{experiment_id},INIT,{init_target_tx}");
             }
 
+            let terminate_workload = match olap_handle {
+                Some(..) => Some(Arc::new(AtomicBool::new(false))),
+                _ => None
+            };
+            let terminate_clone 
+                = terminate_workload.clone();
+            
+            let handler_clone  
+                = index_handler.clone();
+            
+            let exp_clone 
+                = experiment.clone();
+            
             let mut start_time = SystemTime::now();
-            let mut index_handler
-                = start_experiment_by_config(&experiment, index_handler);
+            let sp_index_handler 
+                = spawn(move || start_experiment_by_config(&exp_clone, handler_clone, terminate_clone));
 
             let mut total_olap_time = 0;
-            let mut total_olap_sleep_time = 0;
+            let mut avg_olap_sleep_time = 0;
             if let Some(olap_handle) = olap_handle {
                 let olap_data_result = olap_handle
                     .into_iter()
                     .flat_map(|jh| jh.join().unwrap())
                     .map(|t@(.., olap_time, sleep_time)| {
                         total_olap_time += olap_time;
-                        total_olap_sleep_time += sleep_time;
+                        avg_olap_sleep_time += sleep_time;
                         t
                     }).collect_vec();
 
+                terminate_workload.map(|shutdown| shutdown.store(true, SeqCst));
                 total_running_time = SystemTime::now()
                     .duration_since(start_time)
                     .unwrap()
                     .as_millis();
-
+                
                 total_olap_time /= 1_000_000;
+                avg_olap_sleep_time /= experiment.olap_workers as SleepTime;
+                avg_olap_sleep_time /= experiment.olaps_tx_per_worker as SleepTime;
+
                 let _nc = fs::remove_file(format!("mv_olap_{experiment_id}_INIT.csv"));
                 let mut olap_file = fs::OpenOptions::new()
                     .append(true)
@@ -367,23 +395,25 @@ pub fn execute_experiments() {
                     .open(format!("mv_olap_{experiment_id}_INIT.csv"))
                     .unwrap();
 
-                olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
-                for (si, range_max, olap_latency,  _) in olap_data_result {
+                olap_file.write_all(b"snapshot,sleep_time,range_end,latency\n").unwrap();
+                for (si, range_max, olap_latency,  t_sleep) in olap_data_result {
                     olap_file.write_all(format!("\
                                       {si},\
+                                      {t_sleep},\
                                       {range_max},\
                                       {olap_latency}\n").as_bytes())
                         .unwrap();
                 }
             }
 
+            let index_handler = sp_index_handler.join().unwrap();
             let (h, r) = height_root(&index_handler);
             let (alloc, reuse) = block_alloc_reuses(&index_handler);
-            let (olap_w, olaps_per_w)
-                = (experiment.olap_workers, experiment.olaps_tx_per_worker);
+            let (olap_w, olaps_per_w, olaps_joint_workload)
+                = (experiment.olap_workers, experiment.olaps_tx_per_worker, experiment.olap_joint_workload);
 
             println!(",{experiment},{h},{r},{alloc},{reuse},\
-            {total_olap_time},{olap_w},{olaps_per_w},{total_olap_sleep_time},{total_running_time}");
+            {total_olap_time},{olap_w},{olaps_per_w},{avg_olap_sleep_time},{olaps_joint_workload},{total_running_time}");
 
             experiment
                 .chain_groups
@@ -415,25 +445,42 @@ pub fn execute_experiments() {
                         m_manager.index().block_manager.reset_alloc_reuse_counts();
                     }
 
+                    let terminate_workload = match olap_handle {
+                        Some(..) => Some(Arc::new(AtomicBool::new(false))),
+                        _ => None
+                    };
+                    let terminate_clone
+                        = terminate_workload.clone();
+                    
+                    let exp_clone 
+                        = inner_group.clone();
+                    
+                    let handle_clone 
+                        = index_handler.clone();
+                    
                     start_time = SystemTime::now();
-                    index_handler
-                        = chain_experiment_by_config(&inner_group, index_handler.clone());
+                    let sp_index_handler
+                        = spawn(move || chain_experiment_by_config(&exp_clone, handle_clone, terminate_clone));
 
                     let mut total_olap_time = 0;
-                    let mut total_olap_sleep_time = 0;
+                    let mut avg_olap_sleep_time = 0;
                     if let Some(olap_handle) = olap_handle {
                         let olap_data_result = olap_handle.into_iter()
                             .flat_map(|jh| jh.join().unwrap())
                             .map(|t@(.., olap_time, olap_sleep_time)| {
                                 total_olap_time += olap_time;
-                                total_olap_sleep_time += olap_sleep_time;
+                                avg_olap_sleep_time += olap_sleep_time;
                                 t
                             }).collect_vec();
 
+                        terminate_workload.map(|shutdown| shutdown.store(true, SeqCst));
                         total_running_time
                             = SystemTime::now().duration_since(start_time).unwrap().as_millis();
 
                         total_olap_time /= 1_000_000;
+                        avg_olap_sleep_time /= inner_group.olap_workers as SleepTime;
+                        avg_olap_sleep_time /= inner_group.olaps_tx_per_worker as SleepTime;
+
                         let _nc = fs::remove_file(format!("mv_olap_{experiment_id}_{subgroup}.csv"));
                         let mut olap_file = fs::OpenOptions::new()
                             .append(true)
@@ -442,22 +489,23 @@ pub fn execute_experiments() {
                             .open(format!("mv_olap_{experiment_id}_{subgroup}.csv"))
                             .unwrap();
 
-                        olap_file.write_all(b"snapshot,range_end,latency\n").unwrap();
-                        for (si, range_max, olap_latency, _) in olap_data_result {
+                        olap_file.write_all(b"snapshot,sleep_time,range_end,latency\n").unwrap();
+                        for (si, range_max, olap_latency, t_sleep) in olap_data_result {
                             olap_file.write_all(format!("\
-                            {si},{range_max},{olap_latency}\n").as_bytes()).unwrap();
+                            {si},{t_sleep},{range_max},{olap_latency}\n").as_bytes()).unwrap();
                         }
                     }
 
                     // drop(olap_handle.take());
 
+                    let index_handler = sp_index_handler.join().unwrap();
                     let (h, r) = height_root(&index_handler);
                     let (alloc, reuse) = block_alloc_reuses(&index_handler);
-                    let (olap_w, olaps_per_w)
-                        = (inner_group.olap_workers, inner_group.olaps_tx_per_worker);
+                    let (olap_w, olaps_per_w, olaps_joint_workload)
+                        = (inner_group.olap_workers, inner_group.olaps_tx_per_worker, inner_group.olap_joint_workload);
 
                     println!(",{},{},{},{h},{r},{alloc},{reuse},\
-                    {total_olap_time},{olap_w},{olaps_per_w},{total_olap_sleep_time},{total_running_time}",
+                    {total_olap_time},{olap_w},{olaps_per_w},{avg_olap_sleep_time},{olaps_joint_workload},{total_running_time}",
                              experiment.protocol,
                              experiment.clock,
                              inner_group);
@@ -465,50 +513,98 @@ pub fn execute_experiments() {
         })
 }
 
-fn start_experiment_by_config(config: &GroupConfig, index_handler: Option<IndexHandler>) -> IndexHandler {
-    run_experiment_with_params(
-        config.threads,
-        index_handler.unwrap_or(config.index_handler()),
-        config.gc_enable,
-        config.skew,
-        config.insert_ratio,
-        config.update_ratio,
-        config.delete_ratio,
-        config.point_reads_ratio,
-        config.range_reads_ratio,
-        config.range_size,
-        config.total_tx,
-    )
+fn start_experiment_by_config(
+    config: &GroupConfig,
+    index_handler: Option<IndexHandler>,
+    terminate_workload: Option<Arc<AtomicBool>>) -> IndexHandler
+{
+    if terminate_workload.is_some() {
+        run_experiment_with_params_until(
+            config.threads,
+            index_handler.unwrap_or(config.index_handler()),
+            config.gc_enable,
+            config.skew,
+            config.skew_n,
+            config.insert_ratio,
+            config.update_ratio,
+            config.delete_ratio,
+            config.point_reads_ratio,
+            config.range_reads_ratio,
+            config.range_size,
+            terminate_workload.unwrap()
+        )
+    }
+    else {
+        run_experiment_with_params(
+            config.threads,
+            index_handler.unwrap_or(config.index_handler()),
+            config.gc_enable,
+            config.skew,
+            config.skew_n,
+            config.insert_ratio,
+            config.update_ratio,
+            config.delete_ratio,
+            config.point_reads_ratio,
+            config.range_reads_ratio,
+            config.range_size,
+            config.total_tx,
+        )
+    }
+
 }
 
-fn chain_experiment_by_config(config: &SubGroupConfig, index_handler: IndexHandler) -> IndexHandler {
-    run_experiment_with_params(
-        config.threads,
-        index_handler,
-        config.gc_enable,
-        config.skew,
-        config.insert_ratio,
-        config.update_ratio,
-        config.delete_ratio,
-        config.point_reads_ratio,
-        config.range_reads_ratio,
-        config.range_size,
-        config.total_tx,
-    )
+fn chain_experiment_by_config(
+    config: &SubGroupConfig,
+    index_handler: IndexHandler,
+    terminate_workload: Option<Arc<AtomicBool>>) -> IndexHandler
+{
+    if terminate_workload.is_some() {
+        run_experiment_with_params_until(
+            config.threads,
+            index_handler,
+            config.gc_enable,
+            config.skew,
+            config.skew_n,
+            config.insert_ratio,
+            config.update_ratio,
+            config.delete_ratio,
+            config.point_reads_ratio,
+            config.range_reads_ratio,
+            config.range_size,
+            terminate_workload.unwrap()
+        )
+    }
+    else {
+        run_experiment_with_params(
+            config.threads,
+            index_handler,
+            config.gc_enable,
+            config.skew,
+            config.skew_n,
+            config.insert_ratio,
+            config.update_ratio,
+            config.delete_ratio,
+            config.point_reads_ratio,
+            config.range_reads_ratio,
+            config.range_size,
+            config.total_tx,
+        )
+    }
 }
 
-fn run_experiment_with_params(
+fn run_experiment_with_params_until(
     threads: usize,
     index: IndexHandler,
     gc_enable: bool,
     skew: f64,
+    skew_n: usize,
     insert_ratio: usize,
     update_ratio: usize,
     delete_ratio: usize,
     point_reads_ratio: usize,
     range_reads_ratio: usize,
     range_size: u64,
-    total_tx: usize,
+    terminate: Arc<AtomicBool>
 ) -> IndexHandler {
     let total_tx_counter
         = Arc::new(AtomicUsize::new(0));
@@ -518,6 +614,7 @@ fn run_experiment_with_params(
         index,
         gc_enable,
         skew,
+        skew_n,
         insert_ratio,
         update_ratio,
         delete_ratio,
@@ -525,10 +622,78 @@ fn run_experiment_with_params(
         range_reads_ratio,
         range_size,
         total_tx_counter.clone(),
-        total_tx
     );
 
-    while total_tx_counter.load(SeqCst) < total_tx {
+    while !terminate.load(SeqCst) {
+        thread::yield_now();
+    }
+
+    let bulk_killer = handles
+        .into_iter()
+        .map(|(handle, killer)| {
+            drop(killer);
+            handle
+        })
+        .collect_vec();
+
+    let result = bulk_killer
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect_vec();
+
+    let mut total_time = 0;
+    let mut total_success = 0;
+    let mut total_error = 0;
+    for (_index, (tx_success, tx_error, time)) in result.iter().enumerate() {
+        // println!("\t[tid_{index}]: tx_success = {tx_success}, tx_error = {tx_error}, time = {time}");
+        total_success += tx_success;
+        total_error += tx_error;
+        total_time = total_time.max(*time);
+    }
+
+    let total_executed_tx = total_success + total_error;
+
+    print!(",{total_executed_tx},{total_success},{total_error},{total_time}");
+    // println!("\t---------------------------------------------------------------------------------");
+    // println!("\t[Summary] - Tx Executed = {total_executed_tx}, Target Tx = {total_tx}, Total Time = {total_time}");
+    // println!("\t---------------------------------------------------------------------------------");
+
+    index_handler
+}
+
+fn run_experiment_with_params(
+    threads: usize,
+    index: IndexHandler,
+    gc_enable: bool,
+    skew: f64,
+    skew_n: usize,
+    insert_ratio: usize,
+    update_ratio: usize,
+    delete_ratio: usize,
+    point_reads_ratio: usize,
+    range_reads_ratio: usize,
+    range_size: u64,
+    limit_tx: usize,
+) -> IndexHandler {
+    let total_tx_counter
+        = Arc::new(AtomicUsize::new(0));
+
+    let (index_handler, handles) = experiment(
+        threads,
+        index,
+        gc_enable,
+        skew,
+        skew_n,
+        insert_ratio,
+        update_ratio,
+        delete_ratio,
+        point_reads_ratio,
+        range_reads_ratio,
+        range_size,
+        total_tx_counter.clone(),
+    );
+
+    while total_tx_counter.load(SeqCst) < limit_tx {
         thread::yield_now();
     }
 
@@ -637,6 +802,7 @@ fn experiment(
     index_handler: IndexHandler,
     gc_enable: bool,
     skew: f64,
+    skew_n: usize,
     insert_ratio: usize,
     update_ratio: usize,
     delete_ratio: usize,
@@ -644,7 +810,6 @@ fn experiment(
     range_reads_ratio: usize,
     range_size: u64,
     total_tx: Arc<AtomicUsize>,
-    n: usize
 ) -> (IndexHandler, Vec<(JoinHandle<(usize, usize, u128)>, Sender<()>)>)
 {
     debug_assert_eq!(
@@ -675,7 +840,7 @@ fn experiment(
             // tx_success, tx_error, time_spent
             let handle = spawn(move || {
                 let mut sampler
-                    = Sampler::new(skew, n as Key);
+                    = Sampler::new(skew, skew_n as Key);
 
                 let (mut tx_success, mut tx_error, start_execution_time) =
                     (0usize, 0usize, SystemTime::now());

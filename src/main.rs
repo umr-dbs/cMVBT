@@ -2,7 +2,7 @@ use std::{env, fs, mem};
 use chrono::{DateTime, Local};
 use rand_distr::Zipf;
 use crate::mv_block::block::Block;
-use crate::mv_test::{Key, Payload, DEBUG, FAN_OUT, NUM_RECORDS};
+use crate::mv_test::{GroupConfig, Key, Payload, DEBUG, FAN_OUT, NUM_RECORDS};
 
 mod mv_block;
 mod mv_crud_model;
@@ -34,6 +34,7 @@ fn main() {
         // println!(">>size_of::<Block<127, 127, u64, u64>>()) = {}",
         //          size_of::<Block<127, 127, u64, u64>>());
         // println!();
+        // println!("{}", serde_json::to_string_pretty(&GroupConfig::default()).unwrap());
         let block_size = size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>();
         let kb = block_size as f32 / 1024f32;
         println!("\

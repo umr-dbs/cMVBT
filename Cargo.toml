@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.65"
+version = "0.0.66"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -25,12 +25,12 @@ crate-type = ["cdylib"]
 CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.119" }
 crossbeam-channel = "0.5.14"
 threadpool = "1.8.1"
-chrono = "0.4.39"
-rand_distr = "0.5.0"
+chrono = "0.4.40"
+rand_distr = "0.5.1"
 rand = "0.9.0"
 itertools = "0.14.0"
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision"] }
-serde_json = "1.0.138"
-serde = "1.0.217"
+serde_json = "1.0.140"
+serde = "1.0.218"
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.169"
+libc = "0.2.170"
