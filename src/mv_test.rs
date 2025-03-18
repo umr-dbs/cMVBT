@@ -66,12 +66,13 @@ impl Display for Sampler {
 type CurrentVersionSI = u64;
 type RangeMax = Key;
 type OlapTime = u128;
+type SleepTime = u64;
 
 pub fn run_olaps(handler: IndexHandler,
                  number_workers: usize,
                  number_olaps_per_worker: usize,
                  n: usize
-) -> Vec<JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI)>>>
+) -> Vec<JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI, SleepTime)>>>
 {
     let mut handles
         = Vec::with_capacity(number_workers);
@@ -84,7 +85,7 @@ pub fn run_olaps(handler: IndexHandler,
 }
 
 pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
-    ->  JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI)>> {
+    ->  JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI, SleepTime)>> {
     let manager = handler
         .left()
         .expect("OLAP init failed! Provide an initialized TxManager!");
@@ -100,11 +101,13 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
             = Vec::with_capacity(number_olaps);
         
         for _ in 0..number_olaps as u64 {
+            let si = index.current_version();
+            let sleep_time = rand::random_range(1..=olap_id*2);
+
+            thread::sleep(Duration::from_millis(sleep_time));
+
             let current_version
                 = index.current_version();
-
-            let si
-                = rand::random_range(Version::MIN..=current_version);
 
             let range_max
                 = uni_form.sample(&mut rand::rng()) as RangeMax;
@@ -118,7 +121,8 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
                 (si,
                  range_max,
                  SystemTime::now().duration_since(time_start).unwrap().as_nanos(),
-                 current_version)
+                 current_version,
+                 sleep_time)
             );
         }
         
@@ -399,12 +403,13 @@ pub fn execute_experiments() {
                     .open(format!("mv_olap_{experiment_id}_INIT.csv"))
                     .unwrap();
 
-                olap_file.write_all(b"target_snapshot,current_snapshot,range_end,latency\n").unwrap();
-                for (si, range_max, olap_latency,  t_sleep) in olap_data_result {
+                olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_end,latency\n").unwrap();
+                for (si, range_max, olap_latency,  curr_si, t_sleep) in olap_data_result {
                     olap_file.write_all(format!("\
                                       {si},\
-                                      {t_sleep},\
+                                      {curr_si},\
                                       {range_max},\
+                                      {t_sleep},\
                                       {olap_latency}\n").as_bytes())
                         .unwrap();
                 }
@@ -505,10 +510,14 @@ pub fn execute_experiments() {
                             .open(format!("mv_olap_{experiment_id}_{subgroup}.csv"))
                             .unwrap();
 
-                        olap_file.write_all(b"target_snapshot,current_snapshot,range_end,latency\n").unwrap();
-                        for (si, range_max, olap_latency, t_sleep) in olap_data_result {
+                        olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_end,latency\n").unwrap();
+                        for (si, range_max, olap_latency, curr_si, sleep_time) in olap_data_result {
                             olap_file.write_all(format!("\
-                            {si},{t_sleep},{range_max},{olap_latency}\n").as_bytes()).unwrap();
+                            {si},\
+                            {curr_si},\
+                            {sleep_time},\
+                            {range_max},\
+                            {olap_latency}\n").as_bytes()).unwrap();
                         }
                     }
                     else {

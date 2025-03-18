@@ -223,7 +223,7 @@ impl<const FAN_OUT: usize,
                 .iter()
                 .zip(keys_page)
                 .enumerate()
-                .rfind(|(_, (v, (range)))|
+                .rfind(|(_, (v, range))|
                     v.matched(lookup_version) && range.contains(key))
                 .map(|(pos, _)| internal_page.get_pointer(pos).clone())
                 .ok_or(())?
@@ -255,9 +255,9 @@ impl<const FAN_OUT: usize,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    // let start_pos_si = versions_page.len() -
-                    //     versions_page.binary_search_by(|v| v.into_cmp().cmp(v))
-                    //         .unwrap_or_else(|pos| pos);
+                    let start_pos_si = versions_page.len() -
+                        versions_page.binary_search_by(|v| v.into_cmp().cmp(v))
+                            .unwrap_or_else(|pos| pos);
 
                     blocks.extend(versions_page
                         .iter()
@@ -266,11 +266,11 @@ impl<const FAN_OUT: usize,
                         .zip(keys_page
                             .iter()
                             .rev())
-                        // .skip(start_pos_si)
+                        .skip(start_pos_si)
                         .filter(|((.., v), range)|
                             v.matched(lookup_version) &&
                                 lookup_range.overlap(range))
-                        // .filter(|(.., range)| lookup_range.overlap(range))
+                        .filter(|(.., range)| lookup_range.overlap(range))
                         .unique_by(|(.., range)| range.lower())
                         .map(|((pos, ..), ..)| internal_page
                             .get_pointer(pos)
@@ -334,19 +334,19 @@ impl<const FAN_OUT: usize,
                     .unwrap()
                     .as_records();
 
-                // let start_pos_si = records.len() -
-                //     records.binary_search_by(|r|
-                //         r.version.insert_version.cmp(&lookup_version)
-                //     ).unwrap_or_else(|pos| pos);
+                let start_pos_si = records.len() -
+                    records.binary_search_by(|r|
+                        r.version.insert_version.cmp(&lookup_version)
+                    ).unwrap_or_else(|pos| pos);
 
                records
                    .iter()
                    .rev()
-                   // .skip(start_pos_si)
+                   .skip(start_pos_si)
                    .filter(|r|
                        r.version().matches(lookup_version) &&
                            lookup_range.contains(r.key()))
-                   // .filter(|r| r.version().matches(lookup_version))
+                   .filter(|r| r.version().matches(lookup_version))
                    // .sorted_by_key(|r| r.key())
                    .map(RecordPointResult::from)
                    .collect::<Vec<_>>()
