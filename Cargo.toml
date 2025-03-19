@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.67"
+version = "0.0.68"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -11,6 +11,9 @@ overflow-checks = false
 
 [profile.release]
 overflow-checks = false
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
 
 [features]
 hardware-lock-elision = []
