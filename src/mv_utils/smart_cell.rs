@@ -150,7 +150,7 @@ impl<E: Default> OptCell<E> {
             read_version,
             WRITE_FLAG_VERSION | read_version,
             AcqRel,
-            Relaxed)
+            Acquire)
         {
             Ok(..) => Some(WRITE_FLAG_VERSION | read_version),
             Err(..) => None
@@ -173,12 +173,12 @@ impl<E: Default> OptCell<E> {
     pub fn write_unlock(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_PIN_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Relaxed)
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
     }
 
     #[inline(always)]
     pub fn write_obsolete(&self) {
-        self.cell_version.store(OBSOLETE_FLAG_VERSION, Relaxed)
+        self.cell_version.store(OBSOLETE_FLAG_VERSION, Release)
     }
 
     #[inline(always)]
@@ -378,7 +378,7 @@ impl<E: Default> SmartCell<E> {
         match self.0.deref() {
             OLCCell(opt) => OLCReader(
                 self.clone(),
-                opt.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION
+                opt.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION
             ),
             FreeCell(ptr) => LockFree(ptr.get_mut()),
         }
