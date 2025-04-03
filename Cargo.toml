@@ -1,6 +1,6 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.69"
+version = "0.0.70"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
 description = "MV-B+Tree Implementation"
@@ -11,6 +11,8 @@ overflow-checks = false
 
 [profile.release]
 overflow-checks = false
+#debug = true
+#panic = "unwind"
 
 [build]
 rustflags = ["-C", "target-cpu=native"]
@@ -25,7 +27,7 @@ crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.119" }
+CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.120" }
 crossbeam-channel = "0.5.14"
 threadpool = "1.8.1"
 chrono = "0.4.40"

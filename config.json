@@ -19,12 +19,12 @@
     "chain_groups":         [
       {
         "olap_joint_workload":  true,
-        "olap_workers":         112,
-        "olaps_tx_per_worker":  100000,
+        "olap_workers":         12,
+        "olaps_tx_per_worker":  1000,
         "skew":                 0,
         "skew_n":               10000,
         "gc_enable":            false,
-        "threads":              16,
+        "threads":              1,
         "total_tx":             1,
         "insert_ratio":         0,
         "update_ratio":         100,
@@ -55,12 +55,12 @@
     "chain_groups":         [
       {
         "olap_joint_workload":  true,
-        "olap_workers":         112,
-        "olaps_tx_per_worker":  100000,
+        "olap_workers":         12,
+        "olaps_tx_per_worker":  1000,
         "skew":                 0.4,
         "skew_n":               10000,
         "gc_enable":            false,
-        "threads":              16,
+        "threads":              1,
         "total_tx":             1,
         "insert_ratio":         0,
         "update_ratio":         100,
@@ -91,12 +91,12 @@
     "chain_groups":         [
       {
         "olap_joint_workload":  true,
-        "olap_workers":         112,
-        "olaps_tx_per_worker":  100000,
+        "olap_workers":         12,
+        "olaps_tx_per_worker":  1000,
         "skew":                 1.4,
         "skew_n":               10000,
         "gc_enable":            false,
-        "threads":              16,
+        "threads":              6,
         "total_tx":             1,
         "insert_ratio":         0,
         "update_ratio":         100,

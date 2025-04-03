@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
-use std::ops::DerefMut;
 use itertools::Itertools;
 use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -11,8 +10,7 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_tree::mvbplus_tree::{MVBPlusTree, SmartRoot, RootItemGuard, MergeResult, RootItem};
-use crate::mv_tree::root::Root;
+use crate::mv_tree::mvbplus_tree::{MVBPlusTree, SmartRoot, RootItemGuard, MergeResult};
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
@@ -82,7 +80,7 @@ impl<'a,
             return None;
         }
 
-        self.completed = self.range.lower == self.range.upper; // max == Key::MAX inclusive case
+        self.completed = self.range.lower > self.range.upper; // max == Key::MAX inclusive case
 
         if self.path.is_empty() {
             let smart_root = self
@@ -124,18 +122,18 @@ impl<'a,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    // let start_pos_si = versions_page.len() -
-                    //     versions_page.binary_search_by(|v| v.into_cmp().cmp(v))
-                    //         .unwrap_or_else(|pos| pos);
+                    let start_pos_si = versions_page.len() -
+                        versions_page.binary_search_by(|v| v.into_cmp().cmp(&si))
+                            .unwrap_or_else(|pos| pos);
 
                     match versions_page
                         .iter()
                         .zip(keys_page)
                         .rev()
                         .enumerate()
-                        // .skip(start_pos_si)
+                        .skip(start_pos_si)
                         .filter_map(|(pos, (v, range))| {
-                            if v.matched(si) && range.contains(self.range.lower) {
+                            if range.contains(self.range.lower) { // v.matched(si) &&
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))
                             } else {
                                 None
@@ -150,18 +148,18 @@ impl<'a,
                     let records = leaf_page
                         .as_records();
 
-                    // let start_pos_si = records.len() -
-                    //     records.binary_search_by(|r|
-                    //         r.version.insert_version.cmp(&si)
-                    //     ).unwrap_or_else(|pos| pos);
+                    let start_pos_si = records.len() -
+                        records.binary_search_by(|r|
+                            r.version.insert_version.cmp(&si)
+                        ).unwrap_or_else(|pos| pos);
 
                     self.buff.extend(records
                         .iter()
                         .rev()
-                        // .skip(start_pos_si)
+                        .skip(start_pos_si)
                         .filter(|r|
                             r.version().matches(si) && self.range.contains(r.key()))
-                        .sorted_by_key(|r| r.key())
+                        // .sorted_by_key(|r| r.key())
                         .map(RecordPointResult::from));
 
                     self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(curr_fence.upper);
@@ -255,27 +253,42 @@ impl<const FAN_OUT: usize,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    // let start_pos_si = versions_page.len() -
-                    //     versions_page.binary_search_by(|v| v.into_cmp().cmp(v))
-                    //         .unwrap_or_else(|pos| pos);
+                    let start_pos_si = versions_page.len() -
+                        versions_page.binary_search_by(|v| v.into_cmp().cmp(&lookup_version))
+                            .unwrap_or_else(|pos| pos);
 
-                    blocks.extend(versions_page
+                    versions_page
                         .iter()
                         .enumerate()
+                        .zip(keys_page.iter())
                         .rev()
-                        .zip(keys_page
-                            .iter()
-                            .rev())
-                        // .skip(start_pos_si)
-                        .filter(|((.., v), range)|
-                            v.matched(lookup_version) &&
-                                lookup_range.overlap(range))
-                        .filter(|(.., range)| lookup_range.overlap(range))
-                        .unique_by(|(.., range)| range.lower())
-                        .map(|((pos, ..), ..)| internal_page
-                            .get_pointer(pos)
-                            .clone())
-                    );
+                        .skip(start_pos_si)
+                        .filter(|((.., _v), range)| //v.matched(lookup_version) &&
+                            lookup_range.overlap(range))
+                        .unique_by(|(.., range)|
+                            range.lower())
+                        .unique_by(|(.., range)|
+                            range.upper())
+                        .for_each(|((pos, ..), ..)|
+                            blocks.push_back(internal_page.get_pointer(pos).clone()));
+
+                    // blocks.extend(versions_page
+                    //     .iter()
+                    //     .enumerate()
+                    //     .rev()
+                    //     .zip(keys_page
+                    //         .iter()
+                    //         .rev())
+                    //     .skip(start_pos_si)
+                    //     .filter(|((.., v), range)|
+                    //         v.matched(lookup_version) &&
+                    //             lookup_range.overlap(range))
+                    //     .unique_by(|(.., range)|
+                    //         range.lower())
+                    //     .map(|((pos, ..), ..)|
+                    //         internal_page.get_pointer(pos))
+                    //     .cloned()
+                    // );
                 }
                 _ => leafs.push(curr)
             }
@@ -334,19 +347,18 @@ impl<const FAN_OUT: usize,
                     .unwrap()
                     .as_records();
 
-                // let start_pos_si = records.len() -
-                //     records.binary_search_by(|r|
-                //         r.version.insert_version.cmp(&lookup_version)
-                //     ).unwrap_or_else(|pos| pos);
+                let start_pos_si = records.len() -
+                    records.binary_search_by(|r|
+                        r.version.insert_version.cmp(&lookup_version)
+                    ).unwrap_or_else(|pos| pos);
 
                records
                    .iter()
                    .rev()
-                   // .skip(start_pos_si)
+                   .skip(start_pos_si)
                    .filter(|r|
                        r.version().matches(lookup_version) &&
                            lookup_range.contains(r.key()))
-                   .filter(|r| r.version().matches(lookup_version))
                    // .sorted_by_key(|r| r.key())
                    .map(RecordPointResult::from)
                    .collect::<Vec<_>>()
