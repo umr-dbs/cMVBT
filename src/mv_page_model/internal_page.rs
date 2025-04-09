@@ -40,7 +40,7 @@ const OBSOLETE_VERSION_MARK: Version = 0x80_00000000000000;
 
 pub trait TimeMatcher {
     fn into_cmp(self) -> Self;
-    fn le_other_any(self, other: Version) -> bool;
+    // fn le_other_any(self, other: Version) -> bool;
 
     fn match_version_active(self, other: Version) -> bool;
 
@@ -59,10 +59,10 @@ impl TimeMatcher for Version {
         self & !OBSOLETE_VERSION_MARK
     }
 
-    #[inline(always)]
-    fn le_other_any(self, other: Version) -> bool {
-        self <= other & !OBSOLETE_VERSION_MARK
-    }
+    // #[inline(always)]
+    // fn le_other_any(self, other: Version) -> bool {
+    //     self & !OBSOLETE_VERSION_MARK <= other // & !OBSOLETE_VERSION_MARK
+    // }
 
     #[inline(always)]
     fn match_version_active(self, other: Version) -> bool {

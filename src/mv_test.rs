@@ -89,9 +89,6 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
     let manager = handler
         .left()
         .expect("OLAP init failed! Provide an initialized TxManager!");
-
-    let index
-        = manager.tx_dispatcher();
     
     spawn(move || {
         let uni_form
@@ -99,6 +96,9 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
         
         let mut olap_res 
             = Vec::with_capacity(number_olaps);
+
+        let index
+            = manager.tx_dispatcher();
         
         for _ in 0..number_olaps as u64 {
             let si = index.current_version();

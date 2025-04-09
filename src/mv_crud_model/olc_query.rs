@@ -19,7 +19,7 @@ impl<const FAN_OUT: usize,
 
         loop {
             match self.traversal_write_internal_olc(key, attempt) {
-                Err((n_attempt)) => {
+                Err(n_attempt) => {
                     attempt = n_attempt;
 
                     sched_yield(attempt);
@@ -54,15 +54,11 @@ impl<const FAN_OUT: usize,
         (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
          BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
     {
-        if attempts > 0 {
-            sched_yield(attempts);
-        }
-
-        let height
-            = self.root.unsafe_borrow().height();
+        let root 
+            = self.root.clone();
         
         let mut master_guard
-            = self.root.borrow_read();
+            = root.borrow_read();
 
         let root_block
             = master_guard.deref().unwrap().block();
@@ -70,6 +66,9 @@ impl<const FAN_OUT: usize,
         let mut root_guard
             = root_block.borrow_read();
 
+        let height
+            = master_guard.deref().unwrap().height();
+        
         match root_guard.deref().unwrap().unsafe_degree_root() {
             BlockUnsafeDegree::Overflow
             if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking
@@ -120,8 +119,8 @@ impl<const FAN_OUT: usize,
                         .get_pointer(index)
                         .clone();
 
-                    let mut next_curr_guard = self.apply_for_ref(
-                        &next_curr_block);
+                    let mut next_curr_guard
+                        = next_curr_block.borrow_read();
 
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow

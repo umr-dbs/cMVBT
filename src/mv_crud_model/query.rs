@@ -2,6 +2,9 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
+use std::sync::Arc;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::Release;
 use itertools::Itertools;
 use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -10,11 +13,12 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_tree::mvbplus_tree::{MVBPlusTree, SmartRoot, RootItemGuard, MergeResult};
+use crate::mv_tree::mvbplus_tree::{MVBPlusTree, SmartRoot, RootItemGuard, MergeResult, RootItem};
+use crate::mv_tree::root::Root;
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::smart_cell::sched_yield;
+use crate::mv_utils::smart_cell::{sched_yield, SmartCell, OBSOLETE_FLAG_VERSION};
 
 pub struct RangeQueryIter<
     'a,
@@ -191,7 +195,7 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_h.deref().unwrap();
 
-            if root_item.version().le_other_any(lookup_version) {
+            if root_item.version().match_version_active(lookup_version) {
                 break root_anker;
             } else {
                 root_anker = match root_item.prev {
@@ -230,7 +234,6 @@ impl<const FAN_OUT: usize,
         Ok(curr)
     }
 
-    #[inline]
     fn traverse_read_key_range(
         mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: &Interval<Key>,
@@ -248,28 +251,29 @@ impl<const FAN_OUT: usize,
         while !blocks.is_empty() {
             curr = blocks.pop_front().unwrap();
 
-            match curr.borrow_read().deref().unwrap().as_page_ref() {
+            let curr_read
+                = curr.borrow_read();
+
+            match curr_read.deref().unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    let start_pos_si = versions_page.len() -
-                        versions_page.binary_search_by(|v| v.into_cmp().cmp(&lookup_version))
-                            .unwrap_or_else(|pos| pos);
+                    // let start_pos_si = versions_page.len() -
+                    //     versions_page.binary_search_by(|v| v.into_cmp().cmp(&lookup_version))
+                    //         .unwrap_or_else(|pos| pos);
 
                     versions_page
                         .iter()
                         .enumerate()
                         .zip(keys_page.iter())
                         .rev()
-                        .skip(start_pos_si)
-                        .filter(|((.., _v), range)| //v.matched(lookup_version) &&
-                            lookup_range.overlap(range))
-                        .unique_by(|(.., range)|
-                            range.lower())
-                        .unique_by(|(.., range)|
-                            range.upper())
-                        .for_each(|((pos, ..), ..)|
+                        // .skip(start_pos_si)
+                        .filter(|((.., v), range)| //v.matched(lookup_version) &&
+                            v.matched(lookup_version) && lookup_range.overlap(range))
+                        .unique_by(|(.., range)| range.lower())
+                        .unique_by(|(.., range)| range.upper())
+                        .for_each(|((pos, ..), ..)| 
                             blocks.push_back(internal_page.get_pointer(pos).clone()));
 
                     // blocks.extend(versions_page
@@ -324,15 +328,17 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline]
     pub(crate) fn key_range_read_from_root(
         root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: Interval<Key>,
         lookup_version: Version)
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
+        let root_read
+            = root.borrow_read();
+
         let blocks = Self::traverse_read_key_range(
-            root.borrow_read().deref().unwrap().block(),
+            root_read.deref().unwrap().block(),
             &lookup_range,
             lookup_version);
 
@@ -435,6 +441,142 @@ impl<const FAN_OUT: usize,
         //
         // let _ = mem::replace(self.root.get_mut(), new_root.clone());
         // (new_root.0.block(), n_root_guard)
+    }
+
+    pub(crate) fn split_root_new<'a>(
+        &self,
+        _master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        height: Height,
+    ) -> (
+        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+    {
+        let root_guard_deref_mut
+            = root_guard.deref_mut().unwrap();
+
+        let (_height, root_block) = match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
+            BlockSplit::ByKey(left_fence,
+                              left,
+                              right_fence,
+                              right
+            ) => {
+                let new_root_block = self
+                    .block_manager
+                    .new_empty_index_block(self.locking_strategy.latch_type());
+
+                let root_internal_page = new_root_block
+                    .unsafe_borrow_mut()
+                    .as_mut()
+                    .as_internal_page();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let commit_version = commit_handle
+                    .read_handle_version();
+
+                root_internal_page
+                    .push_uncommitted(left_fence, commit_version, left, 0);
+
+                root_internal_page
+                    .push_uncommitted(right_fence, commit_version, right, 1);
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let versions
+                                = root_internal_page.versions_byKey_uncommitted_mut();
+
+                            *versions.get_unchecked_mut(0) = commit;
+                            *versions.get_unchecked_mut(1) = commit;
+
+                            break commit;
+                        },
+                        Ok(commit) => break commit,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                root_internal_page.commit_delta(2, 0);
+
+                let mut new_root_latch
+                    = new_root_block.borrow_read();
+
+                while !new_root_latch.upgrade_write_lock() {
+                    commit_attempts += 1;
+                    sched_yield(commit_attempts);
+
+                    new_root_latch = new_root_block.borrow_read();
+                }
+
+                // self.root.unsafe_borrow_mut().root.version |= OBSOLETE_FLAG_VERSION;
+                let old_root = self.root.replace(MVBPlusTree::make_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(new_root_block.clone(), committed, height + 1),
+                        prev: None,
+                    }
+                ));
+
+                self.root.unsafe_borrow_mut().prev = Some(old_root);
+
+                root_guard = new_root_latch;
+                (height + 1, new_root_block)
+            }
+            BlockSplit::ByVersion(new_root_block) => unsafe {
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) =>
+                            break commit,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                let mut new_root_latch
+                    = new_root_block.borrow_read();
+
+                while !new_root_latch.upgrade_write_lock() {
+                    commit_attempts += 1;
+                    sched_yield(commit_attempts);
+
+                    new_root_latch = new_root_block.borrow_read();
+                }
+
+                // self.root.unsafe_borrow_mut().root.version |= OBSOLETE_FLAG_VERSION;
+                let old_root = self.root.replace(MVBPlusTree::make_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(new_root_block.clone(), committed, height + 1),
+                        prev: None,
+                    }
+                ));
+
+                self.root.unsafe_borrow_mut().prev = Some(old_root);
+
+                root_guard = new_root_latch;
+                (height, new_root_block)
+            }
+        };
+
+        (root_block, root_guard)
     }
 
     pub(crate) fn split_root<'a>(
@@ -635,8 +777,8 @@ impl<const FAN_OUT: usize,
                         .get_pointer(index)
                         .clone();
 
-                    let mut next_curr_guard = self.apply_for_ref(
-                        &next_curr_block);
+                    let next_curr_guard 
+                        = next_curr_block.borrow_free();
 
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow =>
