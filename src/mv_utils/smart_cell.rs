@@ -187,6 +187,11 @@ impl<E: Default> OptCell<E> {
     }
 
     #[inline(always)]
+    pub fn unwrite_obsolete_with_latch(&self, latch: LatchVersion) {
+        self.cell_version.store(latch & !OBSOLETE_FLAG_VERSION, Release)
+    }
+
+    #[inline(always)]
     pub fn is_obsolete(&self) -> bool {
         self.load_version() == OBSOLETE_FLAG_VERSION
     }
@@ -270,6 +275,24 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
     // }
 
     #[inline(always)]
+    pub fn unmark_obsolete(&mut self) {
+        if let OLCWriter(cell, latch) = self {
+            if let OLCCell(opt) = cell.0.as_ref() {
+                opt.unwrite_obsolete_with_latch(*latch);
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn mark_obsolete(&mut self) {
+        if let OLCWriter(cell, latch) = self {
+            if let OLCCell(opt) = cell.0.as_ref() {
+                opt.write_obsolete_with_latch(*latch);
+            }
+        }
+    }
+
+    #[inline(always)]
     pub fn downgrade(&mut self) {
         match self {
             OLCWriter(cell, latch) => unsafe {
@@ -289,7 +312,7 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
             OLCReader(ref cell, read_latch) => unsafe {
                 match cell.0.as_ref() {
                     OLCCell(opt) => if let Some(write_latch)
-                        = opt.write_lock(*read_latch & !WRITE_FLAG_VERSION)
+                        = opt.write_lock(*read_latch & !WRITE_OBSOLETE_FLAG_VERSION)
                     {
                         let writer = OLCWriter(transmute_copy(cell), write_latch);
                         ptr::write(self, writer);
@@ -315,10 +338,11 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
         match self {
-            OLCReader(opt, version) => {
+            OLCReader(opt, ..) |
+            OLCWriter(opt, ..) => {
                 if let OLCCell(opt) = opt.0.as_ref() {
                     let loaded = opt.load_version();
-                    loaded & WRITE_FLAG_VERSION == 0 && loaded == *version
+                    loaded & OBSOLETE_FLAG_VERSION == 0
                 }
                 else {
                     false

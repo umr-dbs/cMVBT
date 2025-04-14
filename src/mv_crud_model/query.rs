@@ -1,10 +1,12 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::mem;
+use std::{mem, ptr, thread};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::Release;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use std::time::Duration;
 use itertools::Itertools;
 use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -18,7 +20,7 @@ use crate::mv_tree::root::Root;
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::smart_cell::{sched_yield, SmartCell, OBSOLETE_FLAG_VERSION};
+use crate::mv_utils::smart_cell::{sched_yield, SmartCell, SmartFlavor, OBSOLETE_FLAG_VERSION};
 
 pub struct RangeQueryIter<
     'a,
@@ -188,6 +190,7 @@ impl<const FAN_OUT: usize,
         let mut root_anker
             = self.root.clone();
 
+        let mut attempts = 0;
         loop {
             let root_h
                 = root_anker.borrow_read();
@@ -195,7 +198,13 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_h.deref().unwrap();
 
-            if root_item.version().match_version_active(lookup_version) {
+            if root_item.version().is_obsolete() {
+                attempts += 1;
+                sched_yield(attempts);
+
+                root_anker = self.root.clone();
+            }
+            else if root_item.version().match_version_active(lookup_version) {
                 break root_anker;
             } else {
                 root_anker = match root_item.prev {
@@ -273,9 +282,12 @@ impl<const FAN_OUT: usize,
                             v.matched(lookup_version) && lookup_range.overlap(range))
                         .unique_by(|(.., range)| range.lower())
                         .unique_by(|(.., range)| range.upper())
-                        .for_each(|((pos, ..), ..)| 
+                        .for_each(|((pos, ..), ..)|
                             blocks.push_back(internal_page.get_pointer(pos).clone()));
 
+                    // if internal_page.len.load(Acquire) as usize == versions_page.len() {
+                    //     blocks.push_back(internal_page.get_pointer(pos).clone())
+                    // });
                     // blocks.extend(versions_page
                     //     .iter()
                     //     .enumerate()
@@ -369,7 +381,7 @@ impl<const FAN_OUT: usize,
                    .map(RecordPointResult::from)
                    .collect::<Vec<_>>()
             })
-            .filter(|set| !set.is_empty())
+            // .filter(|set| !set.is_empty())
             // .sorted_by_key(|set|
             //     unsafe { set.get_unchecked(0).key })
             .flatten()
@@ -443,9 +455,9 @@ impl<const FAN_OUT: usize,
         // (new_root.0.block(), n_root_guard)
     }
 
-    pub(crate) fn split_root_new<'a>(
+    pub(crate) fn split_root<'a>(
         &self,
-        _master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mut master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
     ) -> (
@@ -461,14 +473,23 @@ impl<const FAN_OUT: usize,
                               right_fence,
                               right
             ) => {
+                master_guard.mark_obsolete();
+                root_guard.mark_obsolete();
+
                 let new_root_block = self
                     .block_manager
                     .new_empty_index_block(self.locking_strategy.latch_type());
 
-                let root_internal_page = new_root_block
-                    .unsafe_borrow_mut()
-                    .as_mut()
-                    .as_internal_page();
+                let mut new_root_latch
+                    = new_root_block.borrow_read();
+
+                let mut latch_attempts = 0;
+                while !new_root_latch.upgrade_write_lock() {
+                    latch_attempts += 1;
+                    sched_yield(latch_attempts);
+
+                    new_root_latch = new_root_block.borrow_read();
+                }
 
                 let mut commit_handle
                     = self.begin_commit();
@@ -476,11 +497,35 @@ impl<const FAN_OUT: usize,
                 let commit_version = commit_handle
                     .read_handle_version();
 
+                let smart_root = MVBPlusTree::make_smart_root(
+                    self.locking_strategy.latch_type(),
+                    RootItem {
+                        root: Root::new(new_root_block.clone(), commit_version, height + 1),
+                        prev: None,
+                    },
+                );
+
+                let root_internal_page = new_root_block
+                    .unsafe_borrow_mut()
+                    .as_mut()
+                    .as_internal_page();
+
                 root_internal_page
                     .push_uncommitted(left_fence, commit_version, left, 0);
 
                 root_internal_page
                     .push_uncommitted(right_fence, commit_version, right, 1);
+
+                let mut n_master_guard
+                    = smart_root.borrow_read();
+
+                latch_attempts = 0;
+                while !n_master_guard.upgrade_write_lock() {
+                    latch_attempts += 1;
+                    sched_yield(latch_attempts);
+
+                    n_master_guard = smart_root.borrow_read();
+                }
 
                 let mut commit_attempts
                     = 0;
@@ -507,38 +552,47 @@ impl<const FAN_OUT: usize,
 
                 root_internal_page.commit_delta(2, 0);
 
-                let mut new_root_latch
-                    = new_root_block.borrow_read();
+                let master_guard_deref
+                    = n_master_guard.deref_mut().unwrap();
 
-                while !new_root_latch.upgrade_write_lock() {
-                    commit_attempts += 1;
-                    sched_yield(commit_attempts);
+                master_guard_deref.prev = Some(self.root.clone());
+                master_guard_deref.root.height = height + 1;
+                // print!("KS: ");
+                // println!("Old = {}, New = {}",
+                //          root_guard.deref().unwrap().len(),
+                //          new_root_latch.deref().unwrap().len());
 
-                    new_root_latch = new_root_block.borrow_read();
-                }
+                let _ = self.root.replace(smart_root);
 
-                // self.root.unsafe_borrow_mut().root.version |= OBSOLETE_FLAG_VERSION;
-                let old_root = self.root.replace(MVBPlusTree::make_smart_root(
-                    self.locking_strategy.latch_type(),
-                    RootItem {
-                        root: Root::new(new_root_block.clone(), committed, height + 1),
-                        prev: None,
-                    }
-                ));
-
-                self.root.unsafe_borrow_mut().prev = Some(old_root);
+                fence(AcqRel);
+                master_guard_deref.root.version
+                    = committed;
 
                 root_guard = new_root_latch;
+
                 (height + 1, new_root_block)
             }
-            BlockSplit::ByVersion(new_root_block) => unsafe {
-                let mut commit_handle
-                    = self.begin_commit();
+            BlockSplit::ByVersion(new_root_block) => { //TODO: Seems to have an issue!
+                // master_guard.mark_obsolete();
+                // root_guard.mark_obsolete();
 
+                self.root.unsafe_borrow_mut().prev = Some(
+                    Self::make_smart_root(
+                        self.locking_strategy.latch_type(),
+                        self.root.deref().unsafe_borrow().deep_clone(self.locking_strategy.latch_type()))
+                );
+
+                *self.root.get_mut().unsafe_borrow_mut().block.unsafe_borrow_mut()
+                    = mem::take(new_root_block.unsafe_borrow_mut());
+
+                fence(Release);
                 let mut commit_attempts
                     = 0;
 
-                let committed = loop {
+                let mut commit_handle
+                    = self.begin_commit();
+
+                self.root.unsafe_borrow_mut().root.version = loop {
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) =>
                             break commit,
@@ -550,36 +604,22 @@ impl<const FAN_OUT: usize,
                     }
                 };
 
-                let mut new_root_latch
-                    = new_root_block.borrow_read();
+                master_guard.unmark_obsolete();
+                // root_guard.unmark_obsolete();
 
-                while !new_root_latch.upgrade_write_lock() {
-                    commit_attempts += 1;
-                    sched_yield(commit_attempts);
+                // print!("VS: ");
+                // println!("Old = {}, New = {}",
+                //          master_guard.deref().unwrap().prev.as_ref().unwrap().unsafe_borrow().block.unsafe_borrow().len(),
+                //          root_guard.deref().unwrap().node_data.get_mut().len());
 
-                    new_root_latch = new_root_block.borrow_read();
-                }
-
-                // self.root.unsafe_borrow_mut().root.version |= OBSOLETE_FLAG_VERSION;
-                let old_root = self.root.replace(MVBPlusTree::make_smart_root(
-                    self.locking_strategy.latch_type(),
-                    RootItem {
-                        root: Root::new(new_root_block.clone(), committed, height + 1),
-                        prev: None,
-                    }
-                ));
-
-                self.root.unsafe_borrow_mut().prev = Some(old_root);
-
-                root_guard = new_root_latch;
-                (height, new_root_block)
+                (height, self.root.0.block())
             }
         };
 
         (root_block, root_guard)
     }
 
-    pub(crate) fn split_root<'a>(
+    pub(crate) fn split_root_<'a>(
         &self,
         master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -777,7 +817,7 @@ impl<const FAN_OUT: usize,
                         .get_pointer(index)
                         .clone();
 
-                    let next_curr_guard 
+                    let next_curr_guard
                         = next_curr_block.borrow_free();
 
                     match next_curr_guard.deref().unwrap().unsafe_degree() {

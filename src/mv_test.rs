@@ -100,9 +100,10 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
         let index
             = manager.tx_dispatcher();
         
+        let time_bias = 1000_u64;
         for _ in 0..number_olaps as u64 {
             let si = index.current_version();
-            let sleep_time = rand::random_range(1..=olap_id*2);
+            let sleep_time = time_bias;
 
             thread::sleep(Duration::from_millis(sleep_time));
 
@@ -112,11 +113,12 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
             let range_max
                 = uni_form.sample(&mut rand::rng()) as RangeMax;
 
+            // println!("---> Start OLAP");
             let time_start = SystemTime::now();
             let _crud_res = index.dispatch_crud(CRUDOperation::Range(
                 (index.min_key..=range_max).into(),
                 si));
-            
+            // println!("---> End OLAP");
             olap_res.push(
                 (si,
                  range_max,
