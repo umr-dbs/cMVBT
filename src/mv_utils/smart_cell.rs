@@ -193,7 +193,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn is_obsolete(&self) -> bool {
-        self.load_version() == OBSOLETE_FLAG_VERSION
+        self.load_version() & OBSOLETE_FLAG_VERSION != 0
     }
 
     #[inline(always)]
@@ -405,6 +405,14 @@ impl<E: Default> SmartCell<E> {
                 opt.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION
             ),
             FreeCell(ptr) => LockFree(ptr.get_mut()),
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_obsolete(&self) -> bool {
+        match self.0.deref() {
+            OLCCell(opt) => opt.is_obsolete(),
+            FreeCell(..) => false,
         }
     }
 }

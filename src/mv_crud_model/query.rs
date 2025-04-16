@@ -96,7 +96,7 @@ impl<'a,
             self.path.push((
                 Interval::new(self.mv_tree().min_key,
                               self.mv_tree().max_key),
-                smart_root.borrow_read().deref().unwrap().block())
+                smart_root)
             );
         }
 
@@ -186,7 +186,9 @@ impl<const FAN_OUT: usize,
     Payload: Clone + Default + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
-    pub(crate) fn retrieve_root_for(&self, lookup_version: Version) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn retrieve_root_for(&self, lookup_version: Version) 
+        -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> 
+    {
         let mut root_anker
             = self.root.clone();
 
@@ -198,14 +200,19 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_h.deref().unwrap();
 
-            if root_item.version().is_obsolete() {
+            if !root_h.is_valid() {
                 attempts += 1;
                 sched_yield(attempts);
 
                 root_anker = self.root.clone();
             }
             else if root_item.version().match_version_active(lookup_version) {
-                break root_anker;
+                let block
+                    = root_anker.0.block();
+                
+                if !block.is_obsolete() {
+                    break block
+                }
             } else {
                 root_anker = match root_item.prev {
                     Some(ref p_root) => p_root.clone(),
@@ -315,13 +322,13 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn key_point_read_from_root(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match Self::traverse_read_key(
-            root.borrow_read().deref().unwrap().block(),
+            root,
             key,
             lookup_version)
         {
@@ -341,16 +348,13 @@ impl<const FAN_OUT: usize,
     }
 
     pub(crate) fn key_range_read_from_root(
-        root: SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: Interval<Key>,
         lookup_version: Version)
         -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
-        let root_read
-            = root.borrow_read();
-
         let blocks = Self::traverse_read_key_range(
-            root_read.deref().unwrap().block(),
+            root,
             &lookup_range,
             lookup_version);
 
@@ -572,9 +576,9 @@ impl<const FAN_OUT: usize,
 
                 (height + 1, new_root_block)
             }
-            BlockSplit::ByVersion(new_root_block) => { //TODO: Seems to have an issue!
-                // master_guard.mark_obsolete();
-                // root_guard.mark_obsolete();
+            BlockSplit::ByVersion(new_root_block) => {
+                master_guard.mark_obsolete();
+                root_guard.mark_obsolete();
 
                 self.root.unsafe_borrow_mut().prev = Some(
                     Self::make_smart_root(
@@ -605,7 +609,7 @@ impl<const FAN_OUT: usize,
                 };
 
                 master_guard.unmark_obsolete();
-                // root_guard.unmark_obsolete();
+                root_guard.unmark_obsolete();
 
                 // print!("VS: ");
                 // println!("Old = {}, New = {}",

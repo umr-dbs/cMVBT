@@ -83,7 +83,7 @@ impl<const FAN_OUT: usize,
             if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
                 self.merge_root(master_guard, root_guard, height)
                     .or(self.retrieve_root_write_internal_olc(attempts + 1)),
-            BlockUnsafeDegree::Ok // if master_guard.is_valid() && root_guard.is_valid()
+            BlockUnsafeDegree::Ok if master_guard.is_valid()
             => Ok((root_block, root_guard)),
             _ => Err(()),
         }
