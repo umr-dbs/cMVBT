@@ -163,7 +163,7 @@ impl<const FAN_OUT: usize,
                     .write(MaybeUninit::new(pointer.clone()));
             });
 
-        fence(Release);
+        // fence(Release);
 
         let (active, dead)
             = from.active_dead_count();
@@ -226,7 +226,7 @@ impl<const FAN_OUT: usize,
         let active = active_len(len) as i32 + active_delta;
         let dead = dead_len(len) + dead_delta;
 
-        fence(Release);
+        // fence(Release);
         self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
@@ -298,7 +298,7 @@ impl<const FAN_OUT: usize,
                     .write(pointer.clone());
             });
 
-        fence(Release);
+        // fence(Release);
         self.len.store(
             from_active_dead(len as LenP + add as LenP, 0), Release);
     }
@@ -334,7 +334,7 @@ impl<const FAN_OUT: usize,
                     .write(MaybeUninit::new((*pointer).clone()));
             });
 
-        fence(Release);
+        // fence(Release);
         self.len.store(
             from_active_dead(len as LenP + add as LenP, 0), Release)
     }
@@ -363,7 +363,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn sum_len(&self) -> usize {
         let len = self.len.load(Acquire) as _;
-        fence(Acquire);
+        // fence(Acquire);
 
         from_len_sum(len)
     }

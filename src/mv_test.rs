@@ -99,11 +99,10 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
 
         let index
             = manager.tx_dispatcher();
-        
-        let time_bias = 1500_u64;
+
         for _ in 0..number_olaps as u64 {
             let si = index.current_version();
-            let sleep_time = time_bias;
+            let sleep_time = 1800 + rand::random_range(0..400);
 
             thread::sleep(Duration::from_millis(sleep_time));
 

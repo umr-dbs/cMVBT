@@ -95,7 +95,7 @@ impl<const NUM_RECORDS: usize,
                 );
         }
 
-        fence(Release);
+        // fence(Release);
         let (active, dead)
             = leaf_page.active_dead_count();
 
@@ -146,7 +146,7 @@ impl<const NUM_RECORDS: usize,
     #[inline(always)]
     pub fn len(&self) -> usize {
         let len = self.len.load(Acquire) as _;
-        fence(Acquire);
+        // fence(Acquire);
 
         from_len_sum(len)
     }
@@ -182,7 +182,7 @@ impl<const NUM_RECORDS: usize,
         let active = active_len(len) as i32 + active_delta;
         let dead = dead_len(len) + dead_delta;
 
-        fence(Release);
+        // fence(Release);
         self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
@@ -227,7 +227,7 @@ impl<const NUM_RECORDS: usize,
             });
         }
 
-        fence(Release);
+        // fence(Release);
         self.len.store(
             from_active_dead(len as LenP + n_records_len as LenP, 0), Release)
     }
@@ -247,7 +247,7 @@ impl<const NUM_RECORDS: usize,
             });
         }
 
-        fence(Release);
+        // fence(Release);
         self.len.store(
             from_active_dead(len as LenP + records.len() as LenP, 0), Release)
     }
