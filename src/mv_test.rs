@@ -100,17 +100,30 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
         let index
             = manager.tx_dispatcher();
 
-        for _ in 0..number_olaps as u64 {
-            let si = index.current_version();
-            let sleep_time = 1800 + rand::random_range(0..400);
+        let current_version
+            = index.current_version();
+        
+        let range_max = 1000;
+        let sleep_time = 0;
+        
+        let si_steps = current_version / number_olaps as u64;
+        let limit = match current_version % number_olaps as u64 == 0 {
+            true => number_olaps as u64,
+            false => number_olaps as u64 + 1,
+        };
+        for olap_id in 0..=limit {
+            let si = si_steps * olap_id;
+            // let si = index.current_version();
+            // let sleep_time = 0;
 
-            thread::sleep(Duration::from_millis(sleep_time));
+            // thread::sleep(Duration::from_millis(sleep_time));
 
-            let current_version
-                = index.current_version();
+            // let current_version
+            //     = rand::random_range(0..=si);
 
-            let range_max
-                = uni_form.sample(&mut rand::rng()) as RangeMax;
+            // let si = current_version;
+            // let range_max
+            //     = uni_form.sample(&mut rand::rng()) as RangeMax;
 
             // println!("---> Start OLAP");
             let time_start = SystemTime::now();
@@ -132,13 +145,24 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
 }
 
 const CONFIG_PARAMETERS: &'static str = "config.json";
-
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub enum VersionIndexType {
+    VANILLA,
+    SkipList,
+    BTree
+}
+impl Display for VersionIndexType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MV")
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GroupConfig {
     olap_joint_workload: bool,
     olap_workers: usize,
     olaps_tx_per_worker: usize,
     protocol: CRUDProtocol,
+    v_index_type: VersionIndexType,
     clock: ClockType,
     skew: f64,
     skew_n: usize,
@@ -215,6 +239,7 @@ impl Default for GroupConfig {
             olaps_tx_per_worker: 0,
             chain_groups: vec![],
             protocol: Default::default(),
+            v_index_type: VersionIndexType::VANILLA,
             clock: ClockType::FREE,
             skew: 0.1,
             skew_n: 10000,
@@ -235,8 +260,9 @@ impl Display for GroupConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
             self.protocol,
+            self.v_index_type,
             self.clock,
             self.skew,
             self.skew_n,
