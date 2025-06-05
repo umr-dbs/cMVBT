@@ -16,6 +16,7 @@ use crate::mv_tree::global_clock::GlobalClock;
 use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
+use crate::mv_utils::live_tx_index::MDBTracker;
 use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
 use crate::mv_utils::un_cell::UnCell;
@@ -626,6 +627,11 @@ impl<const FAN_OUT: usize,
             GlobalClock::Atomic(_) => ClockType::OPT,
             GlobalClock::Free(_) => ClockType::FREE
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+        self.block_manager.tracker()
     }
 
     pub(crate) fn make_smart_root(latch_type: LatchType, root_item: RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload> {

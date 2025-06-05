@@ -1,7 +1,5 @@
 use std::hash::Hash;
 use std::fmt::Display;
-use std::mem;
-use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
@@ -96,6 +94,28 @@ impl<'a,
                 let current_len
                     = leaf_page.len();
 
+                match self.tracker() {
+                    Some(db_tracker) => match db_tracker.oldest_live_si() {
+                        Some(si) => match leaf_page
+                            .as_records_mut()
+                            .iter_mut()
+                            .rev()
+                            .find(|r| r.key() == key)
+                        {
+                            Some(record)
+                            if record.version.insert_version < si => {
+                                record.version_mut().undelete();
+                                *record.payload_mut() = payload;
+
+                                return CRUDOperationResult::Updated(self.current_version())
+                            },
+                            _ => {}
+                        }
+                       _ => {}
+                   }
+                   _ => {}
+                }
+
                 let mut commit_handle
                     = self.begin_commit();
 
@@ -112,8 +132,8 @@ impl<'a,
                 let committed_version = loop {
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) if commit_attempts > 0 => unsafe {
-                            let records
-                                = leaf_page.as_records_uncommitted_mut();
+                            let records = leaf_page
+                                .as_records_uncommitted_mut();
 
                             records.get_unchecked_mut(current_len)
                                 .version_mut()

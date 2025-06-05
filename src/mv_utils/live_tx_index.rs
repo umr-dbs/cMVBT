@@ -125,6 +125,15 @@ impl<const P_F: usize,
     }
 
     #[inline(always)]
+    fn peek_min(&self) -> Option<Version> {
+        match self.dispatch(CRUDOperation::PeekMin) {
+            (.., CRUDOperationResult::MatchedRecord(Some(block))) =>
+                Some(block.key),
+            _ => None
+        }
+    }
+
+    #[inline(always)]
     fn register_died_page(&self, page_version: Version, page: DeadPageValue<P_F, P_N, Key, Payload>) {
         let _ = self.dispatch(CRUDOperation::Insert(page_version, page));
     }
@@ -183,6 +192,17 @@ impl<const P_F: usize,
     #[inline]
     pub fn register_died_page_col(&self, dead_pages: [(Version, BlockRef<P_F, P_N, Key, Payload>); 2]) {
         self.dead_blocks.register_died_page_col(dead_pages)
+    }
+
+    #[inline]
+    pub fn oldest_live_si(&self) -> Option<SnapShot> {
+        let min_si = self.live_tx.peek_min();
+        if min_si == Version::MAX {
+            None
+        }
+        else {
+            Some(min_si)
+        }
     }
 
     #[inline]

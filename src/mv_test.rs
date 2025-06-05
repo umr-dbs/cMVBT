@@ -71,7 +71,7 @@ type SleepTime = u64;
 type ResultsCount = usize;
 
 const FIXED_RANGE_VAR_SI: bool              = false;
-const FIXED_RANGE_INTERVAL: u64             = 1_000;
+const FIXED_RANGE_INTERVAL: u64             = 10_000;
 
 pub fn run_olaps(handler: IndexHandler,
                  number_workers: usize,
@@ -130,9 +130,9 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
             }
             else {
                 si = index.current_version();
-                sleep_time = rand::random_range(1..=150);
+                // sleep_time = rand::random_range(1..=150);
 
-                thread::sleep(Duration::from_millis(sleep_time));
+                // thread::sleep(Duration::from_millis(sleep_time));
 
                 current_version
                     = index.current_version();
@@ -149,6 +149,7 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
                 (index.min_key..=range_max).into(),
                 si));
 
+            let time_spent = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
             let results_count = if let CRUDOperationResult::MatchedRecords(records) = crud_res {
                 records.len()
             }
@@ -160,7 +161,7 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
             olap_res.push(
                 (si,
                  range_max,
-                 SystemTime::now().duration_since(time_start).unwrap().as_nanos(),
+                 time_spent,
                  current_version,
                  sleep_time,
                  results_count
@@ -177,6 +178,7 @@ const CONFIG_PARAMETERS: &'static str = "config.json";
 pub enum VersionIndexType {
     VANILLA,
     SkipList,
+    SkipListSynced,
     BTree
 }
 impl Display for VersionIndexType {

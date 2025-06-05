@@ -117,6 +117,11 @@ impl<const FAN_OUT: usize,
         self.reuse_count.store(0, SeqCst);
         self.alloc_count.store(0, SeqCst);
     }
+    
+    #[inline(always)]
+    pub(crate) fn tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>  {
+        self.db_tracker.clone()
+    }
 
     #[inline(always)]
     pub const fn allocation_leaf(&self) -> usize {

@@ -132,6 +132,11 @@ impl VersionInfo {
             true
         }
     }
+
+    #[inline(always)]
+    pub fn undelete(&mut self) {
+        self.delete_version = DeletedVersion::new_null()
+    }
 }
 
 /// Implements standard pretty printers for VersionInfo, displaying both insertion and deletion versions.
