@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
-use crossbeam_channel::at;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_record_model::version_info::Version;
@@ -57,14 +56,14 @@ pub fn snapshot_from_tx_result<
 
 #[derive(Clone)]
 pub struct Transaction<Key: Ord + Copy + Hash + Default + Display, Payload: Clone> {
-    pub(crate) snapshot: Option<SnapShot>,
-    pub(crate) crud: VecDeque<CRUDOperation<Key, Payload>>,
+    pub snapshot: Option<SnapShot>,
+    pub crud: VecDeque<CRUDOperation<Key, Payload>>,
 }
 
 #[derive(Clone)]
 pub struct AtomicTransaction<Key: Ord + Copy + Hash + Default + Display, Payload: Clone> {
-    pub(crate) snapshot: Option<SnapShot>,
-    pub(crate) crud: CRUDOperation<Key, Payload>,
+    pub snapshot: Option<SnapShot>,
+    pub crud: CRUDOperation<Key, Payload>,
 }
 
 impl<Key: Ord + Copy + Hash + Default + Display, Payload: Clone> Into<Transaction<Key, Payload>> for AtomicTransaction<Key, Payload> {

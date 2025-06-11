@@ -2,7 +2,7 @@ use std::{env, fs, mem};
 use chrono::{DateTime, Local};
 use rand_distr::Zipf;
 use crate::mv_block::block::Block;
-use crate::mv_test::{GroupConfig, Key, Payload, DEBUG, FAN_OUT, NUM_RECORDS};
+use crate::mv_test::{GroupConfig, Key, Payload, VERBOSE, FAN_OUT, NUM_RECORDS};
 
 mod mv_block;
 mod mv_crud_model;
@@ -12,6 +12,7 @@ mod mv_tree;
 mod mv_utils;
 mod mv_test;
 mod mv_tx_model;
+mod mv_gc;
 
 // struct NoCacheAllocator;
 // unsafe impl GlobalAlloc for NoCacheAllocator {
@@ -29,7 +30,7 @@ mod mv_tx_model;
 // static TOTAL_TX_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn main() {
-    if DEBUG {
+    if VERBOSE {
         println!(">>HLE: \t\t\t{}", hle());
         // println!(">>size_of::<Block<127, 127, u64, u64>>()) = {}",
         //          size_of::<Block<127, 127, u64, u64>>());

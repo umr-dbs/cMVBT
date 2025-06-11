@@ -1,6 +1,5 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::thread;
 use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::mv_page_model::{Attempts, BlockRef, Height};
 use crate::mv_page_model::internal_page::TimeMatcher;

@@ -23,10 +23,10 @@ impl Default for VersionManager {
 /// Implements core functions for VersionManager.
 impl VersionManager {
     /// Default first version.
-    pub(crate) const START_VERSION: Version = Version::MIN;
+    pub(crate) const START_VERSION: Version = 1;
 
     /// Default first committed version.
-    pub(crate) const START_COMMITTED_VERSION: Version = Version::MIN;
+    pub(crate) const START_COMMITTED_VERSION: Version = Self::START_VERSION;
 
     /// Peek committed version.
     pub fn committed_version(&self) -> Version {

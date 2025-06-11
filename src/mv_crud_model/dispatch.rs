@@ -95,25 +95,38 @@ impl<'a,
                     = leaf_page.len();
 
                 match self.tracker() {
-                    Some(db_tracker) => match db_tracker.oldest_live_si() {
-                        Some(si) => match leaf_page
+                    Some(db_tracker) => match db_tracker.newest_live_si() {
+                        Some(newest_si) => match leaf_page
                             .as_records_mut()
                             .iter_mut()
                             .rev()
                             .find(|r| r.key() == key)
                         {
                             Some(record)
-                            if record.version.insert_version < si => {
+                            if record.version.insert_version > newest_si => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
                                 return CRUDOperationResult::Updated(self.current_version())
                             },
-                            _ => {}
+                            _ => { }
                         }
-                       _ => {}
-                   }
-                   _ => {}
+                        None => match leaf_page // empty live index: No readers; e.g., only updates!
+                            .as_records_mut()
+                            .iter_mut()
+                            .rev()
+                            .find(|r| r.key() == key)
+                        {
+                            Some(record) => {
+                                record.version_mut().undelete();
+                                *record.payload_mut() = payload;
+
+                                return CRUDOperationResult::Updated(self.current_version())
+                            },
+                            _ => { }
+                        }
+                    }
+                    _ => { }
                 }
 
                 let mut commit_handle

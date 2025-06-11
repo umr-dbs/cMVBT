@@ -3,10 +3,10 @@ use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
 use itertools::Itertools;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use crate::mv_block::block::{Block, BlockGuard, BlockSplit};
 use crate::mv_block::block_manager::BlockManager;
+use crate::mv_gc::db_tracker::MDBTracker;
 use crate::mv_tree::root::Root;
 use crate::mv_page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
 use crate::mv_page_model::internal_page::TimeMatcher;
@@ -16,7 +16,7 @@ use crate::mv_tree::global_clock::GlobalClock;
 use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::live_tx_index::MDBTracker;
+
 use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
 use crate::mv_utils::un_cell::UnCell;
@@ -105,8 +105,8 @@ pub struct MVBPlusTree<
     Payload: Clone + Default + 'static
 > {
     pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
-    pub(crate) locking_strategy: LockingStrategy,
-    pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    pub locking_strategy: LockingStrategy,
+    pub block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) version_manager: VersionManager,
     pub(crate) inc_key: fn(Key) -> Key,
     pub(crate) dec_key: fn(Key) -> Key,
@@ -621,7 +621,7 @@ impl<const FAN_OUT: usize,
         Self::make_smart_root(locking_strategy.latch_type(), root_item)
     }
 
-    pub(crate) fn clock_type(&self) -> ClockType {
+    pub fn clock_type(&self) -> ClockType {
         match self.version_manager.committed_version {
             GlobalClock::Locked(_) => ClockType::SYNC,
             GlobalClock::Atomic(_) => ClockType::OPT,

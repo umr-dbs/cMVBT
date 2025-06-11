@@ -1,7 +1,6 @@
 use std::collections::LinkedList;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, fence};
@@ -11,9 +10,9 @@ use crate::mv_block::block::Block;
 use crate::mv_page_model::node::Node;
 use crate::mv_page_model::{BlockRef, ObjectCount};
 use crate::mv_record_model::version_info::Version;
-use crate::mv_utils::live_tx_index::MDBTracker;
 use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::{LatchType, SmartCell, SmartFlavor};
+use crate::mv_gc::db_tracker::MDBTracker;
 
 const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a mv_block // outdated due to omitted mv_block-id
@@ -165,7 +164,7 @@ impl<const FAN_OUT: usize,
 
     /// Main Constructor requiring supplied BlockSettings.
     #[inline(always)]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: SafeCell::new(None),
@@ -175,7 +174,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn new_with_gc(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
+    pub fn new_with_gc(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: SafeCell::new(Some(db_tracker)),
@@ -184,7 +183,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn pass_aux_tx_tracker(&self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
+    pub fn pass_aux_tx_tracker(&self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
         // if db_tracker.is_some() {
         // debug_assert!(db_tracker.is_some());
         
@@ -195,12 +194,12 @@ impl<const FAN_OUT: usize,
         // }
     }
     
-    pub(crate) fn del_aux(&self) {
+    pub fn del_aux(&self) {
         self.db_tracker.get_mut().take();
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
+    pub fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
         self.db_tracker
             .as_ref()
             .as_ref()
@@ -209,7 +208,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn register_dead(&self, dead_v: Version, dead_p: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>) {
+    pub fn register_dead(&self, dead_v: Version, dead_p: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         self.db_tracker
             .as_ref()
             .as_ref()

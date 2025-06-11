@@ -7,16 +7,15 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
-use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
+use crate::mv_gc::db_tracker::{DBTracker, MDBTracker};
 use crate::mv_tree::locking_strategy::LockingStrategy;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
 use crate::mv_tx_model::tx_api::TransactionDispatcher;
-use crate::mv_utils::live_tx_index::{DBTracker, MDBTracker};
 use crate::mv_utils::safe_cell::SafeCell;
 
 #[derive(Clone)]
-pub(crate) enum TransactionHolder<
+pub enum TransactionHolder<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Hash + Ord + Copy + Display,
@@ -192,7 +191,7 @@ impl<const FAN_OUT: usize,
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub(crate) fn db_tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    pub fn db_tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         self.db_tracker.clone()
     }
 
@@ -339,7 +338,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub(crate) fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+    pub fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
         Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref().as_ref(), tx)
     }
 
@@ -364,7 +363,7 @@ impl<const FAN_OUT: usize,
         db_tracker.on_tx_completed(si)
     }
 
-    pub(crate) fn deq_book_keeping(&self, si: SnapShot) {
+    pub fn deq_book_keeping(&self, si: SnapShot) {
         if let Some(db_tracker) = self.db_tracker.as_ref() {
             Self::deq_bookkeeping(db_tracker.clone(), si)
         }

@@ -2,32 +2,28 @@ use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_tree::locking_strategy::{CRUDProtocol, OLC};
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
 use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
-use crate::mv_tx_model::tx_manager::TransactionManager;
-use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
+use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, thread};
-use std::alloc::System;
 use std::io::Write;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
-use libc::confstr;
 use rand::distr::{Alphanumeric, Distribution, Uniform};
-use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
+use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
-use crate::mv_record_model::version_info::Version;
 
-pub const DEBUG: bool = true;
+pub const VERBOSE: bool = true;
 const SYSTEM_STR: &str = "MVTree";
 
 pub enum Sampler {
@@ -823,7 +819,8 @@ fn run_experiment_with_params(
     index_handler
 }
 
-pub const FILLED_BLOCK: usize = 127;
+pub const MEM_SZ_KB: usize = 1; // 1 = 1KB, 2 = 2KB, 3 = 3KB, 4= 4KB
+pub const FILLED_BLOCK: usize = (127 / 4) * MEM_SZ_KB;
 pub const F_MUL: usize = 1;
 pub const N_MUL: usize = 1;
 pub const N_OFF: usize = 0;

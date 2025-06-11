@@ -5,7 +5,7 @@ use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tx_model::transaction::AtomicTransaction;
-use crate::mv_tx_model::tx_manager::TransactionManager;
+use mv_gc::tx_manager::TransactionManager;
 use crate::mv_utils::interval::Interval;
 
 mod mv_block;
@@ -16,6 +16,7 @@ mod mv_tree;
 mod mv_utils;
 mod mv_test;
 mod mv_tx_model;
+mod mv_gc;
 
 const EX_FAN_OUT: usize = 127;
 const EX_N: usize = 127;

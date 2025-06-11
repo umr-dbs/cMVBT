@@ -1,9 +1,9 @@
 [package]
 name = "MV-BPlusTree"
-version = "0.0.77"
+version = "0.0.78"
 edition = "2021"
 authors = ["Amir El-Shaikh <elshaikh@mathematik.uni-marburg.de>"]
-description = "MV-B+Tree Implementation"
+description = "MV-B+Tree Research Implementation"
 repository = "https://github.com/umr-dbs/MV-BPlusTree"
 
 [profile.dev]
