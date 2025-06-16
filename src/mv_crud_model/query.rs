@@ -529,8 +529,6 @@ impl<const FAN_OUT: usize,
                 root_internal_page
                     .push_uncommitted(right_fence, commit_version, right, 1);
 
-                root_internal_page.commit_delta(2, 0);
-
                 let mut commit_attempts
                     = 0;
 
@@ -553,6 +551,8 @@ impl<const FAN_OUT: usize,
                         }
                     }
                 };
+
+                root_internal_page.commit_delta(2, 0);
 
                 let _ =  self.root.replace(smart_root); // TODO: Problemo
 
