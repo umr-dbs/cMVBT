@@ -132,7 +132,7 @@ impl<const FAN_OUT: usize,
     Payload: Clone + Default + 'static
 > Default for MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload> {
     fn default() -> Self {
-        Self::standard()
+        Self::olc_optimistic_clock()
     }
 }
 

@@ -22,8 +22,9 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
+use crate::mv_utils::interval::Interval;
 
-pub const VERBOSE: bool = true;
+pub const VERBOSE: bool = false;
 const SYSTEM_STR: &str = "MVTree";
 
 pub enum Sampler {
@@ -73,7 +74,7 @@ pub fn run_olaps(handler: IndexHandler,
                  number_workers: usize,
                  number_olaps_per_worker: usize,
                  n: usize
-) -> Vec<JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI, SleepTime, ResultsCount)>>>
+) -> Vec<JoinHandle<Vec<(SnapShot, Interval<Key>, OlapTime, CurrentVersionSI, SleepTime, ResultsCount)>>>
 {
     let mut handles
         = Vec::with_capacity(number_workers);
@@ -86,7 +87,7 @@ pub fn run_olaps(handler: IndexHandler,
 }
 
 pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
-    ->  JoinHandle<Vec<(SnapShot, RangeMax, OlapTime, CurrentVersionSI, SleepTime, ResultsCount)>> {
+    ->  JoinHandle<Vec<(SnapShot, Interval<Key>, OlapTime, CurrentVersionSI, SleepTime, ResultsCount)>> {
     let manager = handler
         .left()
         .expect("OLAP init failed! Provide an initialized TxManager!");
@@ -104,9 +105,6 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
         let mut current_version
             = index.current_version();
         
-        let mut range_max = FIXED_RANGE_INTERVAL;
-        let mut sleep_time = 0;
-        
         let si_steps = current_version / number_olaps as u64;
         let limit = if FIXED_RANGE_VAR_SI {
             match current_version % number_olaps as u64 == 0 {
@@ -119,44 +117,39 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
         };
 
         for olap_id in 0..=limit {
-            let mut si;
+            let mut target_si;
+            let mut key_range = Interval::blank();
+            let mut sleep_time = 0;
 
             if FIXED_RANGE_VAR_SI {
-                si = si_steps * olap_id;
+                target_si = si_steps * olap_id;
             }
             else {
-                si = index.current_version();
-                // sleep_time = rand::random_range(1..=150);
+                current_version = index.current_version();
+                target_si = rand::random_range(1..=current_version);
 
-                // thread::sleep(Duration::from_millis(sleep_time));
-
-                current_version
-                    = index.current_version();
-
-                si = rand::random_range(0..=si);
-
-                range_max
-                    = uni_form.sample(&mut rand::rng()) as RangeMax;
+                key_range.lower = uni_form.sample(&mut rand::rng()) as RangeMax;
+                key_range.upper = key_range.lower + 1_000;
             }
 
             // println!("---> Start OLAP");
             let time_start = SystemTime::now();
             let crud_res = index.dispatch_crud(CRUDOperation::Range(
-                (index.min_key..=range_max).into(),
-                si));
+                key_range.clone(),
+                target_si));
 
             let time_spent = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
             let results_count = if let CRUDOperationResult::MatchedRecords(records) = crud_res {
                 records.len()
             }
             else {
-                unreachable!()
+                0
             };
 
             // println!("---> End OLAP");
             olap_res.push(
-                (si,
-                 range_max,
+                (target_si,
+                 key_range,
                  time_spent,
                  current_version,
                  sleep_time,
@@ -323,7 +316,7 @@ impl Display for SubGroupConfig {
     }
 }
 
-type IndexHandler =
+pub type IndexHandler =
     Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>>, (CRUDProtocol, ClockType)>;
 
 fn load_config_experiments() -> Vec<GroupConfig> {
@@ -431,7 +424,7 @@ pub fn execute_experiments() {
                 let olap_data_result = olap_handle
                     .into_iter()
                     .flat_map(|jh| jh.join().unwrap())
-                    .map(|t@(.., olap_time, sleep_time, _)| {
+                    .map(|t@(.., olap_time, _, sleep_time, _)| {
                         total_olap_time += olap_time;
                         avg_olap_sleep_time += sleep_time;
                         t
@@ -457,15 +450,17 @@ pub fn execute_experiments() {
                     .open(format!("mv_olap_{experiment_id}_INIT.csv"))
                     .unwrap();
 
-                olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_end,count_results,latency\n").unwrap();
-                for (si, range_max, olap_latency, curr_si, t_sleep, count) in olap_data_result {
+                olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_start,range_end,count_results,latency\n").unwrap();
+                for (si, key_range, olap_latency, curr_si, t_sleep, count) in olap_data_result {
                     olap_file.write_all(format!("\
                                       {si},\
                                       {curr_si},\
                                       {t_sleep},\
-                                      {range_max},\
+                                      {},\
+                                      {},\
                                       {count},\
-                                      {olap_latency}\n").as_bytes())
+                                      {olap_latency}\n",
+                                                key_range.lower, key_range.upper).as_bytes())
                         .unwrap();
                 }
             }
@@ -541,7 +536,7 @@ pub fn execute_experiments() {
                     if let Some(olap_handle) = olap_handle {
                         let olap_data_result = olap_handle.into_iter()
                             .flat_map(|jh| jh.join().unwrap())
-                            .map(|t@(.., olap_time, olap_sleep_time, _)| {
+                            .map(|t@(.., olap_time, _, olap_sleep_time, _)| {
                                 total_olap_time += olap_time;
                                 avg_olap_sleep_time += olap_sleep_time;
                                 t
@@ -565,15 +560,16 @@ pub fn execute_experiments() {
                             .open(format!("mv_olap_{experiment_id}_{subgroup}.csv"))
                             .unwrap();
 
-                        olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_end,latency\n").unwrap();
-                        for (si, range_max, olap_latency, curr_si, sleep_time, count) in olap_data_result {
+                        olap_file.write_all(b"target_snapshot,current_snapshot,sleep_time,range_start,range_end,latency\n").unwrap();
+                        for (si, key_range, olap_latency, curr_si, sleep_time, count) in olap_data_result {
                             olap_file.write_all(format!("\
                             {si},\
                             {curr_si},\
                             {sleep_time},\
-                            {range_max},\
+                            {},\
+                            {},\
                             {count},\
-                            {olap_latency}\n").as_bytes()).unwrap();
+                            {olap_latency}\n", key_range.lower, key_range.upper ).as_bytes()).unwrap();
                         }
                     }
                     else {
@@ -819,17 +815,20 @@ fn run_experiment_with_params(
     index_handler
 }
 
-pub const MEM_SZ_KB: usize = 1; // 1 = 1KB, 2 = 2KB, 3 = 3KB, 4= 4KB
+pub const MEM_SZ_KB: usize = 5; // 1 = 1KB, 2 = 2KB, 3 = 3KB, 4= 4KB
 pub const FILLED_BLOCK: usize = (127 / 4) * MEM_SZ_KB;
 pub const F_MUL: usize = 1;
 pub const N_MUL: usize = 1;
 pub const N_OFF: usize = 0;
 pub const F_OFF: usize = 0;
-pub const N_ABS_OFF: usize = 0;
-pub const F_ABS_OFF: usize = 0;
+pub const N_ABS_OFF: usize = 28;
+pub const F_ABS_OFF: usize = 28;
 
-pub const FAN_OUT: usize = F_MUL * (FILLED_BLOCK - F_OFF) - F_ABS_OFF;
-pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
+// pub const FAN_OUT: usize = F_MUL * (FILLED_BLOCK - F_OFF) - F_ABS_OFF;
+// pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
+
+pub const FAN_OUT: usize = 10;
+pub const NUM_RECORDS: usize = 10;
 
 pub type Key = u64;
 // pub type Payload = PayloadIndirection;
@@ -1027,7 +1026,7 @@ fn block_alloc_reuses(index_handler: &IndexHandler) -> (usize, usize) {
     }
 }
 
-fn height_root(index_handler: &IndexHandler) -> (usize, usize) {
+pub fn height_root(index_handler: &IndexHandler) -> (usize, usize) {
     if let Either::Left(m_manager) = index_handler {
         let index = m_manager.index();
         let log_height = index.root.0.height() as usize;

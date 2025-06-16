@@ -188,7 +188,7 @@ impl<E: Default> OptCell<E> {
 
     #[inline(always)]
     pub fn unwrite_obsolete_with_latch(&self, latch: LatchVersion) {
-        self.cell_version.store(latch & !OBSOLETE_FLAG_VERSION, Release)
+        self.cell_version.store((1 + latch) & !OBSOLETE_FLAG_VERSION, Release)
     }
 
     #[inline(always)]

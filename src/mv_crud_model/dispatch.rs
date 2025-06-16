@@ -1,5 +1,6 @@
 use std::hash::Hash;
 use std::fmt::Display;
+use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
@@ -7,6 +8,7 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_crud_model::query::RangeQueryIter;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
+use crate::mv_test::VERBOSE;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::smart_cell::sched_yield;
 
@@ -179,40 +181,64 @@ impl<'a,
                 }
             }
             CRUDOperation::Delete(key) => {
+                if VERBOSE {
+                    println!("key={key}");
+                }
                 let leaf_guard = if is_concurrent {
+                    if VERBOSE {
+                        println!("traverse olc start");
+                    }
                     self.traversal_write_olc(key)
                 } else {
                     self.traversal_write(key)
                 };
 
+                if VERBOSE {
+                    println!("traverse olc end");
+                    println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.deref().unwrap().active_dead_count());
+                }
                 let leaf_deref_mut = leaf_guard
                     .deref_mut()
                     .unwrap();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
-
+                
+                if VERBOSE {
+                    println!("[key={key}] - Begin_commit()");
+                }
                 let mut commit_handle
                     = self.begin_commit();
 
+                if VERBOSE {
+                    println!("[key={key}] - Loop start");
+                }
                 let mut commit_attempts
                     = 0;
 
-                // maybe just fetch_add the atomic underneath, because? same for attempts overloads for any crud
                 let committed_version = loop {
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) => break commit,
                         Err(opt) => {
+                            if VERBOSE {
+                                println!("[key={key}] - Commit failed; Attempt {commit_attempts}");
+                            }
                             commit_attempts += 1;
                             sched_yield(commit_attempts);
                             commit_handle = opt
                         }
                     }
                 };
-
+                if VERBOSE {
+                    println!("[key={key}] - Commit succeeded: {committed_version}, Attempts: {commit_attempts}");
+                }
                 match leaf_page.delete(key, committed_version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(-1, 1);
+                        if VERBOSE {
+                            println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
+                        }
+
                         CRUDOperationResult::Deleted(committed_version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
