@@ -2,7 +2,7 @@ use std::{env, fs, mem};
 use std::sync::Arc;
 use chrono::{DateTime, Local};
 use itertools::{Either, Itertools};
-use libc::exit;
+use libc::{exit, rand};
 use rand::prelude::SliceRandom;
 use rand_distr::Zipf;
 use crate::mv_block::block::Block;
@@ -104,13 +104,16 @@ fn manuel_main() {
     type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     let mv_tree = MVTree::default();
-    let n = 9990;
+    let n = 99900;
 
     let inserts = vec![75, 91, 78, 24, 82, 3, 10, 38, 57, 81, 51, 67, 73,
                        14, 37, 87, 26, 33, 66, 12, 99, 61, 29, 20, 45, 27,
                        32, 21, 6, 52, 4, 35, 16, 58, 8, 28, 23, 97, 63, 9,
                        92, 22, 17, 30, 79, 42, 84, 59, 31];
-    
+
+    let mut inserts = (0..n).collect_vec();
+
+    inserts.shuffle(&mut rand::rng());
     let max = inserts.iter().max().unwrap().clone();
 
     let updates = vec![27, 63, 57, 45, 61, 59, 16, 8, 9,
@@ -139,6 +142,7 @@ fn manuel_main() {
         }
     };
 
+    let check_integrity = || {};
     // Inserts
     for key in inserts.clone() {
         let crud
@@ -180,11 +184,11 @@ fn manuel_main() {
     }
     println!("Finish update");
     
-    // inserts.shuffle(&mut rand::rng());
+    inserts.shuffle(&mut rand::rng());
 
     // println!("Deletes: {:?}", deletes);
     // Deletes
-    for key in deletes.iter() {
+    for key in inserts.iter() {
         if *key == 61{
             let s = "adasd".to_string();
         }
