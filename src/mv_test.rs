@@ -828,7 +828,7 @@ pub const F_ABS_OFF: usize = 28;
 // pub const NUM_RECORDS: usize = N_MUL * (FILLED_BLOCK - N_OFF) - N_ABS_OFF;
 
 pub const FAN_OUT: usize = 10;
-pub const NUM_RECORDS: usize = 10;
+pub const NUM_RECORDS: usize = 5;
 
 pub type Key = u64;
 // pub type Payload = PayloadIndirection;

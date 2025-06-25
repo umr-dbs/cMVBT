@@ -412,8 +412,18 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub fn keys_mut(&self) -> &mut [Interval<Key>] {
+        unsafe { std::slice::from_raw_parts_mut(self.key_interval_region.as_ptr() as _, self.sum_len()) }
+    }
+
+    #[inline(always)]
     pub fn get_key(&self, index: usize) -> &Interval<Key> {
         unsafe { &*(self.key_interval_region.as_ptr().add(index) as *const Interval<Key>) }
+    }
+
+    #[inline(always)]
+    pub fn get_key_mut(&self, index: usize) -> &mut Interval<Key> {
+        unsafe { &mut *(self.key_interval_region.as_ptr().add(index) as *mut Interval<Key>) }
     }
 
     #[inline(always)]

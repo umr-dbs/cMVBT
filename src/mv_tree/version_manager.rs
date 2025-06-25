@@ -94,7 +94,12 @@ impl<const FAN_OUT: usize,
             },
             ClockHandle::Optimistic(atomic, seen) =>
                 match atomic.compare_exchange_weak(seen, seen + 1, AcqRel, Acquire) {
-                    Ok(prev) => Ok(prev + 1),
+                    Ok(prev) => {
+                        if prev + 1 == 102 || prev + 1 == 146 {
+                            let s = "adasd".to_string();
+                        }
+                        Ok(prev + 1)
+                    },
                     Err(curr) => Err(ClockHandle::Optimistic(atomic, curr))
                 }
         }

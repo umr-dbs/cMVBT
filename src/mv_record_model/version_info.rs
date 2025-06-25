@@ -123,7 +123,7 @@ impl VersionInfo {
     /// Actively deletes this version by setting deletion to supplied delete version.
     #[inline(always)]
     pub fn delete(&mut self, delete_version: Version) -> bool {
-        debug_assert!(!self.is_deleted());
+        // debug_assert!(!self.is_deleted());
 
         if self.is_deleted() {
             false

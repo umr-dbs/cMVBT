@@ -1,9 +1,11 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::mem;
 use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::mv_page_model::{Attempts, BlockRef, Height};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
+use crate::mv_test::VERBOSE;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::smart_cell::sched_yield;
 
@@ -43,6 +45,9 @@ impl<const FAN_OUT: usize,
                     break (block, guard, attempts),
                 _ => {
                     attempts += 1;
+                    if VERBOSE {
+                        println!("retrieve_root_write_internal_olc: attempts {:?}", attempts);
+                    }
                     sched_yield(attempts);
                 }
             }
@@ -96,7 +101,12 @@ impl<const FAN_OUT: usize,
             mut curr_guard,
             attempts) = self.retrieve_root_write_olc(attempts);
 
+        let mut i =  0;
         loop {
+            if VERBOSE {
+                println!("traversal_write_internal_olc: Loop: {i}, attempts {attempts}, key: {key}");
+                i += 1;
+            }
             let curr_guard_result
                 = curr_guard.deref();
 
@@ -114,6 +124,9 @@ impl<const FAN_OUT: usize,
                         .map(|(pos, ..)| pos);
 
                     if let None = index {
+                        if VERBOSE {
+                            println!("traversal_write_internal_olc: None Index");
+                        }
                         return Err(attempts + 1);
                     }
 
@@ -135,7 +148,12 @@ impl<const FAN_OUT: usize,
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
                         => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
                                 Ok(guard) => curr_guard = guard,
-                                Err(..) => return Err(attempts + 1)
+                                Err(..) => {
+                                    if VERBOSE {
+                                        println!("traversal_write_internal_olc: on_underflow_node Err()");
+                                    }
+                                    return Err(attempts + 1)
+                                }
                             },
                         BlockUnsafeDegree::Ok => {
                             curr_guard = next_curr_guard;
@@ -147,6 +165,9 @@ impl<const FAN_OUT: usize,
                 _ => return if curr_guard.upgrade_write_lock() {
                     Ok(curr_guard)
                 } else {
+                    if VERBOSE {
+                        println!("traversal_write_internal_olc: upgrade_write_lock Err()");
+                    }
                     Err(attempts + 1)
                 }
             }

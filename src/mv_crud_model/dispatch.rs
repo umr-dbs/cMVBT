@@ -101,8 +101,7 @@ impl<'a,
                         Some(newest_si) => match leaf_page
                             .as_records_mut()
                             .iter_mut()
-                            .rev()
-                            .find(|r| r.key() == key)
+                            .rfind(|r| r.key() == key)
                         {
                             Some(record)
                             if record.version.insert_version > newest_si => {
@@ -116,8 +115,7 @@ impl<'a,
                         None => match leaf_page // empty live index: No readers; e.g., only updates!
                             .as_records_mut()
                             .iter_mut()
-                            .rev()
-                            .find(|r| r.key() == key)
+                            .rfind(|r| r.key() == key)
                         {
                             Some(record) => {
                                 record.version_mut().undelete();
@@ -182,7 +180,7 @@ impl<'a,
             }
             CRUDOperation::Delete(key) => {
                 if VERBOSE {
-                    println!("key={key}");
+                    println!("dispatch delete key={key}");
                 }
                 let leaf_guard = if is_concurrent {
                     if VERBOSE {

@@ -1,10 +1,11 @@
 use std::arch::x86_64::_mm_mfence;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
 use std::sync;
 use std::sync::atomic::{AtomicUsize, fence};
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use itertools::Itertools;
 use serde::de::Unexpected::Seq;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::InternalPage;
@@ -336,6 +337,25 @@ impl<const FAN_OUT: usize,
             }
 
         }
+    }
+}
+
+impl<const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display,
+    Payload: Clone + Default
+> Display for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", match self.as_page_ref() {
+            PageType::LeafRef(leaf) => {
+                leaf.as_records().iter().join(",")
+            }
+            PageType::IndexRef(internal) => {
+                format!("keys: {}\nversions: {}", internal.keys().iter().join(","),
+                        internal.versions().iter().join(","))
+            }
+            _ => { "".to_string() }
+        })
     }
 }
 

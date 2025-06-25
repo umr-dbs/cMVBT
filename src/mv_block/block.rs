@@ -122,10 +122,10 @@ impl<const FAN_OUT: usize,
         let (active, dead)
             = (active as usize,  dead as usize);
 
-        if active > self.max_active_units() || active + dead >= self.max_units_safe() {
+        if active + dead >= self.max_units_safe() {
             BlockUnsafeDegree::Overflow
         }
-        else if active < self.min_active_units() {
+        else if active <= self.min_active_units() {
             BlockUnsafeDegree::ActiveUnderflow
         } else {
             BlockUnsafeDegree::Ok
@@ -146,7 +146,7 @@ impl<const FAN_OUT: usize,
         if active == 1 && !is_leaf { // single child
             BlockUnsafeDegree::ActiveUnderflow
         }
-        else if active > self.max_active_units() || active + dead >= self.max_units_safe() {
+        else if active + dead >= self.max_units_safe() {
             BlockUnsafeDegree::Overflow
         }
         else {
@@ -155,20 +155,20 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn min_active_units(&self) -> usize { // 40%
+    pub fn min_active_units(&self) -> usize { // 20%
         match self.is_leaf() {
             true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records(),
             false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys()
         }
     }
 
-    #[inline(always)]
-    pub fn max_active_units(&self) -> usize { // 80%
-        match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records() * 2,
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys() * 2
-        }
-    }
+    // #[inline(always)]
+    // pub fn max_active_units(&self) -> usize { // 80%
+    //     match self.is_leaf() {
+    //         true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records() * 2,
+    //         false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys() * 2
+    //     }
+    // }
 
     #[inline(always)]
     pub fn max_units(&self) -> usize {

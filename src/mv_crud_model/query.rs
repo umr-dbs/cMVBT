@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::{mem, ptr, thread};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::{fence, AtomicPtr};
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
@@ -11,7 +11,7 @@ use itertools::Itertools;
 use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_page_model::{BlockRef, Height};
-use crate::mv_page_model::internal_page::TimeMatcher;
+use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
@@ -289,8 +289,8 @@ impl<const FAN_OUT: usize,
                         // .skip(start_pos_si)
                         .filter(|((.., v), range)| //v.matched(lookup_version) &&
                             v.matched(lookup_version) && lookup_range.overlap(range))
-                        .unique_by(|(.., range)| range.lower())
-                        .unique_by(|(.., range)| range.upper())
+                        // .unique_by(|(.., range)| range.lower())
+                        // .unique_by(|(.., range)| range.upper())
                         .for_each(|((pos, ..), ..)|
                             blocks.push_back(internal_page.get_pointer(pos).clone()));
 
@@ -423,53 +423,49 @@ impl<const FAN_OUT: usize,
         if VERBOSE {
             println!("Old root height = {}, new height = {}", height, height - 1);
         }
-        // master_guard.deref_mut().unwrap().root.height = height - 1;
-        Ok(self.split_root(master_guard, child_guard, height - 1))
 
-        // let new_root = Self::make_smart_root(
-        //     self.locking_strategy.latch_type(),
-        //     RootItem {
-        //         root: Root {
-        //             block: root_guard
-        //                 .deref()
-        //                 .unwrap()
-        //                 .as_internal_page_ref()
-        //                 .clone()
-        //                 .into_cell(self.locking_strategy().latch_type()),
-        //             version: 0,
-        //             height: height - 1,
-        //         },
-        //         prev: Some(self.root.clone()),
-        //     });
-        //
-        // let mut commit_handle
-        //     = self.begin_commit();
-        //
-        // let mut commit_attempts = 0;
-        // loop {
-        //     match self.try_end_commit(commit_handle) {
-        //         Ok(commit) => {
-        //             new_root.unsafe_borrow_mut().root.version = commit;
-        //             break
-        //         },
-        //         Err(opt) => {
-        //             commit_attempts += 1;
-        //             sched_yield(commit_attempts);
-        //             commit_handle = opt
-        //         }
-        //     }
-        // };
-        //
-        // let mut n_root_guard = new_root.0.root.block.borrow_read();
-        // let _wf = n_root_guard.upgrade_write_lock();
-        //
-        // let _ = mem::replace(self.root.get_mut(), new_root.clone());
-        // (new_root.0.block(), n_root_guard)
+        let (block, guard)
+            = self.split_root(master_guard, child_guard, height - 1);
+
+        let guard_deref
+            = guard.deref_mut().unwrap();
+
+        if VERBOSE {
+            let (active, dead)
+                = guard_deref.active_dead_count();
+
+            println!("active dead count: ({} / {})", active, dead);
+        }
+        if let PageType::IndexMut(internal_page) = guard_deref.as_page_mut() {
+            let (mut min, mut max) =
+                (internal_page.get_key_mut(0),
+                 internal_page.get_key_mut(0));
+
+            internal_page.keys_mut().iter_mut().for_each(|fence| unsafe {
+                if min.lower > fence.lower {
+                    min = &mut *(fence as *mut _ );
+                }
+                if max.upper < fence.upper {
+                    max = &mut *(fence as *mut _);
+                }
+            });
+
+            if VERBOSE {
+                if min.lower != self.min_key || max.upper != self.max_key {
+                    println!("Fence correction, min: {min} - max: {max}");
+                }
+            }
+            min.lower = self.min_key;
+            max.upper = self.max_key;
+            fence(Release); // guard drop commits this change automatically
+        }
+        
+        Ok((block, guard))
     }
 
-    pub(crate) fn split_root<'a>(
+    pub(crate) fn split_root_new_unapproved<'a>(
         &self,
-        mut master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        _master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
     ) -> (
@@ -486,7 +482,8 @@ impl<const FAN_OUT: usize,
                               right
             ) => {
                 if VERBOSE {
-                    println!("Split Root: ByKey");
+                    println!("Split Root: ByKey. \
+                    left fence: {}, right fence: {}", left_fence, right_fence);
                 }
 
                 let new_root_block = self
@@ -529,10 +526,12 @@ impl<const FAN_OUT: usize,
                 root_internal_page
                     .push_uncommitted(right_fence, commit_version, right, 1);
 
+                root_internal_page.commit_delta(2, 0);
+
                 let mut commit_attempts
                     = 0;
 
-                smart_root.unsafe_borrow_mut().root.version = loop {
+                let root_version = loop {
                     match self.try_end_commit(commit_handle) {
                         Ok(commit) if commit_attempts > 0 => unsafe {
                             let versions
@@ -552,17 +551,22 @@ impl<const FAN_OUT: usize,
                     }
                 };
 
-                root_internal_page.commit_delta(2, 0);
-
                 let _ =  self.root.replace(smart_root); // TODO: Problemo
+                self.root.unsafe_borrow_mut().root.version = root_version;
 
                 root_guard = new_root_latch;
-
                 (height + 1, new_root_block)
             }
             BlockSplit::ByVersion(new_root_block) => {
                 if VERBOSE {
                     println!("Split Root: ByVersion");
+                    match new_root_block.unsafe_borrow().try_as_internal_page_ref() {
+                        Ok(internal_page) => {
+                            println!("Split Root ByVersion: Keys:\n\t{}",
+                                     internal_page.keys().iter().join(","));
+                        }
+                        _ => {}
+                    }
                 }
 
                 let new_smart_root = Self::make_smart_root(
@@ -573,23 +577,10 @@ impl<const FAN_OUT: usize,
                     });
 
                 if VERBOSE  {
-                    let old_v = self.root.unsafe_borrow().version;
-                    println!("New Root: \n\t{}",
-                             new_smart_root.unsafe_borrow().block.unsafe_borrow().as_records().iter().join("\n\t"));
-                    println!("Old Root: (version = {old_v})\n\t{}",
-                             self.root.unsafe_borrow()
-                                 .block
-                                 .unsafe_borrow()
-                                 .as_internal_page_ref()
-                                 .last_child()
-                                 .unsafe_borrow()
-                                 .as_records()
-                                 .iter()
-                                 .join("\n\t"));
                     print!("VS: ");
-                    println!("Old = {}, New = {}",
-                             master_guard.deref().unwrap().prev.as_ref().unwrap().unsafe_borrow().block.unsafe_borrow().len(),
-                             root_guard.deref().unwrap().node_data.get_mut().len());
+                    // println!("Old = {}, New = {}",
+                    //          master_guard.deref().unwrap().prev.as_ref().unwrap().unsafe_borrow().block.unsafe_borrow().len(),
+                    //          root_guard.deref().unwrap().node_data.get_mut().len());
                 }
 
                 let mut new_root_latch
@@ -633,7 +624,7 @@ impl<const FAN_OUT: usize,
         (root_block, root_guard)
     }
 
-    pub(crate) fn split_root_<'a>(
+    pub(crate) fn split_root<'a>(
         &self,
         master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -966,6 +957,9 @@ impl<const FAN_OUT: usize,
         index_simba: usize)
         -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
+        if VERBOSE {
+            println!("on_underflow_node");
+        }
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
 
@@ -976,6 +970,12 @@ impl<const FAN_OUT: usize,
                 merged_block,
                 _candidate_guard
             ) => {
+                if VERBOSE {
+
+                    println!("MergeResult::Merged: Simba-fence: {} - Sibling-fence: {}",
+                             mufasa_deref_mut.as_internal_page_ref().get_key(index_simba),
+                             fence_sibling);
+                }
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
 
@@ -1043,6 +1043,21 @@ impl<const FAN_OUT: usize,
                                   right),
                 _candidate_guard
             ) => {
+                if VERBOSE {
+                   unsafe {
+                       println!("MergeResult::KeySplit: \
+                       \tleft-fence: {}, \
+                       \tright-fence: {}.\
+                        \n\tSimba-fence: {} - Sibling-fence: {}\n\
+                        \tsimba:\n{}",
+                                left_interval,
+                                right_interval,
+                                mufasa_deref_mut.keys().get_unchecked(index_simba),
+                                mufasa_deref_mut.keys().get_unchecked(index_sibling),
+                             simba.deref().unwrap().node_data.as_ref()
+                       );
+                   }
+                }
                 let mufasa_internal_page = mufasa_deref_mut
                     .as_internal_page();
 
@@ -1073,10 +1088,11 @@ impl<const FAN_OUT: usize,
                             let versions_uncommitted = mufasa_internal_page
                                 .versions_byKey_uncommitted_mut();
 
-                            *versions_uncommitted.get_unchecked_mut(mufasa_len) = commit;
+                            *versions_uncommitted.get_unchecked_mut(mufasa_len)
+                                = commit;
 
-                            *versions_uncommitted
-                                .get_unchecked_mut(mufasa_len + 1) = commit;
+                            *versions_uncommitted.get_unchecked_mut(mufasa_len + 1)
+                                = commit;
 
                             break;
                         }

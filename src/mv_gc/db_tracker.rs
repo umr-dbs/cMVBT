@@ -60,16 +60,16 @@ impl<const P_F: usize,
         self.dead_blocks.register_died_page_col(dead_pages)
     }
 
-    #[inline]
-    pub fn oldest_live_si(&self) -> Option<SnapShot> {
-        let min_si = self.live_tx.peek_min();
-        if min_si == Version::MAX {
-            None
-        }
-        else {
-            Some(min_si)
-        }
-    }
+    // #[inline]
+    // pub fn oldest_live_si(&self) -> Option<SnapShot> {
+    //     let min_si = self.live_tx.peek_min();
+    //     if min_si == Version::MAX {
+    //         None
+    //     }
+    //     else {
+    //         Some(min_si)
+    //     }
+    // }
 
     #[inline]
     pub fn newest_live_si(&self) -> Option<SnapShot> {
