@@ -619,16 +619,18 @@ impl<const FAN_OUT: usize,
                         .filter(|((.., v), ..)| v.is_active())
                         .collect_vec();
 
-                    let key_intervals = active_entries
-                        .iter()
-                        .map(|((k, ..), ..)| (k.lower, k.upper))
-                        .sorted_by_key(|i| i.0)
-                        .collect_vec();
+                    if VERBOSE {
+                        let key_intervals = active_entries
+                            .iter()
+                            .map(|((k, ..), ..)| (k.lower, k.upper))
+                            .sorted_by_key(|i| i.0)
+                            .collect_vec();
 
-                    if !key_intervals.iter().zip(key_intervals.iter().skip(1))
-                        .all(|((k0, k1), (k2, k3))|
-                                 (self.dec_key)(*k2) == *k1) {
-                        let s = "sdasdasdasdasln".to_string();
+                        if !key_intervals.iter().zip(key_intervals.iter().skip(1))
+                            .all(|((k0, k1), (k2, k3))|
+                                (self.dec_key)(*k2) == *k1) {
+                            let s = "sdasdasdasdasln".to_string();
+                        }
                     }
 
                     debug_assert!(!active_entries.is_empty());
