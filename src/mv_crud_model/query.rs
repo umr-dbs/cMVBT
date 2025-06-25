@@ -436,29 +436,29 @@ impl<const FAN_OUT: usize,
 
             println!("active dead count: ({} / {})", active, dead);
         }
-        if let PageType::IndexMut(internal_page) = guard_deref.as_page_mut() {
-            let (mut min, mut max) =
-                (internal_page.get_key_mut(0),
-                 internal_page.get_key_mut(0));
-
-            internal_page.keys_mut().iter_mut().for_each(|fence| unsafe {
-                if min.lower > fence.lower {
-                    min = &mut *(fence as *mut _ );
-                }
-                if max.upper < fence.upper {
-                    max = &mut *(fence as *mut _);
-                }
-            });
-
-            if VERBOSE {
-                if min.lower != self.min_key || max.upper != self.max_key {
-                    println!("Fence correction, min: {min} - max: {max}");
-                }
-            }
-            min.lower = self.min_key;
-            max.upper = self.max_key;
-            fence(Release); // guard drop commits this change automatically
-        }
+        // if let PageType::IndexMut(internal_page) = guard_deref.as_page_mut() {
+        //     let (mut min, mut max) =
+        //         (internal_page.get_key_mut(0),
+        //          internal_page.get_key_mut(0));
+        //
+        //     internal_page.keys_mut().iter_mut().for_each(|fence| unsafe {
+        //         if min.lower > fence.lower {
+        //             min = &mut *(fence as *mut _ );
+        //         }
+        //         if max.upper < fence.upper {
+        //             max = &mut *(fence as *mut _);
+        //         }
+        //     });
+        //
+        //     if VERBOSE {
+        //         if min.lower != self.min_key || max.upper != self.max_key {
+        //             println!("Fence correction, min: {min} - max: {max}");
+        //         }
+        //     }
+        //     min.lower = self.min_key;
+        //     max.upper = self.max_key;
+        //     fence(Release); // guard drop commits this change automatically
+        // }
         
         Ok((block, guard))
     }
