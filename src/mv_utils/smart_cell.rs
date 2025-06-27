@@ -274,23 +274,23 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
     //     }
     // }
 
-    #[inline(always)]
-    pub fn unmark_obsolete(&mut self) {
-        if let OLCWriter(cell, latch) = self {
-            if let OLCCell(opt) = cell.0.as_ref() {
-                opt.unwrite_obsolete_with_latch(*latch);
-            }
-        }
-    }
+    // #[inline(always)]
+    // pub fn unmark_obsolete(&mut self) {
+    //     if let OLCWriter(cell, latch) = self {
+    //         if let OLCCell(opt) = cell.0.as_ref() {
+    //             opt.unwrite_obsolete_with_latch(*latch);
+    //         }
+    //     }
+    // }
 
-    #[inline(always)]
-    pub fn mark_obsolete(&mut self) {
-        if let OLCWriter(cell, latch) = self {
-            if let OLCCell(opt) = cell.0.as_ref() {
-                opt.write_obsolete_with_latch(*latch);
-            }
-        }
-    }
+    // #[inline(always)]
+    // pub fn mark_obsolete(&mut self) {
+    //     if let OLCWriter(cell, latch) = self {
+    //         if let OLCCell(opt) = cell.0.as_ref() {
+    //             opt.write_obsolete_with_latch(*latch);
+    //         }
+    //     }
+    // }
 
     #[inline(always)]
     pub fn downgrade(&mut self) {

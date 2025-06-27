@@ -104,7 +104,7 @@ fn manuel_main() {
     type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     let mv_tree = MVTree::default();
-    let n = 99900;
+    let n = 999000;
 
     let inserts = vec![75, 91, 78, 24, 82, 3, 10, 38, 57, 81, 51, 67, 73,
                        14, 37, 87, 26, 33, 66, 12, 99, 61, 29, 20, 45, 27,

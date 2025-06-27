@@ -342,9 +342,11 @@ impl<const FAN_OUT: usize,
                         .as_records()
                         .iter()
                         .filter(|r| !r.version().is_deleted())
+                        .sorted_by_key(|r| r.key)
                         .merge_by(simba.as_records()
                                       .iter()
-                                      .filter(|r| !r.version().is_deleted()),
+                                      .filter(|r| !r.version().is_deleted())
+                                      .sorted_by_key(|r| r.key),
                                   |f, s|
                                       f.key() <= s.key())
                         .collect_vec();
@@ -409,13 +411,14 @@ impl<const FAN_OUT: usize,
                         .zip(c_versions)
                         .zip(c_children)
                         .filter(|((.., v), ..)| v.is_active())
+                        .sorted_by_key(|((k, ..), ..)| k.lower)
                         .merge_by(s_keys.iter()
                                       .zip(s_version)
                                       .zip(s_children)
-                                      .filter(|((.., v), ..)| v.is_active()),
+                                      .filter(|((.., v), ..)| v.is_active())
+                                      .sorted_by_key(|((k, ..), ..)| k.lower),
                                   |((f, ..), ..), ((s, ..), ..)|
                                       f.lower < s.lower)
-                        .sorted_by_key(|((k, ..), ..)| k.lower)
                         .collect_vec();
 
                     let joined_len = joined.len();

@@ -194,7 +194,7 @@ impl<const FAN_OUT: usize,
         let mut root_anker
             = self.root.clone();
 
-        let mut attempts = 0;
+        // let mut attempts = 0;
         loop {
             let root_h
                 = root_anker.borrow_read();
@@ -202,19 +202,20 @@ impl<const FAN_OUT: usize,
             let root_item
                 = root_h.deref().unwrap();
 
-            if !root_h.is_valid() {
-                attempts += 1;
-                sched_yield(attempts);
-
-                root_anker = self.root.clone();
-            }
-            else if root_item.version().match_version_active(lookup_version) {
+            // if !root_h.is_valid() {
+            //     attempts += 1;
+            //     sched_yield(attempts);
+            // 
+            //     root_anker = self.root.clone();
+            // }
+            // else 
+            if root_item.version().match_version_active(lookup_version) {
                 let block
                     = root_anker.0.block();
                 
-                if !block.is_obsolete() {
+                // if !block.is_obsolete() {
                     break block
-                }
+                // }
             } else {
                 root_anker = match root_item.prev {
                     Some(ref p_root) => p_root.clone(),
@@ -427,10 +428,10 @@ impl<const FAN_OUT: usize,
         let (block, guard)
             = self.split_root(master_guard, child_guard, height - 1);
 
-        let guard_deref
-            = guard.deref_mut().unwrap();
-
         if VERBOSE {
+            let guard_deref
+                = guard.deref_mut().unwrap();
+            
             let (active, dead)
                 = guard_deref.active_dead_count();
 
@@ -710,7 +711,7 @@ impl<const FAN_OUT: usize,
 
                 (height + 1, master_guard.deref_mut().unwrap().block())
             }
-            BlockSplit::ByVersion(new_root_block) => unsafe {
+            BlockSplit::ByVersion(new_root_block) => {
                 let copy_root = Self::make_smart_root(
                     self.locking_strategy.latch_type(),
                     self.root.unsafe_borrow().deep_clone(self.locking_strategy().latch_type()));
