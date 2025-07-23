@@ -3,5 +3,5 @@ pub mod root;
 pub mod version_manager;
 pub mod global_clock;
 pub mod locking_strategy;
-mod new_root;
+pub mod index_root;
 // pub mod settings;

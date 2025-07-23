@@ -15,6 +15,7 @@ use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::VERBOSE;
 use crate::mv_tree::global_clock::GlobalClock;
+use crate::mv_tree::index_root::{RootIndex, RootIndexType};
 use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
@@ -93,7 +94,6 @@ pub(crate) type SmartRoot<
 > = SmartCell<RootItem<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 pub(crate) type RootItemGuard<
-    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key,
@@ -103,10 +103,11 @@ pub(crate) type RootItemGuard<
 pub struct MVBPlusTree<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display + 'static,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > {
-    pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    // pub(crate) root: UnCell<SmartRoot<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    pub(crate) root: RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub locking_strategy: LockingStrategy,
     pub block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) version_manager: VersionManager,
@@ -118,33 +119,36 @@ pub struct MVBPlusTree<
 
 unsafe impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Clone + Default + Display + Sync + 'static
 > Sync for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 unsafe impl<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > Send for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {}
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Payload: Clone + Default + 'static
+    Payload: Display + Clone + Default + Sync + 'static
 > Default for MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload> {
     fn default() -> Self {
-        Self::olc_optimistic_clock()
+        Self::olc_optimistic_clock(RootIndexType::default())
     }
 }
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Payload: Clone + Default + 'static
+    Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload>
 {
     #[inline]
-    pub fn make_standard(locking_strategy: LockingStrategy, clock_type: ClockType) -> Self {
+    pub fn make_standard(locking_strategy: LockingStrategy,
+                                  clock_type: ClockType,
+                                  root_index_type: RootIndexType) -> Self
+    {
         fn inc_key(k: u64) -> u64 {
             k.checked_add(1).unwrap_or(u64::MAX)
         }
@@ -153,20 +157,20 @@ impl<const FAN_OUT: usize,
             k.checked_sub(1).unwrap_or(u64::MIN)
         }
 
-        Self::make(locking_strategy, clock_type, inc_key, dec_key, u64::MIN, u64::MAX)
+        Self::make(locking_strategy, clock_type, root_index_type, inc_key, dec_key, u64::MIN, u64::MAX)
     }
 
-    pub fn standard() -> Self {
-        Self::make_standard(LockingStrategy::MonoWriter, ClockType::FREE)
+    // pub fn standard() -> Self {
+    //     Self::make_standard(LockingStrategy::MonoWriter, ClockType::FREE)
+    // }
+
+    pub fn olc_optimistic_clock(root_index_type: RootIndexType) -> Self {
+        Self::make_standard(OLC(), ClockType::OPT, root_index_type)
     }
 
-    pub fn olc_optimistic_clock() -> Self {
-        Self::make_standard(OLC(), ClockType::OPT)
-    }
-
-    pub fn olc() -> Self {
-        Self::make_standard(OLC(), ClockType::SYNC)
-    }
+    // pub fn olc() -> Self {
+    //     Self::make_standard(OLC(), ClockType::SYNC)
+    // }
 }
 
 pub(crate) enum MergeResult<
@@ -187,8 +191,8 @@ pub(crate) enum MergeResult<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Sync + 'static + Display,
+    Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub(crate) fn merge(
@@ -715,31 +719,22 @@ impl<const FAN_OUT: usize,
     #[inline]
     fn make(locking_strategy: LockingStrategy,
             clock_type: ClockType,
+            root_index_type: RootIndexType,
             inc_key: fn(Key) -> Key,
             dec_key: fn(Key) -> Key,
             min_key: Key,
             max_key: Key,
     ) -> Self {
-        let block_manager
-            = BlockManager::new();
-
-        let version_manager = match clock_type {
-            ClockType::FREE => VersionManager::new_free(),
-            ClockType::OPT => VersionManager::new_optimistic(),
-            ClockType::SYNC => VersionManager::new_locked()
-        };
-
-
+        let bm = BlockManager::new();
         Self {
-            root: UnCell::new(Self::make_root_item(
-                &locking_strategy,
-                &block_manager,
-                VersionManager::START_VERSION,
-                INIT_TREE_HEIGHT,
-                None)),
+            root: RootIndex::new(root_index_type, &bm),
+            block_manager: bm,
+            version_manager: match clock_type {
+                ClockType::FREE => VersionManager::new_free(),
+                ClockType::OPT => VersionManager::new_optimistic(),
+                ClockType::SYNC => VersionManager::new_locked()
+            },
             locking_strategy,
-            block_manager,
-            version_manager,
             inc_key,
             dec_key,
             min_key,
@@ -764,63 +759,64 @@ impl<const FAN_OUT: usize,
     //         Level::MAX)
     // }
 
-    #[inline]
-    pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
-        match self.locking_strategy() {
-            LockingStrategy::MonoWriter => false,
-            LockingStrategy::OLC => false,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn apply_for_ref(
-        &self,
-        curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
-    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
-    {
-        match self.locking_strategy() {
-            LockingStrategy::MonoWriter => curr.borrow_free(),
-            LockingStrategy::OLC => curr.borrow_read(),
-        }
-    }
-    #[inline(always)]
-    pub fn new_with(locking_strategy: LockingStrategy,
-                    inc_key: fn(Key) -> Key,
-                    dec_key: fn(Key) -> Key,
-                    min_key: Key,
-                    max_key: Key,
-    ) -> Self {
-        Self::make(locking_strategy, ClockType::SYNC, inc_key, dec_key, min_key, max_key)
-    }
-
-    #[inline(always)]
-    pub fn new(inc_key: fn(Key) -> Key,
-               dec_key: fn(Key) -> Key,
-               min_key: Key,
-               max_key: Key) -> Self {
-        Self::make(LockingStrategy::default(), ClockType::FREE, inc_key, dec_key, min_key, max_key)
-    }
-
+    // #[inline]
+    // pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
+    //     match self.locking_strategy() {
+    //         LockingStrategy::MonoWriter => false,
+    //         LockingStrategy::OLC => false,
+    //     }
+    // }
+    //
+    // #[inline]
+    // pub(crate) fn apply_for_ref(
+    //     &self,
+    //     curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
+    // ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+    // {
+    //     match self.locking_strategy() {
+    //         LockingStrategy::MonoWriter => curr.borrow_free(),
+    //         LockingStrategy::OLC => curr.borrow_read(),
+    //     }
+    // }
+    //
+    // #[inline(always)]
+    // pub fn new_with(locking_strategy: LockingStrategy,
+    //                 inc_key: fn(Key) -> Key,
+    //                 dec_key: fn(Key) -> Key,
+    //                 min_key: Key,
+    //                 max_key: Key,
+    // ) -> Self {
+    //     Self::make(locking_strategy, ClockType::SYNC, inc_key, dec_key, min_key, max_key)
+    // }
+    //
+    // #[inline(always)]
+    // pub fn new(inc_key: fn(Key) -> Key,
+    //            dec_key: fn(Key) -> Key,
+    //            min_key: Key,
+    //            max_key: Key) -> Self {
+    //     Self::make(LockingStrategy::default(), ClockType::FREE, inc_key, dec_key, min_key, max_key)
+    // }
+    //
     #[inline(always)]
     pub const fn locking_strategy(&self) -> &LockingStrategy {
         &self.locking_strategy
     }
-
-    pub fn make_empty_copy(&self) -> Self {
-        Self {
-            root: UnCell::new(Self::make_root_item(
-                self.locking_strategy(),
-                &self.block_manager,
-                VersionManager::START_VERSION,
-                INIT_TREE_HEIGHT,
-                None)),
-            locking_strategy: self.locking_strategy.clone(),
-            block_manager: self.block_manager.clone(),
-            version_manager: self.version_manager.clone(),
-            inc_key: self.inc_key,
-            dec_key: self.dec_key,
-            min_key: self.min_key,
-            max_key: self.max_key,
-        }
-    }
+    //
+    // pub fn make_empty_copy(&self) -> Self {
+    //     Self {
+    //         root: UnCell::new(Self::make_root_item(
+    //             self.locking_strategy(),
+    //             &self.block_manager,
+    //             VersionManager::START_VERSION,
+    //             INIT_TREE_HEIGHT,
+    //             None)),
+    //         locking_strategy: self.locking_strategy.clone(),
+    //         block_manager: self.block_manager.clone(),
+    //         version_manager: self.version_manager.clone(),
+    //         inc_key: self.inc_key,
+    //         dec_key: self.dec_key,
+    //         min_key: self.min_key,
+    //         max_key: self.max_key,
+    //     }
+    // }
 }

@@ -13,8 +13,10 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, thread};
 use std::io::Write;
+use std::ops::Deref;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
+use parking_lot::Mutex;
 use rand::distr::{Alphanumeric, Distribution, Uniform};
 use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
@@ -22,10 +24,16 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
+use crate::mv_tree::index_root::RootIndexType;
 use crate::mv_utils::interval::Interval;
 
 pub const VERBOSE: bool = false;
+pub const LOG_REORG: bool = true;
 const SYSTEM_STR: &str = "MVTree";
+pub static mut MERGES_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static mut SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static mut MERGE_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static mut SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 
 pub enum Sampler {
     Uniform(Uniform<u64>, ThreadRng),
@@ -388,7 +396,7 @@ pub fn execute_experiments() {
                 if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
                     print!("{SYSTEM_STR},{experiment_id},INIT,{init_target_tx}");
                     index_handler = Some(Either::Left(Arc::new(TransactionManager::new_unmanaged(
-                        MVBPlusTree::make_standard(protocol, clock_type),
+                        MVBPlusTree::make_standard(protocol, clock_type, RootIndexType::default()),
                         experiment.gc_enable
                     ))));
                     olap_handle = Some(run_olaps(index_handler.clone().unwrap(),
@@ -910,7 +918,7 @@ fn experiment(
     let manager = match index_handler {
         Either::Left(m_manager) => m_manager,
         Either::Right((protocol, clock_type)) => Arc::new(TransactionManager::new_unmanaged(
-            MVBPlusTree::make_standard(protocol, clock_type),
+            MVBPlusTree::make_standard(protocol, clock_type, RootIndexType::default()),
             gc_enable,
         )),
     };
@@ -1029,10 +1037,10 @@ fn block_alloc_reuses(index_handler: &IndexHandler) -> (usize, usize) {
 pub fn height_root(index_handler: &IndexHandler) -> (usize, usize) {
     if let Either::Left(m_manager) = index_handler {
         let index = m_manager.index();
-        let log_height = index.root.0.height() as usize;
+        let log_height = index.root.height() as usize;
         let mut real_height = 1usize;
 
-        let mut curr_block = index.root.borrow_read().deref().unwrap().block();
+        let mut curr_block = index.root.borrow_read().block();
         let mut curr_guard = curr_block.borrow_read();
         loop {
             match curr_guard.deref().unwrap().as_page_ref() {

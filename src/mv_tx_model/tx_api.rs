@@ -11,8 +11,9 @@ pub trait TransactionDispatcher<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Ord + Copy + Hash + Default + Display,
-    Payload: Clone + Default>
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
+>
 {
     fn dispatch_transaction(
         &'a self,
@@ -29,8 +30,8 @@ pub struct IsolatedSnapShot<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display + 'static,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 >(
     pub SnapShot,
     pub &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
@@ -39,8 +40,8 @@ pub struct IsolatedSnapShot<
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
@@ -57,8 +58,9 @@ impl<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + 'static + Display,
-    Payload: Clone + Default + 'static>
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
+>
 CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
@@ -82,8 +84,8 @@ CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for IsolatedSnapShot<'a, 
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Copy + Ord + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]

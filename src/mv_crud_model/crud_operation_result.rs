@@ -18,8 +18,8 @@ pub enum CRUDOperationResult<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > {
     MatchedRecords(Vec<RecordPointResult<Key, Payload>>),
     MatchedRecordIter(RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
@@ -41,8 +41,8 @@ pub enum CRUDOperationInnerReason {
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub const fn is_err(&self) -> bool {
@@ -62,8 +62,8 @@ impl<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > Display for CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -28,8 +28,8 @@ pub type AtomicTransactionResult<
 pub const fn snapshot_from_atomic_tx_result<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 >(
     atomic_transaction_result: &AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SnapShot
 {
@@ -43,8 +43,8 @@ pub const fn snapshot_from_atomic_tx_result<
 pub fn snapshot_from_tx_result<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 >(
     transaction_result: &TransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>) -> SnapShot
 {

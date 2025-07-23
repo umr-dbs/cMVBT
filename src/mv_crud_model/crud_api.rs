@@ -8,8 +8,8 @@ pub trait CRUDDispatcher<
     'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > {
     fn dispatch_crud(&'a self,
                      operation: CRUDOperation<Key, Payload>

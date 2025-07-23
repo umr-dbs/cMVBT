@@ -5,14 +5,16 @@ use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::mv_page_model::{Attempts, BlockRef, Height};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
-use crate::mv_test::VERBOSE;
+use crate::mv_test;
+use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + 'static + Display,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
@@ -61,23 +63,33 @@ impl<const FAN_OUT: usize,
     {
         let root 
             = self.root.clone();
-        
+
+        let height
+            = root.height();
+
         let mut master_guard
             = root.borrow_read();
 
         let root_block
-            = master_guard.deref().unwrap().block();
+            = master_guard.block();
 
         let mut root_guard
             = root_block.borrow_read();
 
-        let height
-            = master_guard.deref().unwrap().height();
+        if LOG_REORG {
+            let r
+                = root_guard.deref().unwrap().unsafe_degree_root();
 
-        // if !master_guard.is_valid() || !root_guard.is_valid() {
-        //     println!("reading bad root in root_write");
-        //     return Err(())
-        // }
+            match r {
+                BlockUnsafeDegree::Overflow => unsafe {
+                    mv_test::SPLITS_ROOT_COUNTER.lock().push(self.current_version())
+                }
+                BlockUnsafeDegree::ActiveUnderflow => unsafe {
+                    mv_test::MERGE_ROOT_COUNTER.lock().push(self.current_version())
+                }
+                _ => {}
+            }
+        }
         match root_guard.deref().unwrap().unsafe_degree_root() {
             BlockUnsafeDegree::Overflow
             if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking
@@ -87,7 +99,7 @@ impl<const FAN_OUT: usize,
             if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
                 self.merge_root(master_guard, root_guard, height)
                     .or(self.retrieve_root_write_internal_olc(attempts + 1)),
-            BlockUnsafeDegree::Ok if master_guard.is_valid()
+            BlockUnsafeDegree::Ok
             => Ok((root_block, root_guard)),
             _ => Err(()),
         }
@@ -140,6 +152,18 @@ impl<const FAN_OUT: usize,
                     let mut next_curr_guard
                         = next_curr_block.borrow_read();
 
+                    if LOG_REORG {
+                        let r
+                            = next_curr_guard.deref().unwrap().unsafe_degree();
+
+                        match r {
+                            BlockUnsafeDegree::Overflow =>
+                                mv_test::SPLITS_COUNTER.lock().push(self.current_version()),
+                            BlockUnsafeDegree::ActiveUnderflow =>
+                                mv_test::MERGES_COUNTER.lock().push(self.current_version()),
+                            _ => {}
+                        }
+                    }
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()

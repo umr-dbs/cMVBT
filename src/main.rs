@@ -11,6 +11,7 @@ use crate::mv_test::{
     F_ABS_OFF, F_MUL, F_OFF, NUM_RECORDS, N_ABS_OFF, N_MUL, N_OFF, VERBOSE,
 };
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::safe_cell::SafeCell;
 use chrono::{DateTime, Local};
 use itertools::{Either, Itertools};
@@ -18,12 +19,12 @@ use libc::{exit, rand};
 use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use rand_distr::Zipf;
-use std::io::Write;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::thread::spawn;
-use std::{env, fs, mem};
 use std::time::SystemTime;
-use crate::mv_tree::version_manager::VersionManager;
+use std::{env, fs, mem};
 
 mod mv_block;
 mod mv_crud_model;
@@ -134,12 +135,13 @@ fn startup() {
     make_splash();
 }
 fn bernhard_tests() {
-    const INSERTIONS: Key = 10_000_000;
-    const UPDATES: Key = INSERTIONS as Key;
+    const INSERTIONS: Key = 10_000;
+    const UPDATES: Key = 100_000_000 as Key;
     const DELETIONS: f64 = 0.9_f64;
-    const NUMBER_OLAPS: usize = 12;
+    const NUMBER_OLAPS: usize = 0;
+    const NUMBER_UPDATERS: usize = 0;
     const OLAP_TX_PER_WORKER: usize = 2000;
-    const RANGE_SIZE: Key = 100_000;
+    const RANGE_SIZE: Key = 1_000;
     const SKEWs: [f64; 3] = [0f64, 0.4, 1.4];
 
     let deletions_number = (DELETIONS * INSERTIONS as f64) as usize;
@@ -152,7 +154,10 @@ fn bernhard_tests() {
     );
 
     for skew in SKEWs {
-        println!("\t- Skew = {}\n\t- ####################################################", skew);
+        println!(
+            "\t- Skew = {}\n\t- ####################################################",
+            skew
+        );
         let mv_tree = MVTree::default();
 
         let mut data_inserts = (0..INSERTIONS).collect_vec();
@@ -168,13 +173,11 @@ fn bernhard_tests() {
             }
         });
 
-        let mut sampler
-            = Sampler::new(skew, INSERTIONS - 1);
+        let mut sampler = Sampler::new(skew, INSERTIONS - 1);
 
         (0..UPDATES).for_each(|_| {
             let crud = CRUDOperation::Update(sampler.sample(), Payload::default());
-            let crud_update
-                = mv_tree.dispatch_crud(crud.clone());
+            let crud_update = mv_tree.dispatch_crud(crud.clone());
 
             match crud_update {
                 CRUDOperationResult::Updated(_) => {}
@@ -226,68 +229,131 @@ fn bernhard_tests() {
             )
             .unwrap();
 
+        // splits, merges, root_splits, root_merges
+        unsafe {
+            for (file_name, counter) in [
+                (format!("skew_{skew}_splits.csv"), mv_test::SPLITS_COUNTER.lock()),
+                (format!("skew_{skew}_merges.csv"), mv_test::MERGES_COUNTER.lock()),
+                (format!("skew_{skew}_root_splits.csv"), mv_test::SPLITS_ROOT_COUNTER.lock()),
+                (format!("skew_{skew}_root_merges.csv"), mv_test::MERGE_ROOT_COUNTER.lock()),
+            ] {
+                let _  = fs::remove_file(file_name.as_str());
+                let mut file_io = BufWriter::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(file_name.as_str())
+                        .unwrap(),
+                );
+
+                file_io.write_all("current_snapshot\n".as_bytes()).unwrap();
+                counter
+                    .iter()
+                    .for_each(|s| file_io.write_all(format!("{s}\n").as_bytes()).unwrap());
+
+                file_io.flush().unwrap();
+                println!(">> {file_name} written.");
+            }
+        }
+
+        let mut updaters = vec![];
+        for _ in 0..NUMBER_UPDATERS {
+            let index = index.clone();
+
+            let (sender, receiver) = std::sync::mpsc::channel::<()>();
+
+            updaters.push((
+                sender,
+                spawn(move || {
+                    let mut sampler = Sampler::new(skew, INSERTIONS - 1);
+
+                    loop {
+                        match receiver.try_recv() {
+                            Err(..) => break,
+                            _ => {
+                                index.dispatch_crud(CRUDOperation::Update(
+                                    sampler.sample(),
+                                    Payload::default(),
+                                ));
+                            }
+                        }
+                    }
+                }),
+            ))
+        }
         for _ in 0..NUMBER_OLAPS {
             let index = index.clone();
             olaps.push(spawn(move || {
                 let mut results = vec![];
                 for _ in 1..OLAP_TX_PER_WORKER {
-                    let mut key_min
-                        = rand::random_range(0..INSERTIONS);
+                    let mut key_min = rand::random_range(0..INSERTIONS);
 
-                    let mut key_max
-                        = key_min + RANGE_SIZE;
+                    let mut key_max = key_min + RANGE_SIZE;
 
                     if key_max >= INSERTIONS {
                         key_max = key_min;
                         key_min -= RANGE_SIZE;
                     }
 
-                    let current_si
-                        = index.current_version();
+                    let current_si = index.current_version();
 
-                    let si
-                        = rand::random_range(VersionManager::START_VERSION..=current_si);
+                    let si = rand::random_range(VersionManager::START_VERSION..=current_si);
 
-                    let time_start
-                        = SystemTime::now();
+                    let time_start = SystemTime::now();
 
                     let crud =
                         index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
 
-                    let time_spent
-                        = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
+                    let time_spent = SystemTime::now()
+                        .duration_since(time_start)
+                        .unwrap()
+                        .as_nanos();
 
-                    let count_results =  match crud {
-                        CRUDOperationResult::MatchedRecords(data) =>  data.len(),
-                        _ => 0
+                    let count_results = match crud {
+                        CRUDOperationResult::MatchedRecords(data) => data.len(),
+                        _ => 0,
                     };
-                    results.push(
-                        (si, current_si, 0u128, key_min, key_max, count_results, time_spent)
-                    )
+                    results.push((
+                        si,
+                        current_si,
+                        0u128,
+                        key_min,
+                        key_max,
+                        count_results,
+                        time_spent,
+                    ))
                 }
                 results
             }))
         }
 
-        olaps.into_iter().map(|j| j.join().unwrap())
+        let olaps = olaps
+            .into_iter()
+            .map(|j| j.join().unwrap())
             .flatten()
-            .for_each(|(target_si,
-                           current_si,
-                           sleep_time,
-                           key_min,
-                           key_max,
-                           count_results,
-                           time_spent)|
-                {
-                    olap_file.write_all(format!("\
+            .collect::<Vec<_>>();
+
+        mem::drop(updaters);
+
+        olaps.into_iter().for_each(
+            |(target_si, current_si, sleep_time, key_min, key_max, count_results, time_spent)| {
+                olap_file
+                    .write_all(
+                        format!(
+                            "\
                             {target_si},\
                             {current_si},\
                             {sleep_time},\
                             {key_min},\
                             {key_max},\
                             {count_results},\
-                            {time_spent}\n").as_bytes()).unwrap();
-                })
+                            {time_spent}\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+            },
+        )
     }
 }
 

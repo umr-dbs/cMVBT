@@ -62,8 +62,8 @@ impl<const FAN_OUT: usize,
 pub enum TxExecutionResult<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static,
-    Payload: Clone + Default + 'static>
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static>
 {
     AtomicTxResult(AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     TxResult(TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
@@ -72,8 +72,8 @@ pub enum TxExecutionResult<'a,
 impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > TxExecutionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub const fn is_ok(&self) -> bool {
@@ -104,8 +104,9 @@ impl<'a,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display,
-    Payload: Clone + Default> TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
+> TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
     fn execute<'a>(self, dispatcher: &'a impl TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload>)
@@ -164,8 +165,8 @@ const POOL_DISABLED: usize = 0;
 pub struct TransactionManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static,
-    Payload: Clone + Default + 'static
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > {
     db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pool: Option<ThreadPool>,
@@ -174,8 +175,8 @@ pub struct TransactionManager<
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + 'static,
-    Payload: Clone + Default
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > Drop for TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn drop(&mut self) {
         unsafe {
@@ -186,8 +187,8 @@ impl<const FAN_OUT: usize,
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
-    Key: Default + Hash + Ord + Copy + Display + Send + 'static,
-    Payload: Clone + Default + Send + 'static
+    Key: Default + Ord + Copy + Hash + Display + Send + Sync + 'static,
+    Payload: Display + Clone + Default + Send + Sync + 'static
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]

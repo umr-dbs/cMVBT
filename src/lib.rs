@@ -6,6 +6,7 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tx_model::transaction::AtomicTransaction;
 use mv_gc::tx_manager::TransactionManager;
+use crate::mv_tree::index_root::RootIndexType;
 use crate::mv_utils::interval::Interval;
 
 mod mv_block;
@@ -47,8 +48,8 @@ impl Deref for MVBTreeWithGCApiExport {
 #[no_mangle]
 pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
     let index = match (protocol, clock) {
-        (OLC, OPT_CLOCK) => MVBTreeApi::olc_optimistic_clock(),
-        (OLC, EXCL_CLOCK) => MVBTreeApi::olc_optimistic_clock(),
+        (OLC, OPT_CLOCK) => MVBTreeApi::olc_optimistic_clock(RootIndexType::default()),
+        (OLC, EXCL_CLOCK) => MVBTreeApi::olc_optimistic_clock(RootIndexType::default()),
         _ => MVBTreeApi::default()
     };
     

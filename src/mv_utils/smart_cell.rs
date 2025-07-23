@@ -4,6 +4,7 @@ use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use CCBPlusTree::locking::locking_strategy::LockingStrategy;
 use crate::mv_page_model::Attempts;
 use crate::mv_record_model::AtomicVersion;
 use crate::mv_record_model::version_info::Version;
@@ -62,10 +63,19 @@ impl AtomicElisionExt for AtomicVersion {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub enum LatchType {
-    Optimistic,
+    #[default] Optimistic,
     None,
+}
+
+impl LatchType {
+    pub fn into_cc_locking_strategy(self) -> LockingStrategy {
+        match self {
+            LatchType::Optimistic => LockingStrategy::OLC,
+            LatchType::None => LockingStrategy::MonoWriter
+        }
+    }
 }
 // pub static mut COUNTERS: (AtomicUsize, AtomicUsize) =
 //     (AtomicUsize::new(0), AtomicUsize::new(0));
