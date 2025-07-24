@@ -6,10 +6,7 @@ use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::Sampler::Uniform;
-use crate::mv_test::{
-    format_insertions, height_root, GroupConfig, Key, Payload, Sampler, FAN_OUT, FILLED_BLOCK,
-    F_ABS_OFF, F_MUL, F_OFF, NUM_RECORDS, N_ABS_OFF, N_MUL, N_OFF, VERBOSE,
-};
+use crate::mv_test::{format_insertions, height_root, GroupConfig, Key, Payload, Sampler, FAN_OUT, FILLED_BLOCK, F_ABS_OFF, F_MUL, F_OFF, LOG_REORG, NUM_RECORDS, N_ABS_OFF, N_MUL, N_OFF, VERBOSE};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::safe_cell::SafeCell;
@@ -138,8 +135,8 @@ fn bernhard_tests() {
     const INSERTIONS: Key = 10_000;
     const UPDATES: Key = 100_000_000 as Key;
     const DELETIONS: f64 = 0.9_f64;
-    const NUMBER_OLAPS: usize = 0;
-    const NUMBER_UPDATERS: usize = 0;
+    const NUMBER_OLAPS: usize = 12;
+    const NUMBER_UPDATERS: usize = 1;
     const OLAP_TX_PER_WORKER: usize = 2000;
     const RANGE_SIZE: Key = 1_000;
     const SKEWs: [f64; 3] = [0f64, 0.4, 1.4];
@@ -230,33 +227,36 @@ fn bernhard_tests() {
             .unwrap();
 
         // splits, merges, root_splits, root_merges
-        unsafe {
-            for (file_name, counter) in [
-                (format!("skew_{skew}_splits.csv"), mv_test::SPLITS_COUNTER.lock()),
-                (format!("skew_{skew}_merges.csv"), mv_test::MERGES_COUNTER.lock()),
-                (format!("skew_{skew}_root_splits.csv"), mv_test::SPLITS_ROOT_COUNTER.lock()),
-                (format!("skew_{skew}_root_merges.csv"), mv_test::MERGE_ROOT_COUNTER.lock()),
-            ] {
-                let _  = fs::remove_file(file_name.as_str());
-                let mut file_io = BufWriter::new(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(file_name.as_str())
-                        .unwrap(),
-                );
 
-                file_io.write_all("current_snapshot\n".as_bytes()).unwrap();
-                counter
-                    .iter()
-                    .for_each(|s| file_io.write_all(format!("{s}\n").as_bytes()).unwrap());
+        if LOG_REORG {
+            unsafe {
+                for (file_name, counter) in [
+                    (format!("skew_{skew}_splits.csv"), mv_test::SPLITS_COUNTER.lock()),
+                    (format!("skew_{skew}_merges.csv"), mv_test::MERGES_COUNTER.lock()),
+                    (format!("skew_{skew}_root_splits.csv"), mv_test::SPLITS_ROOT_COUNTER.lock()),
+                    (format!("skew_{skew}_root_merges.csv"), mv_test::MERGE_ROOT_COUNTER.lock()),
+                ] {
+                    let _ = fs::remove_file(file_name.as_str());
+                    let mut file_io = BufWriter::new(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(file_name.as_str())
+                            .unwrap(),
+                    );
 
-                file_io.flush().unwrap();
-                println!(">> {file_name} written.");
-            }
+                    file_io.write_all("current_snapshot\n".as_bytes()).unwrap();
+                    counter
+                        .iter()
+                        .for_each(|s| file_io.write_all(format!("{s}\n").as_bytes()).unwrap());
+
+                    file_io.flush().unwrap();
+                    println!(">> {file_name} written.");
+                }
         }
+    }
 
-        let mut updaters = vec![];
+    let mut updaters = vec![];
         for _ in 0..NUMBER_UPDATERS {
             let index = index.clone();
 

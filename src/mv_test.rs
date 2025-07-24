@@ -28,7 +28,7 @@ use crate::mv_tree::index_root::RootIndexType;
 use crate::mv_utils::interval::Interval;
 
 pub const VERBOSE: bool = false;
-pub const LOG_REORG: bool = true;
+pub const LOG_REORG: bool = false;
 const SYSTEM_STR: &str = "MVTree";
 pub static mut MERGES_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
