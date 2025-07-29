@@ -32,7 +32,7 @@ mod mv_test;
 mod mv_tree;
 mod mv_tx_model;
 mod mv_utils;
-
+mod mv_paper_tests;
 // struct NoCacheAllocator;
 // unsafe impl GlobalAlloc for NoCacheAllocator {
 //     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -131,6 +131,14 @@ fn startup() {
 
     make_splash();
 }
+
+
+fn bernhard_tests_new() {
+    // Create Blocks of mixed CRUD,
+
+
+}
+
 fn bernhard_tests() {
     const INSERTIONS: Key = 10_000;
     const UPDATES: Key = 100_000_000 as Key;
