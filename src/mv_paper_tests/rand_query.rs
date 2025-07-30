@@ -7,6 +7,7 @@ use crate::mv_page_model::node::PageType;
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_utils::interval::Interval;
 use crate::mv_utils::smart_cell::sched_yield;
 
 impl<const FAN_OUT: usize,
@@ -88,6 +89,9 @@ impl<const FAN_OUT: usize,
             mut curr_guard,
             attempts) = self.retrieve_root_write_olc(attempts);
 
+        // let mut curr_fence
+        //     = Interval::new(self.min_key, self.max_key);
+
         let mut i =  0;
         loop {
             let curr_guard_result
@@ -99,7 +103,7 @@ impl<const FAN_OUT: usize,
             let (live_n, _dead_n)
                 = curr_page_ref.active_dead_count();
 
-            let index
+            let mut index
                 = rand::random_range(0..live_n as usize);
 
             if VERBOSE {
@@ -109,27 +113,20 @@ impl<const FAN_OUT: usize,
 
             match curr_guard_result.unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => unsafe {
-                    let (keys_page, versions_page) = internal_page
-                        .keys_versions();
-
-                    // let index = keys_page
-                    //     .iter()
-                    //     .enumerate()
-                    //     .rfind(|(pos, range)|
-                    //         versions_page.get_unchecked(*pos).is_active() &&
-                    //             range.contains(key))
-                    //     .map(|(pos, ..)| pos);
+                    // let keys_page = internal_page
+                    //     .keys();
                     //
-                    // if let None = index {
-                    //     if VERBOSE {
-                    //         println!("traversal_write_internal_olc: None Index");
-                    //     }
-                    //     return Err(attempts + 1);
-                    // }
-                    //
-                    // let index
-                    //     = index.unwrap();
-
+                    // curr_fence = keys_page.get_unchecked(index).clone();
+                    let mut i = 0usize;
+                    for version in internal_page.versions() {
+                        if version.is_active() {
+                            if index == 0 {
+                                index = i;
+                                break
+                            }
+                        }
+                        i += 1;
+                    }
                     let next_curr_block = internal_page
                         .get_pointer(index)
                         .clone();

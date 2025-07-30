@@ -25,7 +25,11 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash + Display, Payload: Clone> {
     Range(Interval<Key>, Version),
     RangeSi(Interval<Key>),
     RangeIter(Interval<Key>, Version),
-    RangeIterSi(Interval<Key>)
+    RangeIterSi(Interval<Key>),
+
+    // Rand Writers
+    UpdateRand,
+    DeleteRand,
 }
 
 /// Explicitly support move-semantics for Transaction.
@@ -54,6 +58,10 @@ impl<Key: Display + Ord + Copy + Hash, Payload: Clone> Display for CRUDOperation
             RangeIterSi(key) =>
                 write!(f, "RangeIterSi(Keys: [{}, {}], version: Si)", key.lower(), key.upper()),
             Empty => write!(f, "Empty"),
+            CRUDOperation::UpdateRand =>
+                write!(f, "UpdateRand"),
+            CRUDOperation::DeleteRand =>
+                write!(f, "DeleteRand"),
         }
     }
 }
@@ -65,7 +73,9 @@ impl<Key: Ord + Hash + Copy + Display, Payload: Clone> CRUDOperation<Key, Payloa
     #[inline(always)]
     pub const fn is_read(&self) -> bool {
         match self {
-            Insert(..) | Delete(..) | Update(..) => false,
+            Insert(..) | Delete(..) | Update(..) |
+            CRUDOperation::UpdateRand |
+            CRUDOperation::DeleteRand => false,
             _ => true,
         }
     }
