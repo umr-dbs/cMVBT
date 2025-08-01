@@ -9,6 +9,8 @@ use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_utils::interval::Interval;
 
+pub type Fence<Key> = Interval<Key>;
+
 type Len = AtomicU32;
 type LenP = u32;
 type Active = u32;

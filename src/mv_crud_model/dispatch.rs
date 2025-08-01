@@ -1,11 +1,14 @@
 use std::hash::Hash;
 use std::fmt::Display;
+use std::mem;
+use std::ops::{Add, Sub};
 use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_crud_model::query::RangeQueryIter;
+use crate::mv_paper_tests::rand_query::RAND_ATTEMPTS_MAX;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
 use crate::mv_test::VERBOSE;
@@ -257,7 +260,7 @@ impl<'a,
                     version,
                     key)),
             CRUDOperation::UpdateRand => {
-                let leaf_guard =
+                let (_fence, leaf_guard) =
                     self.traversal_write_rand_query();
 
                 let leaf_deref_mut = leaf_guard
@@ -279,15 +282,13 @@ impl<'a,
                 let mut key = Key::default();
                 let payload = Payload::default();
 
-                for r in leaf_page.as_records() {
+                for r in leaf_page.as_records().iter().rev() {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
                             break
                         }
-                        else {
-                            find_i -= 1;
-                        }
+                        find_i -= 1;
                     }
                 };
 
@@ -374,7 +375,7 @@ impl<'a,
                 }
             }
             CRUDOperation::DeleteRand => {
-                let leaf_guard
+                let (_fence, leaf_guard)
                     = self.traversal_write_rand_query();
 
                 let leaf_deref_mut = leaf_guard
@@ -393,7 +394,7 @@ impl<'a,
                 let mut key
                     = Key::default();
 
-                for r in leaf_page.as_records() {
+                for r in leaf_page.as_records().iter().rev() {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
@@ -439,6 +440,93 @@ impl<'a,
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
+            }
+            CRUDOperation::InsertRand => {
+                let (fence, leaf_guard) =
+                    self.traversal_write_rand_query();
+
+                let leaf_deref_mut = leaf_guard
+                    .deref_mut()
+                    .unwrap();
+
+                let leaf_page
+                    = leaf_deref_mut.as_leaf_page();
+
+                if size_of::<Key>() != mem::size_of::<u64>() { // Not supported
+                    println!(">>>> CRUDOperation::InsertRand only supported on *u64* !");
+                    return CRUDOperationResult::Error
+                }
+
+                let min = unsafe { *((&fence.lower) as * const _ as *const u64) };
+                let max = unsafe { *((&fence.upper) as * const _ as *const u64) };
+
+                let mut rand_attempts = 0;
+                let key = loop {
+                    let generated = rand::random_range(min..=max);
+                    let gen_key = unsafe { *((&generated) as * const _ as * const Key) };
+
+                    match leaf_page.as_records()
+                        .iter()
+                        .rfind(|r| r.key == gen_key)
+                    {
+                        None => break Some(gen_key),
+                        Some(record) if record.version().is_deleted() =>
+                            break Some(gen_key),
+                        _ if rand_attempts >= RAND_ATTEMPTS_MAX => break None,
+                        _ => rand_attempts += 1
+                    }
+                };
+
+                if key.is_none() {
+                    println!(">> RandKey Generation Failed!\
+                    >> RAND_ATTEMPTS_MAX = {RAND_ATTEMPTS_MAX}\
+                    >> Fence = {fence}");
+
+                    return self.dispatch_crud(CRUDOperation::InsertRand)
+                }
+
+                let key = key.unwrap();
+                let payload = Payload::default();
+
+                let current_len
+                    = leaf_page.len();
+
+                let mut commit_handle
+                    = self.begin_commit();
+
+                let version
+                    = commit_handle.read_handle_version();
+
+                leaf_page.push_uncommitted(
+                    RecordPoint::new(key, VersionInfo::new(version), payload),
+                    current_len);
+
+                let mut commit_attempts
+                    = 0;
+
+                let committed_version = loop {
+                    match self.try_end_commit(commit_handle) {
+                        Ok(commit) if commit_attempts > 0 => unsafe {
+                            let records
+                                = leaf_page.as_records_uncommitted_mut();
+
+                            records.get_unchecked_mut(current_len)
+                                .version_mut()
+                                .insert_version = commit;
+
+                            break commit;
+                        }
+                        Ok(..) => break version,
+                        Err(opt) => {
+                            commit_attempts += 1;
+                            sched_yield(commit_attempts);
+                            commit_handle = opt
+                        }
+                    }
+                };
+
+                leaf_page.commit_delta(1, 0);
+                CRUDOperationResult::Inserted(committed_version)
             }
             _ => CRUDOperationResult::Error,
         }

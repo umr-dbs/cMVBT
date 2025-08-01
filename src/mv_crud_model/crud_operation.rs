@@ -30,6 +30,7 @@ pub enum CRUDOperation<Key: Ord + Copy + Hash + Display, Payload: Clone> {
     // Rand Writers
     UpdateRand,
     DeleteRand,
+    InsertRand
 }
 
 /// Explicitly support move-semantics for Transaction.
@@ -62,6 +63,8 @@ impl<Key: Display + Ord + Copy + Hash, Payload: Clone> Display for CRUDOperation
                 write!(f, "UpdateRand"),
             CRUDOperation::DeleteRand =>
                 write!(f, "DeleteRand"),
+            CRUDOperation::InsertRand =>
+                write!(f, "InsertRand"),
         }
     }
 }

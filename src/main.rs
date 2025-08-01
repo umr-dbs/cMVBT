@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::thread::spawn;
 use std::time::SystemTime;
 use std::{env, fs, mem};
+use std::collections::HashSet;
 
 mod mv_block;
 mod mv_crud_model;
@@ -49,7 +50,9 @@ mod mv_paper_tests;
 // static TOTAL_TX_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const MANUEL_MAIN: bool = false;
-const BERNHARD_TESTS: bool = true;
+const BERNHARD_TESTS: bool = false;
+
+const BERNHARD_TESTS_NEW: bool = true;
 
 type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
@@ -60,6 +63,8 @@ fn main() {
         manuel_main()
     } else if BERNHARD_TESTS {
         bernhard_tests()
+    } else if BERNHARD_TESTS_NEW {
+        bernhard_tests_new()
     } else {
         mv_test::execute_experiments();
     }
@@ -134,9 +139,67 @@ fn startup() {
 
 
 fn bernhard_tests_new() {
-    // Create Blocks of mixed CRUD,
+    const INITIAL_POPULATION: usize = 1_000_000;
+    const INSERTS: usize = 0;
+    const UPDATES: usize = 0;
+    const DELETES: usize = 10;
+    const TOTAL_BLOCKS: usize = 1000;
 
+    println!("\
+    Initial Population = {}\n\
+    Total Operations   = {}\n\t -Blocks   = {}\n\
+    \t -Inserts  = {}\n\
+    \t -Updates  = {}\n\
+    \t -Deletes  = {}",
+             format_insertions(INITIAL_POPULATION),
+             format_insertions(TOTAL_BLOCKS * (INSERTS + UPDATES + DELETES)),
+             format_insertions(TOTAL_BLOCKS),
+             format_insertions(INSERTS),
+             format_insertions(UPDATES),
+             format_insertions(DELETES));
 
+    let mv_tree
+        = MVTree::default();
+
+    let mut map
+        = HashSet::with_capacity(INITIAL_POPULATION);
+
+    for _ in 0..INITIAL_POPULATION {
+        'l: loop {
+            let key = rand::random_range(1..Key::MAX);
+            if !map.contains(&key) {
+                mv_tree.dispatch_crud(CRUDOperation::Insert(key, Payload::default()));
+                map.insert(key);
+                break 'l
+            }
+        }
+    }
+    mem::drop(map);
+
+    let block = {
+        let mut crud
+            = Vec::with_capacity(INSERTS + UPDATES + DELETES);
+
+        crud.extend((0..INSERTS).map(|_| CRUDOperation::<Key, Payload>::InsertRand));
+        crud.extend((0..UPDATES).map(|_| CRUDOperation::<Key, Payload>::UpdateRand));
+        crud.extend((0..DELETES).map(|_| CRUDOperation::<Key, Payload>::DeleteRand));
+        crud
+    };
+
+    let gen_block = || {
+        let mut crud = block.clone();
+        crud.shuffle(&mut rand::rng());
+        crud
+    };
+
+    for block in 0..TOTAL_BLOCKS {
+        // println!(">> Dispatching Block {block}");
+        for op in gen_block() {
+            mv_tree.dispatch_crud(op);
+        }
+    }
+
+    println!(">> Finished dispatching...");
 }
 
 fn bernhard_tests() {

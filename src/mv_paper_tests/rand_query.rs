@@ -2,13 +2,15 @@ use std::fmt::Display;
 use std::hash::Hash;
 use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
 use crate::mv_page_model::{Attempts, BlockRef};
-use crate::mv_page_model::internal_page::TimeMatcher;
+use crate::mv_page_model::internal_page::{Fence, TimeMatcher};
 use crate::mv_page_model::node::PageType;
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::interval::Interval;
 use crate::mv_utils::smart_cell::sched_yield;
+
+pub const RAND_ATTEMPTS_MAX: usize = 10; // for insertion generation upper bound
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -17,7 +19,7 @@ impl<const FAN_OUT: usize,
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    pub(crate) fn traversal_write_rand_query(&self) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn traversal_write_rand_query(&self) -> (Fence<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let mut attempt = 0;
 
         loop {
@@ -33,66 +35,17 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn retrieve_root_write_internal_rand(&self, attempts: Attempts) -> Result<
-        (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
-    {
-        let root
-            = self.root.clone();
-
-        let height
-            = root.height();
-
-        let mut master_guard
-            = root.borrow_read();
-
-        let root_block
-            = master_guard.block();
-
-        let mut root_guard
-            = root_block.borrow_read();
-
-        if LOG_REORG {
-            let r
-                = root_guard.deref().unwrap().unsafe_degree_root();
-
-            match r {
-                BlockUnsafeDegree::Overflow => unsafe {
-                    mv_test::SPLITS_ROOT_COUNTER.lock().push(self.current_version())
-                }
-                BlockUnsafeDegree::ActiveUnderflow => unsafe {
-                    mv_test::MERGE_ROOT_COUNTER.lock().push(self.current_version())
-                }
-                _ => {}
-            }
-        }
-        match root_guard.deref().unwrap().unsafe_degree_root() {
-            BlockUnsafeDegree::Overflow
-            if master_guard.upgrade_write_lock() && // only deadlock free cuz non-blocking
-                root_guard.upgrade_write_lock()
-            => Ok(self.split_root(master_guard, root_guard, height)),
-            BlockUnsafeDegree::ActiveUnderflow
-            if master_guard.upgrade_write_lock() && root_guard.upgrade_write_lock() =>
-                self.merge_root(master_guard, root_guard, height)
-                    .or(self.retrieve_root_write_internal_rand(attempts + 1)),
-            BlockUnsafeDegree::Ok
-            => Ok((root_block, root_guard)),
-            _ => Err(()),
-        }
-    }
-
-    #[inline]
     fn traversal_write_internal_rand(&self, attempts: Attempts)
-                                    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Attempts>
+    -> Result<(Fence<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), Attempts>
     {
         let (mut _curr_block,
             mut curr_guard,
             attempts) = self.retrieve_root_write_olc(attempts);
 
-        // let mut curr_fence
-        //     = Interval::new(self.min_key, self.max_key);
+        let mut curr_fence
+            = Fence::new(self.min_key, self.max_key);
 
-        let mut i =  0;
+        let mut traversal_loops =  0;
         loop {
             let curr_guard_result
                 = curr_guard.deref();
@@ -105,28 +58,27 @@ impl<const FAN_OUT: usize,
 
             let mut index
                 = rand::random_range(0..live_n as usize);
-
             if VERBOSE {
-                println!("traversal_write_internal_olc: Loop: {i}, attempts {attempts}, live_index: {index}");
-                i += 1;
+                println!("traversal_write_internal_olc: Loop: {traversal_loops}, attempts {attempts}, live_index: {index}");
+                traversal_loops += 1;
             }
 
             match curr_guard_result.unwrap().as_page_ref() {
                 PageType::IndexRef(internal_page) => unsafe {
-                    // let keys_page = internal_page
-                    //     .keys();
-                    //
-                    // curr_fence = keys_page.get_unchecked(index).clone();
-                    let mut i = 0usize;
-                    for version in internal_page.versions() {
+                    let keys_page = internal_page
+                        .keys();
+
+                    for (k, version) in internal_page.versions().iter().enumerate() {
                         if version.is_active() {
                             if index == 0 {
-                                index = i;
+                                index = k;
                                 break
                             }
+                            index -= 1;
                         }
-                        i += 1;
                     }
+
+                    curr_fence = keys_page.get_unchecked(index).clone();
                     let next_curr_block = internal_page
                         .get_pointer(index)
                         .clone();
@@ -169,7 +121,7 @@ impl<const FAN_OUT: usize,
                     }
                 }
                 _ => return if curr_guard.upgrade_write_lock() {
-                    Ok(curr_guard)
+                    Ok((curr_fence, curr_guard))
                 } else {
                     if VERBOSE {
                         println!("traversal_write_internal_olc: upgrade_write_lock Err()");
