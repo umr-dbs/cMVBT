@@ -58,16 +58,14 @@ impl<const FAN_OUT: usize,
 
             let mut index
                 = rand::random_range(0..live_n as usize);
+
             if VERBOSE {
                 println!("traversal_write_internal_olc: Loop: {traversal_loops}, attempts {attempts}, live_index: {index}");
                 traversal_loops += 1;
             }
 
             match curr_guard_result.unwrap().as_page_ref() {
-                PageType::IndexRef(internal_page) => unsafe {
-                    let keys_page = internal_page
-                        .keys();
-
+                PageType::IndexRef(internal_page) => {
                     for (k, version) in internal_page.versions().iter().enumerate() {
                         if version.is_active() {
                             if index == 0 {
@@ -78,7 +76,7 @@ impl<const FAN_OUT: usize,
                         }
                     }
 
-                    curr_fence = keys_page.get_unchecked(index).clone();
+                    curr_fence = internal_page.get_key(index).clone();
                     let next_curr_block = internal_page
                         .get_pointer(index)
                         .clone();
@@ -91,10 +89,12 @@ impl<const FAN_OUT: usize,
                             = next_curr_guard.deref().unwrap().unsafe_degree();
 
                         match r {
-                            BlockUnsafeDegree::Overflow =>
-                                mv_test::SPLITS_COUNTER.lock().push(self.current_version()),
-                            BlockUnsafeDegree::ActiveUnderflow =>
-                                mv_test::MERGES_COUNTER.lock().push(self.current_version()),
+                            BlockUnsafeDegree::Overflow => unsafe {
+                                mv_test::SPLITS_COUNTER.lock().push(self.current_version())
+                            }
+                            BlockUnsafeDegree::ActiveUnderflow => unsafe {
+                                mv_test::MERGES_COUNTER.lock().push(self.current_version())
+                            }
                             _ => {}
                         }
                     }

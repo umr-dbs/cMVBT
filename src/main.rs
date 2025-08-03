@@ -139,11 +139,11 @@ fn startup() {
 
 
 fn bernhard_tests_new() {
-    const INITIAL_POPULATION: usize = 1_000_000;
-    const INSERTS: usize = 0;
-    const UPDATES: usize = 0;
-    const DELETES: usize = 10;
-    const TOTAL_BLOCKS: usize = 1000;
+    const INITIAL_POPULATION: usize = 100_000;
+    const INSERTS: usize = 1000;
+    const UPDATES: usize = 0; // p
+    const DELETES: usize = 0;
+    const TOTAL_BLOCKS: usize = 100;
 
     println!("\
     Initial Population = {}\n\

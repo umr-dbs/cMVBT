@@ -166,7 +166,7 @@ impl<'a,
                     }
                 };
 
-                match leaf_page.delete(key, version) {
+                match leaf_page.delete(key, committed_version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(0, 1);
                         CRUDOperationResult::Updated(committed_version)
@@ -282,7 +282,7 @@ impl<'a,
                 let mut key = Key::default();
                 let payload = Payload::default();
 
-                for r in leaf_page.as_records().iter().rev() {
+                for r in leaf_page.as_records() {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
@@ -359,7 +359,7 @@ impl<'a,
                     }
                 };
 
-                match leaf_page.delete(key, version) {
+                match leaf_page.delete(key, committed_version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(0, 1);
                         CRUDOperationResult::Updated(committed_version)
@@ -394,15 +394,13 @@ impl<'a,
                 let mut key
                     = Key::default();
 
-                for r in leaf_page.as_records().iter().rev() {
+                for r in leaf_page.as_records() {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
                             break
                         }
-                        else {
-                            find_i -= 1;
-                        }
+                        find_i -= 1;
                     }
                 };
 
@@ -467,11 +465,11 @@ impl<'a,
 
                     match leaf_page.as_records()
                         .iter()
-                        .rfind(|r| r.key == gen_key)
+                        .find(|r| r.key == gen_key)
                     {
                         None => break Some(gen_key),
-                        Some(record) if record.version().is_deleted() =>
-                            break Some(gen_key),
+                        // Some(record) if record.version().is_deleted() =>
+                        //     break Some(gen_key), // Incorrect logic: Must update not insert!
                         _ if rand_attempts >= RAND_ATTEMPTS_MAX => break None,
                         _ => rand_attempts += 1
                     }
@@ -486,6 +484,9 @@ impl<'a,
                 }
 
                 let key = key.unwrap();
+                if VERBOSE {
+                    println!("[RandInsert] - Key: {key}, Fence= min: {min}, max: {max}");
+                }
                 let payload = Payload::default();
 
                 let current_len
