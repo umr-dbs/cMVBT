@@ -10,7 +10,7 @@ use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_utils::interval::Interval;
 use crate::mv_utils::smart_cell::sched_yield;
 
-pub const RAND_ATTEMPTS_MAX: usize = 10; // for insertion generation upper bound
+pub const RAND_ATTEMPTS_MAX: Attempts = 10; // for insertion generation upper bound
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -75,6 +75,10 @@ impl<const FAN_OUT: usize,
                             index -= 1;
                         }
                     }
+
+                    debug_assert!(index < _dead_n as usize + live_n as usize);
+                    debug_assert!(!internal_page.get_version(index).is_obsolete(),
+                            "Accessed obsolete version!");
 
                     curr_fence = internal_page.get_key(index).clone();
                     let next_curr_block = internal_page

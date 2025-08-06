@@ -140,10 +140,10 @@ fn startup() {
 
 fn bernhard_tests_new() {
     const INITIAL_POPULATION: usize = 100_000;
-    const INSERTS: usize = 1000;
-    const UPDATES: usize = 0; // p
-    const DELETES: usize = 0;
-    const TOTAL_BLOCKS: usize = 100;
+    const INSERTS: usize = 100; // Insert and Update seem to create errors
+    const UPDATES: usize = 1000;
+    const DELETES: usize = 100; // works fine
+    const TOTAL_BLOCKS: usize = 1000;
 
     println!("\
     Initial Population = {}\n\
@@ -166,7 +166,7 @@ fn bernhard_tests_new() {
 
     for _ in 0..INITIAL_POPULATION {
         'l: loop {
-            let key = rand::random_range(1..Key::MAX);
+            let key = rand::random_range(0..Key::MAX);
             if !map.contains(&key) {
                 mv_tree.dispatch_crud(CRUDOperation::Insert(key, Payload::default()));
                 map.insert(key);

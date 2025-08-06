@@ -440,6 +440,7 @@ impl<'a,
                 }
             }
             CRUDOperation::InsertRand => {
+                // return CRUDOperationResult::Error;
                 let (fence, leaf_guard) =
                     self.traversal_write_rand_query();
 
@@ -471,7 +472,10 @@ impl<'a,
                         // Some(record) if record.version().is_deleted() =>
                         //     break Some(gen_key), // Incorrect logic: Must update not insert!
                         _ if rand_attempts >= RAND_ATTEMPTS_MAX => break None,
-                        _ => rand_attempts += 1
+                        _ => {
+                            rand_attempts += 1;
+                            sched_yield(rand_attempts);
+                        }
                     }
                 };
 
@@ -484,6 +488,7 @@ impl<'a,
                 }
 
                 let key = key.unwrap();
+                debug_assert!(key <= fence.upper && key >= fence.lower);
                 if VERBOSE {
                     println!("[RandInsert] - Key: {key}, Fence= min: {min}, max: {max}");
                 }

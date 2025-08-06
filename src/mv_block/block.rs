@@ -122,13 +122,26 @@ impl<const FAN_OUT: usize,
         let (active, dead)
             = (active as usize,  dead as usize);
 
-        if active + dead >= self.max_units_safe() {
-            BlockUnsafeDegree::Overflow
-        }
-        else if active <= self.min_active_units() {
+        let min_active_units
+            = self.min_active_units();
+
+        if active <= min_active_units {
             BlockUnsafeDegree::ActiveUnderflow
-        } else {
-            BlockUnsafeDegree::Ok
+        }
+        else {
+            let max_units_safe
+                = self.max_units_safe();
+
+            let is_overflow
+                = active + dead >= max_units_safe;
+
+            if is_overflow && active <= min_active_units * 2 {
+                BlockUnsafeDegree::ActiveUnderflow
+            } else if is_overflow {
+                BlockUnsafeDegree::Overflow
+            } else {
+                BlockUnsafeDegree::Ok
+            }
         }
     }
 

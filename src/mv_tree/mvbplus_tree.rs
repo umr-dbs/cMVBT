@@ -574,7 +574,7 @@ impl<const FAN_OUT: usize,
                     BlockSplit::ByKey(fence_left, left, fence_right, right)
                 }
             }
-        } else { // < max_units_safe. meaning: active > 40%
+        } else { // < max_units_safe. meaning: active >= 40% and active < 80%
             // VERSION SPLIT
             match is_leaf {
                 true => { // LeafPage
@@ -590,7 +590,8 @@ impl<const FAN_OUT: usize,
                         .filter(|record| !record.version().is_deleted())
                         .collect_vec();
 
-                    debug_assert!(active_records.len() >= 4*(NUM_RECORDS/10));
+                    debug_assert!(active_records.len() >= 4*(NUM_RECORDS/10),
+                    "Active records = {}, required >= {}", active_records.len(), 4*(NUM_RECORDS/10));
 
                     // if active_records.len() <= 
                     //     BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records()
@@ -640,7 +641,8 @@ impl<const FAN_OUT: usize,
                         }
                     }
 
-                    debug_assert!(!active_entries.is_empty());
+                    debug_assert!(active_entries.len() >= 4*(FAN_OUT/10),
+                                  "Active entries = {}, required >= {}", active_entries.len(), 4*(FAN_OUT/10));
                     if let PageType::IndexMut(internal_page) = new_internal_page.unsafe_borrow_mut().as_page_mut() {
                         internal_page.bulk_push(active_entries)
                     }

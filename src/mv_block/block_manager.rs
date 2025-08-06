@@ -159,7 +159,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub const fn max_keys_safe() -> usize {
-        Self::max_keys() - 1
+        Self::max_keys() - 3
     }
 
     /// Main Constructor requiring supplied BlockSettings.
