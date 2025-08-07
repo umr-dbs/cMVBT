@@ -139,11 +139,14 @@ fn startup() {
 
 
 fn bernhard_tests_new() {
-    const INITIAL_POPULATION: usize = 100_000;
-    const INSERTS: usize = 100; // Insert and Update seem to create errors
-    const UPDATES: usize = 1000;
-    const DELETES: usize = 100; // works fine
+    const INITIAL_POPULATION: usize = 10_000_000;
+    const INSERTS: usize = 200; // Insert and Update seem to create errors
+    const UPDATES: usize = 600;
+    const DELETES: usize = 200; // works fine
     const TOTAL_BLOCKS: usize = 1000;
+
+    const NUMBER_OLAPS: usize = 12;
+    const OLAP_TX_PER_WORKER: usize = 20;
 
     println!("\
     Initial Population = {}\n\
@@ -159,7 +162,7 @@ fn bernhard_tests_new() {
              format_insertions(DELETES));
 
     let mv_tree
-        = MVTree::default();
+        = Arc::new(MVTree::default());
 
     let mut map
         = HashSet::with_capacity(INITIAL_POPULATION);
@@ -198,6 +201,93 @@ fn bernhard_tests_new() {
             mv_tree.dispatch_crud(op);
         }
     }
+    let skew = 0;
+    let _nc = fs::remove_file(format!("mv_olap_skew_{skew}.csv"));
+    let mut olap_file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(format!("mv_olap_skew_{skew}.csv"))
+        .unwrap();
+
+    olap_file
+        .write_all(
+            b"target_snapshot,\
+            current_snapshot,\
+            sleep_time,\
+            range_start,\
+            range_end,\
+            count_results,\
+            latency\n",
+        )
+        .unwrap();
+    let mut olaps = vec![];
+    for _ in 0..NUMBER_OLAPS {
+        let index = mv_tree.clone();
+        olaps.push(spawn(move || {
+            let mut results = vec![];
+            for _ in 1..OLAP_TX_PER_WORKER {
+                let key_max = rand::random_range(0..Key::MAX);
+
+                let key_min = 0;
+
+                let current_si = index.current_version();
+
+                let si = rand::random_range(VersionManager::START_VERSION..=current_si);
+
+                let time_start = SystemTime::now();
+
+                let crud =
+                    index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
+
+                let time_spent = SystemTime::now()
+                    .duration_since(time_start)
+                    .unwrap()
+                    .as_nanos();
+
+                let count_results = match crud {
+                    CRUDOperationResult::MatchedRecords(data) => data.len(),
+                    _ => 0,
+                };
+                results.push((
+                    si,
+                    current_si,
+                    0u128,
+                    key_min,
+                    key_max,
+                    count_results,
+                    time_spent,
+                ))
+            }
+            results
+        }))
+    }
+
+    let olaps = olaps
+        .into_iter()
+        .map(|j| j.join().unwrap())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    olaps.into_iter().for_each(
+        |(target_si, current_si, sleep_time, key_min, key_max, count_results, time_spent)| {
+            olap_file
+                .write_all(
+                    format!(
+                        "\
+                            {target_si},\
+                            {current_si},\
+                            {sleep_time},\
+                            {key_min},\
+                            {key_max},\
+                            {count_results},\
+                            {time_spent}\n"
+                    )
+                        .as_bytes(),
+                )
+                .unwrap();
+        },
+    );
 
     println!(">> Finished dispatching...");
 }
