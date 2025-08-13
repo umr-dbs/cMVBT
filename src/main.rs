@@ -17,7 +17,7 @@ use rand::prelude::SliceRandom;
 use rand::thread_rng;
 use rand_distr::Zipf;
 use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 use std::thread::spawn;
 use std::time::SystemTime;
@@ -59,6 +59,27 @@ type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 fn main() {
     startup();
 
+    generate_query(
+        "query_0",
+        1_000_000,
+        1_000,
+        200,
+        800,
+        200
+    );
+
+    // generate_query(
+    //     "query_1",
+    //     10_000_000,
+    //     10_000,
+    //     200,
+    //     800,
+    //     200
+    // );
+
+    unsafe {
+        exit(0);
+    }
     if MANUEL_MAIN {
         manuel_main()
     } else if BERNHARD_TESTS {
@@ -138,54 +159,77 @@ fn startup() {
 }
 
 
-fn bernhard_tests_new() {
-    const INITIAL_POPULATION: usize = 10_000_000;
-    const INSERTS: usize = 200; // Insert and Update seem to create errors
-    const UPDATES: usize = 600;
-    const DELETES: usize = 200; // works fine
-    const TOTAL_BLOCKS: usize = 1000;
+const INSERT: u8 = 0;
+const UPDATE: u8 = 1;
+const DELETE: u8 = 2;
 
-    const NUMBER_OLAPS: usize = 12;
-    const OLAP_TX_PER_WORKER: usize = 20;
-
-    println!("\
-    Initial Population = {}\n\
-    Total Operations   = {}\n\t -Blocks   = {}\n\
-    \t -Inserts  = {}\n\
-    \t -Updates  = {}\n\
-    \t -Deletes  = {}",
-             format_insertions(INITIAL_POPULATION),
-             format_insertions(TOTAL_BLOCKS * (INSERTS + UPDATES + DELETES)),
-             format_insertions(TOTAL_BLOCKS),
-             format_insertions(INSERTS),
-             format_insertions(UPDATES),
-             format_insertions(DELETES));
-
+fn generate_query(
+    query_file_name: &str,
+    init_population: usize,
+    total_blocks: usize,
+    block_inserts: usize,
+    block_updates: usize,
+    block_deletes: usize)
+{
     let mv_tree
         = Arc::new(MVTree::default());
 
     let mut map
-        = HashSet::with_capacity(INITIAL_POPULATION);
+        = HashSet::with_capacity(init_population);
 
-    for _ in 0..INITIAL_POPULATION {
+    let mut init_pop_order =
+        Vec::with_capacity(init_population);
+
+    for _ in 0..init_population {
         'l: loop {
             let key = rand::random_range(0..Key::MAX);
             if !map.contains(&key) {
                 mv_tree.dispatch_crud(CRUDOperation::Insert(key, Payload::default()));
                 map.insert(key);
+                init_pop_order.push(CRUDOperation::Insert(key, Payload::default()));
+
                 break 'l
             }
         }
     }
     mem::drop(map);
 
+    let mut query_file = BufWriter::new(OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("query/{query_file_name}.q"))
+        .unwrap());
+
+    let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut io_handle = |crud: CRUDOperation<Key, Payload>| unsafe {
+        match crud {
+            CRUDOperation::Insert(key, ..) => {
+                buff[0] = INSERT;
+                buff[1..].copy_from_slice(key.to_le_bytes().as_slice());
+            }
+            CRUDOperation::Update(key, ..) => {
+                buff[0] = UPDATE;
+                buff[1..].copy_from_slice(key.to_le_bytes().as_slice());
+            }
+            CRUDOperation::Delete(key, ..) => {
+                buff[0] = DELETE;
+                buff[1..].copy_from_slice(key.to_le_bytes().as_slice());
+            }
+            _ => panic!("Unknown CRUD Operation for blocks"),
+        }
+
+        query_file.write_all(buff.as_slice()).unwrap()
+    };
+
+    init_pop_order.into_iter().for_each(|op| io_handle(op));
+
     let block = {
         let mut crud
-            = Vec::with_capacity(INSERTS + UPDATES + DELETES);
+            = Vec::with_capacity(block_inserts + block_updates + block_deletes);
 
-        crud.extend((0..INSERTS).map(|_| CRUDOperation::<Key, Payload>::InsertRand));
-        crud.extend((0..UPDATES).map(|_| CRUDOperation::<Key, Payload>::UpdateRand));
-        crud.extend((0..DELETES).map(|_| CRUDOperation::<Key, Payload>::DeleteRand));
+        crud.extend((0..block_inserts).map(|_| CRUDOperation::<Key, Payload>::InsertRand));
+        crud.extend((0..block_updates).map(|_| CRUDOperation::<Key, Payload>::UpdateRand));
+        crud.extend((0..block_deletes).map(|_| CRUDOperation::<Key, Payload>::DeleteRand));
         crud
     };
 
@@ -195,12 +239,90 @@ fn bernhard_tests_new() {
         crud
     };
 
-    for block in 0..TOTAL_BLOCKS {
-        // println!(">> Dispatching Block {block}");
+    for _ in 0..total_blocks {
         for op in gen_block() {
-            mv_tree.dispatch_crud(op);
+            match mv_tree.dispatch_crud(op) {
+                CRUDOperationResult::InsertedRand(key, _) => io_handle(
+                    CRUDOperation::Insert(key, 0)),
+                CRUDOperationResult::UpdatedRand(key, _) => io_handle(
+                    CRUDOperation::Update(key, 0)),
+                CRUDOperationResult::DeletedRand(key, _) => io_handle(
+                   CRUDOperation::Delete::<_, Payload>(key)),
+                _ => panic!("Error on rand query; generate_query()")
+            }
         }
     }
+
+    query_file.flush().unwrap();
+}
+
+
+fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
+    let mut query_file = BufReader::new(OpenOptions::new()
+        .read(true)
+        .open(format!("query/{query_file}.q"))
+        .unwrap());
+
+    let mut query_count = 0;
+    let payload = Payload::default();
+    let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    loop {
+        match query_file.read_exact(buff.as_mut_slice()) {
+            Ok(..) => match buff[0] {
+                INSERT => {
+                    let crud = CRUDOperation::Insert(
+                        Key::from_le_bytes(buff[1..].try_into().unwrap()),
+                        payload
+                    );
+
+                    let _exe = index.dispatch_crud(crud);
+                }
+                UPDATE => {
+                    let crud = CRUDOperation::Update(
+                        Key::from_le_bytes(buff[1..].try_into().unwrap()),
+                        payload
+                    );
+
+                    let _exe = index.dispatch_crud(crud);
+                }
+                DELETE => {
+                    let crud = CRUDOperation::Delete(
+                        Key::from_le_bytes(buff[1..].try_into().unwrap()));
+
+                    let _exe = index.dispatch_crud(crud);
+                }
+                _ => panic!("Unknown CRUD Operation for blocks in load query!"),
+            }
+            Err(..) => break
+        }
+
+        query_count += 1
+    }
+
+    assert!(query_file.read_exact([0].as_mut_slice()).is_err());
+    query_count
+}
+
+
+fn bernhard_tests_new() {
+    const NUMBER_OLAPS: usize = 12;
+    const OLAP_TX_PER_WORKER: usize = 20;
+    const QUERY_NAME: &str = "query_0";
+
+    println!("[Starting] - \
+    Loading query {QUERY_NAME}...");
+
+    let mv_tree
+        = Arc::new(MVTree::default());
+
+    let num_cruds = load_query(QUERY_NAME, mv_tree.clone());
+
+    println!("[Loaded] - \
+    Query with {} CRUD instructions dispatched to MVTree.", format_insertions(num_cruds));
+
+    println!("[OLAP Start] - \
+    Starting {NUMBER_OLAPS} OLAP workers with {OLAP_TX_PER_WORKER} CRUD instructions per worker...");
+
     let skew = 0;
     let _nc = fs::remove_file(format!("mv_olap_skew_{skew}.csv"));
     let mut olap_file = fs::OpenOptions::new()
@@ -289,7 +411,7 @@ fn bernhard_tests_new() {
         },
     );
 
-    println!(">> Finished dispatching...");
+    println!(">> Finished dispatching olaps...");
 }
 
 fn bernhard_tests() {

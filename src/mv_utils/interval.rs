@@ -2,11 +2,12 @@ use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::ops::{Range, RangeInclusive};
+use serde::{Deserialize, Serialize};
 
 pub type U64interval = Interval<u64>;
 // pub type VersionInterval = Interval<Version>;
 
-#[derive(Eq, PartialEq, Hash, Default, Clone)]
+#[derive(Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
 pub struct Interval<E: Ord + Copy + Hash + Display> {
     pub lower: E,
     pub upper: E,

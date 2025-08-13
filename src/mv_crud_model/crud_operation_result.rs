@@ -27,6 +27,10 @@ pub enum CRUDOperationResult<
     Updated(Version),
     Deleted(Version),
 
+    InsertedRand(Key, Version),
+    UpdatedRand(Key, Version),
+    DeletedRand(Key, Version),
+
     ZeroAffected(CRUDOperationInnerReason),
 
     #[default]
@@ -91,6 +95,12 @@ impl<'a,
                 write!(f, "ZeroAffected(KeyAlreadyDeleted"),
             CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyDoesNotExist) =>
                 write!(f, "ZeroAffected(KeyDoesNotExist)"),
+            CRUDOperationResult::InsertedRand(key, version) =>
+                write!(f, "InsertedRand(key: {key}, version: {version})"),
+            CRUDOperationResult::UpdatedRand(key, version) =>
+                write!(f, "UpdatedRand(key: {key}, version: {version})"),
+            CRUDOperationResult::DeletedRand(key, version) =>
+                write!(f, "DeletedRand(key: {key}, version: {version})"),
         }
     }
 }

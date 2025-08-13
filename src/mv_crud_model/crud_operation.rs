@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use serde::{Deserialize, Serialize};
 use crate::mv_utils::interval::Interval;
 use crate::mv_crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Insert, Range, Update, PointSi, RangeSi, RangeIter, RangeIterSi};
 use crate::mv_record_model::version_info::Version;
@@ -8,7 +9,7 @@ pub type TxAtomicOperation<Key, Payload> = CRUDOperation<Key, Payload>;
 
 /// Transactions definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub enum CRUDOperation<Key: Ord + Copy + Hash + Display, Payload: Clone> {
     #[default]
     Empty,

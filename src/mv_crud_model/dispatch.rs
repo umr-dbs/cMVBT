@@ -304,7 +304,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::Updated(self.current_version())
+                                return CRUDOperationResult::UpdatedRand(key, self.current_version())
                             },
                             _ => { }
                         }
@@ -317,7 +317,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::Updated(self.current_version())
+                                return CRUDOperationResult::UpdatedRand(key, self.current_version())
                             },
                             _ => { }
                         }
@@ -362,7 +362,7 @@ impl<'a,
                 match leaf_page.delete(key, committed_version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(0, 1);
-                        CRUDOperationResult::Updated(committed_version)
+                        CRUDOperationResult::UpdatedRand(key, committed_version)
                     }
                     Ok(None) => {
                         leaf_page.undo_uncommitted(current_len);
@@ -433,7 +433,7 @@ impl<'a,
                             println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
                         }
 
-                        CRUDOperationResult::Deleted(committed_version)
+                        CRUDOperationResult::DeletedRand(key, committed_version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
@@ -532,7 +532,7 @@ impl<'a,
                 };
 
                 leaf_page.commit_delta(1, 0);
-                CRUDOperationResult::Inserted(committed_version)
+                CRUDOperationResult::InsertedRand(key, committed_version)
             }
             _ => CRUDOperationResult::Error,
         }
