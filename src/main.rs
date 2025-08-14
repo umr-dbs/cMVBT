@@ -57,17 +57,58 @@ const BERNHARD_TESTS_NEW: bool = true;
 type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 fn main() {
-    startup();
+    let args = env::args();
+    let parms = args.collect_vec();
+    if parms.len() > 1  {
+        match parms[1].as_str() {
+            "generate" => {
+                let query_file_name= parms[2].as_str();
+                let init_population: usize = parms[3].parse().unwrap();
+                let total_blocks: usize = parms[4].parse().unwrap();
+                let block_inserts: usize = parms[5].parse().unwrap();
+                let block_updates: usize = parms[6].parse().unwrap();
+                let block_deletes: usize = parms[7].parse().unwrap();
 
-    generate_query(
-        "query_0",
-        1_000_000,
-        1_000,
-        200,
-        800,
-        200
-    );
+                generate_query(
+                    query_file_name,
+                    init_population,
+                    total_blocks,
+                    block_inserts,
+                    block_updates,
+                    block_deletes,
+                );
+                println!("Finished generate.")
+            }
+            "load" => {
+                let query_file_name= parms[2].as_str();
 
+                let num_olaps = parms[3].parse().unwrap();
+                let workers_per_thread = parms[4].parse().unwrap();
+                let skew = parms[5].parse().unwrap();
+                let range = parms[6].parse().unwrap_or(Key::MAX);
+
+                let index
+                    = Arc::new(MVTree::default());
+
+                let num = load_query(query_file_name, index.clone());
+
+                println!("Finished executing {} CRUD operations from {query_file_name},\
+                 starting OLAP testings...", format_insertions(num));
+                olap_tests(index, num_olaps, workers_per_thread, skew, range);
+            }
+            s => println!("unknown command '{s}'-")
+        }
+    }
+    else {
+        startup();
+    }
+
+    // let index = Arc::new(MVTree::default());
+    //
+    // let cruds = load_query("query_0", index.clone());
+    //
+    // println!("query_0 -> {cruds}");
+    //
     // generate_query(
     //     "query_1",
     //     10_000_000,
@@ -77,18 +118,131 @@ fn main() {
     //     200
     // );
 
-    unsafe {
-        exit(0);
+    // let index = Arc::new(MVTree::default());
+    //
+    // let cruds = load_query("query_1", index.clone());
+    //
+    // println!("query_1 -> {cruds}");
+    //
+    //
+    // unsafe {
+    //     exit(0);
+    // }
+    // if MANUEL_MAIN {
+    //     manuel_main()
+    // } else if BERNHARD_TESTS {
+    //     bernhard_tests()
+    // } else if BERNHARD_TESTS_NEW {
+    //     bernhard_tests_new()
+    // } else {
+    //     mv_test::execute_experiments();
+    // }
+}
+
+
+fn olap_tests(index: Arc<MVTree>,
+              num_olaps: usize,
+              workers_per_thread: usize,
+              skew: f32,
+              range: u64)
+{
+    println!("Starting OLAPs...");
+
+    let mut olaps = vec![];
+    let v_index = "mv";
+
+    let _nc = fs::remove_file(format!("{v_index}_olap_skew_{skew}.csv"));
+    let mut olap_file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(format!("{v_index}_olap_skew_{skew}.csv"))
+        .unwrap();
+
+    olap_file
+        .write_all(
+            b"target_snapshot,\
+            current_snapshot,\
+            sleep_time,\
+            range_start,\
+            range_end,\
+            count_results,\
+            latency\n",
+        )
+        .unwrap();
+
+    for _ in 0..num_olaps {
+        let index = index.clone();
+        olaps.push(spawn(move || {
+            let mut results = vec![];
+            for _ in 1..workers_per_thread {
+                let mut key_min
+                    = rand::random_range(0..Key::MAX);
+
+                let mut key_max
+                    = key_min.checked_add(range).unwrap_or(Key::MAX);
+
+                if range == Key::MAX {
+                    key_min = 0;
+                    key_max = Key::MAX;
+                }
+                else if key_max >= Key::MAX {
+                    key_max = key_min;
+                    key_min -= range;
+                }
+
+                let current_si
+                    = index.current_version();
+
+                let si
+                    = rand::random_range(1..=current_si);
+
+                // println!("Min = {key_min}, max = {key_max}");
+                let time_start
+                    = SystemTime::now();
+
+                let crud =
+                    index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
+
+                let time_spent
+                    = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
+
+                let count_results =  match crud {
+                    CRUDOperationResult::MatchedRecords(data) =>  data.len(),
+                    _ => panic!()
+                };
+                results.push(
+                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent)
+                )
+            }
+            results
+        }))
     }
-    if MANUEL_MAIN {
-        manuel_main()
-    } else if BERNHARD_TESTS {
-        bernhard_tests()
-    } else if BERNHARD_TESTS_NEW {
-        bernhard_tests_new()
-    } else {
-        mv_test::execute_experiments();
-    }
+
+    let olaps = olaps.into_iter().map(|j| j.join().unwrap())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    // mem::drop(updaters);
+
+    olaps.into_iter()
+        .for_each(|(target_si,
+                       current_si,
+                       sleep_time,
+                       key_min,
+                       key_max,
+                       count_results,
+                       time_spent)|
+            {
+                olap_file.write_all(format!("\
+                            {target_si},\
+                            {current_si},\
+                            {sleep_time},\
+                            {key_min},\
+                            {key_max},\
+                            {count_results},\
+                            {time_spent}\n").as_bytes()).unwrap();
+            })
 }
 
 /// Essential function.
@@ -197,11 +351,11 @@ fn generate_query(
     let mut query_file = BufWriter::new(OpenOptions::new()
         .create(true)
         .append(true)
-        .open(format!("query/{query_file_name}.q"))
+        .open(format!("{query_file_name}"))
         .unwrap());
 
     let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let mut io_handle = |crud: CRUDOperation<Key, Payload>| unsafe {
+    let mut io_handle = |crud: CRUDOperation<Key, Payload>| {
         match crud {
             CRUDOperation::Insert(key, ..) => {
                 buff[0] = INSERT;
@@ -260,7 +414,7 @@ fn generate_query(
 fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
     let mut query_file = BufReader::new(OpenOptions::new()
         .read(true)
-        .open(format!("query/{query_file}.q"))
+        .open(format!("{query_file}"))
         .unwrap());
 
     let mut query_count = 0;

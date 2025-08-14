@@ -555,7 +555,7 @@ impl<const FAN_OUT: usize,
         (root_block, root_guard)
     }
 
-    pub(crate) fn split_root<'a>(
+    pub(crate) fn split_root(
         &self,
         _master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,

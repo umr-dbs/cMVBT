@@ -481,7 +481,7 @@ impl<const FAN_OUT: usize,
         let (active_block, _dead_block)
             = block.active_dead_count();
 
-        if active_block as usize >= (4 * block.max_units()) / 5 {
+        if active_block as usize >= block.filling_80_percent() {
             // KEY_SPLIT
             match is_leaf {
                 true => unsafe { // LeafPage
@@ -590,8 +590,8 @@ impl<const FAN_OUT: usize,
                         .filter(|record| !record.version().is_deleted())
                         .collect_vec();
 
-                    debug_assert!(active_records.len() >= 4*(NUM_RECORDS/10),
-                    "Active records = {}, required >= {}", active_records.len(), 4*(NUM_RECORDS/10));
+                    debug_assert!(active_records.len() >= block.filling_40_percent(),
+                                  "Active records = {}, required >= {}", active_records.len(), block.filling_40_percent());
 
                     // if active_records.len() <= 
                     //     BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records()
@@ -641,8 +641,9 @@ impl<const FAN_OUT: usize,
                         }
                     }
 
-                    debug_assert!(active_entries.len() >= 4*(FAN_OUT/10),
-                                  "Active entries = {}, required >= {}", active_entries.len(), 4*(FAN_OUT/10));
+                    // TODO: RootSplit calls this too! Root may run under conditioned 2d
+                    // debug_assert!(active_entries.len() >= block.two_d_filling(),
+                    //               "Active entries = {}, required >= {}", active_entries.len(), block.two_d_filling());
                     if let PageType::IndexMut(internal_page) = new_internal_page.unsafe_borrow_mut().as_page_mut() {
                         internal_page.bulk_push(active_entries)
                     }

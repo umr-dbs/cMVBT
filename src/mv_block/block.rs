@@ -20,28 +20,28 @@ pub enum BlockUnsafeDegree {
     ActiveUnderflow
 }
 
-impl BlockUnsafeDegree {
-    pub const fn is_ok(&self) -> bool {
-        match self {
-            Self::Ok => true,
-            _ => false
-        }
-    }
-
-    pub const fn is_length_overflow(&self) -> bool {
-        match self {
-            Self::Overflow => true,
-            _ => false
-        }
-    }
-
-    pub const fn is_active_underflow(&self) -> bool {
-        match self {
-            Self::ActiveUnderflow => true,
-            _ => false
-        }
-    }
-}
+// impl BlockUnsafeDegree {
+//     pub const fn is_ok(&self) -> bool {
+//         match self {
+//             Self::Ok => true,
+//             _ => false
+//         }
+//     }
+// 
+//     pub const fn is_length_overflow(&self) -> bool {
+//         match self {
+//             Self::Overflow => true,
+//             _ => false
+//         }
+//     }
+// 
+//     pub const fn is_active_underflow(&self) -> bool {
+//         match self {
+//             Self::ActiveUnderflow => true,
+//             _ => false
+//         }
+//     }
+// }
 
 pub(crate) enum BlockSplit<
     const FAN_OUT: usize,
@@ -122,20 +122,20 @@ impl<const FAN_OUT: usize,
         let (active, dead)
             = (active as usize,  dead as usize);
 
-        let min_active_units
-            = self.min_active_units();
+        let one_d
+            = self.filling_20_percent();
 
-        if active <= min_active_units {
+        if active <= one_d {
             BlockUnsafeDegree::ActiveUnderflow
         }
         else {
-            let max_units_safe
-                = self.max_units_safe();
+            let overflow_units_count
+                = self.overflow_units_count();
 
             let is_overflow
-                = active + dead >= max_units_safe;
+                = active + dead >= overflow_units_count;
 
-            if is_overflow && active <= min_active_units * 2 {
+            if is_overflow && active <= one_d * 2 {
                 BlockUnsafeDegree::ActiveUnderflow
             } else if is_overflow {
                 BlockUnsafeDegree::Overflow
@@ -159,7 +159,7 @@ impl<const FAN_OUT: usize,
         if active == 1 && !is_leaf { // single child
             BlockUnsafeDegree::ActiveUnderflow
         }
-        else if active + dead >= self.max_units_safe() {
+        else if active + dead >= self.overflow_units_count() {
             BlockUnsafeDegree::Overflow
         }
         else {
@@ -167,13 +167,13 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    #[inline(always)]
-    pub fn min_active_units(&self) -> usize { // 20%
-        match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records(),
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys()
-        }
-    }
+    // #[inline(always)]
+    // pub fn min_active_units(&self) -> usize { // 20%
+        // match self.is_leaf() {
+        //     true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records(),
+        //     false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_keys()
+        // }
+    // }
 
     // #[inline(always)]
     // pub fn max_active_units(&self) -> usize { // 80%
@@ -184,7 +184,7 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline(always)]
-    pub fn max_units(&self) -> usize {
+    pub fn max_units(&self) -> usize { // absolute units
         match self.is_leaf() {
             true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records(),
             false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys()
@@ -192,10 +192,26 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn max_units_safe(&self) -> usize {
+    pub fn filling_40_percent(&self) -> usize { // 40%
+        self.filling_20_percent() * 2
+    }
+
+    #[inline(always)]
+    pub fn filling_80_percent(&self) -> usize { // 80%
+        self.filling_40_percent() * 2
+    }
+
+    #[inline(always)]
+    pub fn filling_20_percent(&self) -> usize { // 20%
+        let max_units = self.max_units();
+        (max_units as f32 / 5_f32).ceil() as usize
+    }
+
+    #[inline(always)]
+    pub fn overflow_units_count(&self) -> usize { // trigger for overflow
         match self.is_leaf() {
-            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records_safe(),
-            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys_safe()
+            true => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_records_count(),
+            false => BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_keys_count()
         }
     }
 

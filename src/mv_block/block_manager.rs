@@ -138,19 +138,19 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub const fn max_records_safe() -> usize {
+    pub const fn overflow_records_count() -> usize {
         Self::max_records()
     }
 
-    #[inline(always)]
-    pub const fn min_active_records() -> usize { // 20%
-        Self::max_records() / 5
-    }
+    // #[inline(always)]
+    // pub const fn min_active_records() -> usize { // 20%
+    //     Self::max_records() / 5
+    // }
 
-    #[inline(always)]
-    pub const fn min_active_keys() -> usize { // 20%
-        Self::max_keys() / 5
-    }
+    // #[inline(always)]
+    // pub const fn min_active_keys() -> usize { // 20%
+    //     Self::max_keys() / 5
+    // }
 
     #[inline(always)]
     pub const fn max_keys() -> usize {
@@ -158,7 +158,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub const fn max_keys_safe() -> usize {
+    pub const fn overflow_keys_count() -> usize {
         Self::max_keys() - 3
     }
 
