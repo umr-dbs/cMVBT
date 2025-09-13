@@ -24,7 +24,7 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
-use crate::mv_tree::index_root::RootIndexType;
+use crate::mv_root::index_root::RootIndexType;
 use crate::mv_utils::interval::Interval;
 
 pub const VERBOSE: bool = false;

@@ -11,7 +11,7 @@ impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
-    Payload: Display + Clone + Default + Sync + 'static
+    Payload: Display + Clone + Default + Send + Sync + 'static
 > TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline]
     fn dispatch_transaction(&'a self, mut tx: Transaction<Key, Payload>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {

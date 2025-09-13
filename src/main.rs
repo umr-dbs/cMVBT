@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::thread::spawn;
 use std::time::SystemTime;
 use std::{env, fs, mem};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 mod mv_block;
 mod mv_crud_model;
@@ -31,6 +31,7 @@ mod mv_page_model;
 mod mv_record_model;
 mod mv_test;
 mod mv_tree;
+mod mv_root;
 mod mv_tx_model;
 mod mv_utils;
 mod mv_paper_tests;
@@ -58,9 +59,88 @@ type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 fn main() {
     let args = env::args();
-    let parms = args.collect_vec();
+    let mut parms = args.collect_vec();
+
+    if parms.len() == 1 {
+        parms.extend(["test", "200", "12", "10", "0", "MAX"].map(String::from));
+    }
     if parms.len() > 1  {
         match parms[1].as_str() {
+            "test" => {
+                let n = parms[2].parse().unwrap();
+                let num_olaps = parms[3].parse::<usize>().unwrap();
+                let olaps_per_worker = parms[4].parse::<usize>().unwrap();
+                let skew = parms[5].parse::<f32>().unwrap();
+                let key_range = parms[6].parse().unwrap_or(Key::MAX);
+
+                let tree = Arc::new(MVTree::default());
+                let mut check = HashMap::new();
+                let mut errors = 0;
+
+                while check.len() < n {
+                    let key
+                        = rand::random_range(0..Key::MAX);
+
+                    if !check.contains_key(&key) {
+                        match tree.dispatch_crud(CRUDOperation::Insert(key, Payload::default())) {
+                            CRUDOperationResult::Inserted(v) => {
+                                check.insert(key, v);
+                            }
+                            _ => {
+                                println!("Error insert key={key}");
+                                errors += 1
+                            }
+                        };
+
+                    }
+                }
+                for (k, _) in check.iter() {
+                    (0..rand::random_range(1..100)).for_each(|_| {
+                        tree.dispatch_crud(CRUDOperation::Update(*k, Payload::default()));
+                    });
+                }
+
+                //
+                // for (k, v) in check.iter() {
+                //     match tree.dispatch_crud(CRUDOperation::Point(*k, *v)) {
+                //         CRUDOperationResult::MatchedRecords(vec)
+                //         if !vec.is_empty() => {}
+                //         CRUDOperationResult::MatchedRecords(_) => {
+                //             println!("Empty result of point: key={k}, version={v}");
+                //         }
+                //         _ => {
+                //             println!("Error crud point: key={k}, version={v}");
+                //             errors += 1
+                //         }
+                //     }
+                // }
+
+                mem::drop(check);
+
+                let iter_range = tree
+                    .dispatch_crud(CRUDOperation::RangeIter((0..Key::MAX).into(), Version::MAX));
+
+                let iter_res = match iter_range {
+                    CRUDOperationResult::MatchedRecordIter(iter) => iter,
+                    _ => panic!()
+                };
+
+                let res_all = tree
+                    .dispatch_crud(CRUDOperation::Range((0..Key::MAX).into(), Version::MAX));
+
+                let all_res = match res_all {
+                    CRUDOperationResult::MatchedRecords(vec) => vec,
+                    _ => panic!()
+                };
+                let data_from_iter = iter_res.collect_vec();
+                let data_from_all = all_res;
+
+
+                println!("Results Iter = {}, Results All = {}",
+                         data_from_iter.len(),data_from_all.len());
+
+                // olap_tests(tree, num_olaps, olaps_per_worker, skew, key_range, false)
+            }
             "generate" => {
                 let query_file_name= parms[2].as_str();
                 let init_population: usize = parms[3].parse().unwrap();
@@ -94,7 +174,7 @@ fn main() {
 
                 println!("Finished executing {} CRUD operations from {query_file_name},\
                  starting OLAP testings...", format_insertions(num));
-                olap_tests(index, num_olaps, workers_per_thread, skew, range);
+                olap_tests(index, num_olaps, workers_per_thread, skew, range, false);
             }
             s => println!("unknown command '{s}'-")
         }
@@ -144,7 +224,8 @@ fn olap_tests(index: Arc<MVTree>,
               num_olaps: usize,
               workers_per_thread: usize,
               skew: f32,
-              range: u64)
+              range: u64,
+              fixed_si: bool)
 {
     println!("Starting OLAPs...");
 
@@ -194,8 +275,12 @@ fn olap_tests(index: Arc<MVTree>,
                 let current_si
                     = index.current_version();
 
-                let si
-                    = rand::random_range(1..=current_si);
+                let si = if fixed_si  {
+                    current_si+1
+                }
+                else {
+                    rand::random_range(2..=current_si+1)
+                };
 
                 // println!("Min = {key_min}, max = {key_max}");
                 let time_start

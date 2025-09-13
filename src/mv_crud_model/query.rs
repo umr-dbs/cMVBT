@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::DerefMut;
 use itertools::Itertools;
 use crate::mv_block::block::{BlockGuard, BlockSplit, BlockUnsafeDegree};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -10,13 +9,14 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
+use crate::mv_root::index_root::RootIndexGuard;
+use crate::mv_root::root::Root;
 use crate::mv_test::VERBOSE;
-use crate::mv_tree::index_root::RootIndexGuard;
 use crate::mv_tree::mvbplus_tree::{MVBPlusTree, RootItemGuard, MergeResult};
-use crate::mv_tree::root::Root;
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
+use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::sched_yield;
 
 pub struct RangeQueryIter<
@@ -30,7 +30,6 @@ pub struct RangeQueryIter<
     pub(crate) range: Interval<Key>,
     path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
     buff: VecDeque<RecordPointResult<Key, Payload>>,
-    completed: bool,
 }
 
 impl<'a,
@@ -40,13 +39,15 @@ impl<'a,
     Payload: Display + Clone + Default + Sync + 'static
 > RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub const fn new(tree: &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
+    pub fn new(tree: &'a MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
         Self {
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
-            path: vec![],
+            path: vec![(Interval::new(
+                tree.snapshot_current().mv_tree().min_key,
+                tree.snapshot_current().mv_tree().max_key),
+                        tree.snapshot_current().mv_tree().retrieve_root_for(version))],
             buff: VecDeque::new(),
-            completed: false,
         }
     }
 
@@ -79,46 +80,18 @@ impl<'a,
             return self.buff.pop_front();
         }
 
-        if self.completed || self.range.lower > self.range.upper {
-            return None;
-        }
+        let si
+            = self.snapshot();
 
-        self.completed = self.range.lower > self.range.upper; // max == Key::MAX inclusive case
-
-        if self.path.is_empty() {
-            let smart_root = self
-                .mv_tree()
-                .retrieve_root_for(self.snapshot());
-
-            self.path.push((
-                Interval::new(self.mv_tree().min_key,
-                              self.mv_tree().max_key),
-                smart_root)
-            );
-        }
+        let inc
+            = self.mv_tree().inc_key;
 
         loop {
-            let (mut last_fence, mut last_block)
-                = self.path.pop().unwrap();
-
-            while last_fence.upper < self.range.lower {
-                match self.path.pop() {
-                    Some((f, b)) => {
-                        last_fence = f;
-                        last_block = b;
-                    }
-                    _ => return None,
-                }
+            if self.path.is_empty() || self.range.lower > self.range.upper {
+                return None
             }
-
-            self.path.push((last_fence, last_block));
-            let (curr_fence, curr_block) = self
-                .path
-                .last()
-                .unwrap();
-
-            let si
-                = self.snapshot();
+            let (curr_fence, curr_block)
+                = self.path.last().cloned().unwrap();
 
             match curr_block.borrow_read().deref().unwrap().as_ref().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
@@ -132,19 +105,22 @@ impl<'a,
                     match versions_page
                         .iter()
                         .zip(keys_page)
-                        .rev()
                         .enumerate()
+                        .rev()
                         .skip(start_pos_si)
-                        .filter_map(|(pos, (v, range))| {
-                            if range.contains(self.range.lower) { // v.matched(si) &&
+                        .filter_map(|(pos, (v, range))|
+                            if range.contains(self.range.lower) && v.matched(si) {
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))
                             } else {
                                 None
-                            }
-                        }).next()
+                            })
+                        .next()
                     {
                         Some(next) => self.path.push(next),
-                        _ => self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(curr_fence.upper)
+                        _ => {
+                            self.path.pop();
+                            self.range.lower = inc(curr_fence.upper);
+                        }
                     }
                 }
                 PageType::LeafRef(leaf_page) => {
@@ -162,18 +138,18 @@ impl<'a,
                         .skip(start_pos_si)
                         .filter(|r|
                             r.version().matches(si) && self.range.contains(r.key()))
-                        // .sorted_by_key(|r| r.key())
                         .map(RecordPointResult::from));
 
-                    self.range.lower = (self.isolated_snapshot.mv_tree().inc_key)(curr_fence.upper);
+                    self.range.lower = inc(curr_fence.upper);
                     self.path.pop();
-                    break;
+
+                    if !self.buff.is_empty() {
+                        return self.buff.pop_front()
+                    }
                 }
                 _ => unreachable!()
             }
         }
-
-        self.buff.pop_front()
     }
 }
 

@@ -1,28 +1,26 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::ops::Deref;
-use std::process::exit;
 use std::sync::Arc;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use crate::mv_block::block::{Block, BlockGuard, BlockSplit};
 use crate::mv_block::block_manager::BlockManager;
 use crate::mv_gc::db_tracker::MDBTracker;
-use crate::mv_tree::root::Root;
-use crate::mv_page_model::{Attempts, BlockRef, Height, Level, ObjectCount};
+use crate::mv_page_model::{BlockRef, Height, ObjectCount};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::version_info::Version;
+use crate::mv_root::index_root::{RootIndex, RootIndexType};
+use crate::mv_root::root::Root;
 use crate::mv_test::VERBOSE;
 use crate::mv_tree::global_clock::GlobalClock;
-use crate::mv_tree::index_root::{RootIndex, RootIndexType};
 use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
 
 use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
-use crate::mv_utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
 
