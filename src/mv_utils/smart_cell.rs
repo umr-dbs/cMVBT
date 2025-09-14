@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{write, Display, Formatter};
 use std::{hint, mem, ptr};
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
@@ -67,6 +67,15 @@ impl AtomicElisionExt for AtomicVersion {
 pub enum LatchType {
     #[default] Optimistic,
     None,
+}
+
+impl Display for LatchType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LatchType::Optimistic => write!(f, "Optimistic"),
+            LatchType::None => write!(f, "None"),
+        }
+    }
 }
 
 impl LatchType {

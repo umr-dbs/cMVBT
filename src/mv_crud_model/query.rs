@@ -16,7 +16,6 @@ use crate::mv_tree::mvbplus_tree::{MVBPlusTree, RootItemGuard, MergeResult};
 use crate::mv_tx_model::transaction::SnapShot;
 use crate::mv_tx_model::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::safe_cell::SafeCell;
 use crate::mv_utils::smart_cell::sched_yield;
 
 pub struct RangeQueryIter<
@@ -87,7 +86,7 @@ impl<'a,
             = self.mv_tree().inc_key;
 
         loop {
-            if self.path.is_empty() || self.range.lower > self.range.upper {
+            if self.path.is_empty() || self.range.lower > self.range.upper || self.range.lower == self.mv_tree().max_key {
                 return None
             }
             let (curr_fence, curr_block)

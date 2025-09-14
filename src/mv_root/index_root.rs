@@ -1,5 +1,5 @@
 use std::collections::LinkedList;
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
 use crossbeam_skiplist::SkipMap;
@@ -26,6 +26,7 @@ pub(crate) fn make_start_value_root_inner<
     (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionManager::START_VERSION)
 }
 
+#[derive(Copy, Clone)]
 pub enum RootIndexType {
     FrugalList(LatchType),
     SkipList(LatchType),
@@ -33,9 +34,21 @@ pub enum RootIndexType {
     LinkedList(LatchType),
 }
 
+impl Display for RootIndexType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RootIndexType::FrugalList(latch) => write!(f, "FrugalList({latch})"),
+            RootIndexType::SkipList(latch) => write!(f, "SkipList({latch})"),
+            RootIndexType::BTree(latch) => write!(f, "BTree({latch})"),
+            RootIndexType::LinkedList(latch) => write!(f, "LinkedList({latch})"),
+        }
+    }
+}
+
 impl Default for RootIndexType {
     fn default() -> Self {
-        Self::FrugalList(LatchType::default())
+        Self::LinkedList(LatchType::default())
+        // Self::FrugalList(LatchType::default())
         // Self::SkipList(LatchType::default())
     }
 }
@@ -186,6 +199,14 @@ impl<const FAN_OUT: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Display + Default + Clone + Sync + 'static> RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    pub(crate) fn index_type(&self, latch_type: LatchType) -> RootIndexType {
+        match self {
+            RootIndex::FrugalList(..) => RootIndexType::FrugalList(latch_type),
+            RootIndex::BTree(..) => RootIndexType::BTree(latch_type),
+            RootIndex::SkipList(..) => RootIndexType::SkipList(latch_type),
+            RootIndex::LinkedList(..) => RootIndexType::LinkedList(latch_type),
+        }
+    }
     pub fn new(variant: RootIndexType, block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         match variant {
             RootIndexType::BTree(latch) =>

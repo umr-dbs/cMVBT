@@ -142,6 +142,10 @@ impl<const FAN_OUT: usize,
     Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, u64, Payload>
 {
+    pub fn root_star_index(&self) -> RootIndexType {
+        self.root.index_type(self.locking_strategy.latch_type())
+    }
+
     #[inline]
     pub fn make_standard(locking_strategy: LockingStrategy,
                                   clock_type: ClockType,

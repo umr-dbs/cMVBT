@@ -23,6 +23,8 @@ use std::thread::spawn;
 use std::time::SystemTime;
 use std::{env, fs, mem};
 use std::collections::{HashMap, HashSet};
+use crate::mv_root::index_root::RootIndexType;
+use crate::mv_utils::smart_cell::LatchType;
 
 mod mv_block;
 mod mv_crud_model;
@@ -62,7 +64,7 @@ fn main() {
     let mut parms = args.collect_vec();
 
     if parms.len() == 1 {
-        parms.extend(["test", "200", "12", "10", "0", "MAX"].map(String::from));
+        parms.extend(["test", "2000000", "12", "10", "0", "MAX"].map(String::from));
     }
     if parms.len() > 1  {
         match parms[1].as_str() {
@@ -149,6 +151,11 @@ fn main() {
                 let block_updates: usize = parms[6].parse().unwrap();
                 let block_deletes: usize = parms[7].parse().unwrap();
 
+                println!("Generating init_pop = {init_population}\n\
+                total_blocks = {total_blocks}\n\
+                block_inserts = {block_inserts}\n\
+                block_updates = {block_updates}\n\
+                block_deletes = {block_deletes}");
                 generate_query(
                     query_file_name,
                     init_population,
@@ -166,9 +173,17 @@ fn main() {
                 let workers_per_thread = parms[4].parse().unwrap();
                 let skew = parms[5].parse().unwrap();
                 let range = parms[6].parse().unwrap_or(Key::MAX);
-
+                let root_star_index = match parms[7].as_str() {
+                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
+                    _ => RootIndexType::default()
+                };
                 let index
-                    = Arc::new(MVTree::default());
+                    = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
+
+                println!("root_start_index = {}", root_star_index);
 
                 let num = load_query(query_file_name, index.clone());
 
@@ -230,7 +245,13 @@ fn olap_tests(index: Arc<MVTree>,
     println!("Starting OLAPs...");
 
     let mut olaps = vec![];
-    let v_index = "mv";
+    let v_index = format!("mv_{}",
+                          match index.root_star_index() {
+                              RootIndexType::FrugalList(_) => "fg",
+                              RootIndexType::SkipList(_) => "sk",
+                              RootIndexType::BTree(_) => "bt",
+                              RootIndexType::LinkedList(_) => "ll"
+                          });
 
     let _nc = fs::remove_file(format!("{v_index}_olap_skew_{skew}.csv"));
     let mut olap_file = fs::OpenOptions::new()
@@ -433,14 +454,17 @@ fn generate_query(
     }
     mem::drop(map);
 
+    let _nc = fs::remove_file("{query_file_name}");
     let mut query_file = BufWriter::new(OpenOptions::new()
         .create(true)
         .append(true)
         .open(format!("{query_file_name}"))
         .unwrap());
 
-    let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut querys = 0_usize;
+
     let mut io_handle = |crud: CRUDOperation<Key, Payload>| {
+        let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
         match crud {
             CRUDOperation::Insert(key, ..) => {
                 buff[0] = INSERT;
@@ -457,6 +481,7 @@ fn generate_query(
             _ => panic!("Unknown CRUD Operation for blocks"),
         }
 
+        querys += 1;
         query_file.write_all(buff.as_slice()).unwrap()
     };
 
@@ -493,8 +518,8 @@ fn generate_query(
     }
 
     query_file.flush().unwrap();
+    println!("Generated: {} CRUD Ops", format_insertions(querys))
 }
-
 
 fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
     let mut query_file = BufReader::new(OpenOptions::new()
@@ -504,17 +529,21 @@ fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
 
     let mut query_count = 0;
     let payload = Payload::default();
-    let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+
     loop {
+        let mut buff = [0, 0, 0, 0, 0, 0, 0, 0, 0];
         match query_file.read_exact(buff.as_mut_slice()) {
             Ok(..) => match buff[0] {
                 INSERT => {
                     let crud = CRUDOperation::Insert(
-                        Key::from_le_bytes(buff[1..].try_into().unwrap()),
+                        Key::from_le_bytes((&buff[1..]).try_into().unwrap()),
                         payload
                     );
 
-                    let _exe = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Inserted(..) = index.dispatch_crud(crud) {
+                    } else {
+                        panic!("Error loading query insert number = {}", query_count)
+                    }
                 }
                 UPDATE => {
                     let crud = CRUDOperation::Update(
@@ -522,13 +551,21 @@ fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
                         payload
                     );
 
-                    let _exe = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Updated(..) = index.dispatch_crud(crud) {
+                    }
+                    else {
+                        panic!("Error loading query update number = {}", query_count)
+                    }
                 }
                 DELETE => {
                     let crud = CRUDOperation::Delete(
                         Key::from_le_bytes(buff[1..].try_into().unwrap()));
 
-                    let _exe = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Deleted(..) = index.dispatch_crud(crud) {
+                    }
+                    else {
+                        panic!("Error loading query delete number = {}", query_count)
+                    }
                 }
                 _ => panic!("Unknown CRUD Operation for blocks in load query!"),
             }
