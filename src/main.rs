@@ -2,20 +2,15 @@ use crate::mv_block::block::Block;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_gc::tx_manager::TransactionManager;
-use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_test::Sampler::Uniform;
-use crate::mv_test::{format_insertions, height_root, GroupConfig, Key, Payload, Sampler, FAN_OUT, FILLED_BLOCK, F_ABS_OFF, F_MUL, F_OFF, LOG_REORG, NUM_RECORDS, N_ABS_OFF, N_MUL, N_OFF, VERBOSE};
+use crate::mv_test::{format_insertions, Key, Payload, Sampler, FAN_OUT, LOG_REORG, NUM_RECORDS};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
 use crate::mv_tree::version_manager::VersionManager;
-use crate::mv_utils::safe_cell::SafeCell;
+use crate::mv_sync::safe_cell::SafeCell;
 use chrono::{DateTime, Local};
-use itertools::{Either, Itertools};
-use libc::{exit, rand};
+use itertools::Itertools;
+use libc::exit;
 use rand::prelude::SliceRandom;
-use rand::thread_rng;
-use rand_distr::Zipf;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
@@ -24,17 +19,20 @@ use std::time::SystemTime;
 use std::{env, fs, mem};
 use std::collections::{HashMap, HashSet};
 use crate::mv_root::index_root::RootIndexType;
-use crate::mv_utils::smart_cell::LatchType;
+use crate::mv_sync::smart_cell::LatchType;
 
 mod mv_block;
 mod mv_crud_model;
 mod mv_gc;
 mod mv_page_model;
+mod mv_query;
 mod mv_record_model;
 mod mv_test;
 mod mv_tree;
 mod mv_root;
 mod mv_tx_model;
+mod mv_tx_query;
+mod mv_sync;
 mod mv_utils;
 mod mv_paper_tests;
 // struct NoCacheAllocator;
@@ -64,7 +62,7 @@ fn main() {
     let mut parms = args.collect_vec();
 
     if parms.len() == 1 {
-        parms.extend(["test", "2000000", "12", "10", "0", "MAX"].map(String::from));
+        parms.extend(["test", "20000", "1", "10", "0", "MAX"].map(String::from));
     }
     if parms.len() > 1  {
         match parms[1].as_str() {
@@ -119,28 +117,44 @@ fn main() {
 
                 mem::drop(check);
 
+                let start_time_iter = SystemTime::now();
                 let iter_range = tree
-                    .dispatch_crud(CRUDOperation::RangeIter((0..Key::MAX).into(), Version::MAX));
+                    .dispatch_crud(CRUDOperation::RangeIter((0..=Key::MAX).into(), Version::MAX));
 
                 let iter_res = match iter_range {
                     CRUDOperationResult::MatchedRecordIter(iter) => iter,
                     _ => panic!()
                 };
 
+                let mut data_from_iter = iter_res.collect_vec();
+
+                let end_time_iter = SystemTime::now().duration_since(start_time_iter).unwrap();
+                println!("Time elapsed Iter: {:?}", end_time_iter);
+                data_from_iter.sort_by_key(|r| r.key);
+
+                let start_time_range = SystemTime::now();
                 let res_all = tree
-                    .dispatch_crud(CRUDOperation::Range((0..Key::MAX).into(), Version::MAX));
+                    .dispatch_crud(CRUDOperation::Range((0..=Key::MAX).into(), Version::MAX));
 
                 let all_res = match res_all {
                     CRUDOperationResult::MatchedRecords(vec) => vec,
                     _ => panic!()
                 };
-                let data_from_iter = iter_res.collect_vec();
-                let data_from_all = all_res;
 
+                let end_time_range = SystemTime::now().duration_since(start_time_range).unwrap();
+                println!("Time elapsed Range: {:?}", end_time_range);
+                let mut data_from_all = all_res;
+                data_from_all.sort_by_key(|r| r.key);
 
                 println!("Results Iter = {}, Results All = {}",
                          data_from_iter.len(),data_from_all.len());
 
+                for (k1, k2) in data_from_iter.iter().zip(data_from_all.iter()) {
+                    if k1.key != k2.key {
+                        panic!("Key mismatch");
+                    }
+
+                }
                 // olap_tests(tree, num_olaps, olaps_per_worker, skew, key_range, false)
             }
             "generate" => {
@@ -286,7 +300,7 @@ fn olap_tests(index: Arc<MVTree>,
 
                 if range == Key::MAX {
                     key_min = 0;
-                    key_max = Key::MAX;
+                    key_max = Key::MAX - 1;
                 }
                 else if key_max >= Key::MAX {
                     key_max = key_min;
@@ -300,7 +314,7 @@ fn olap_tests(index: Arc<MVTree>,
                     current_si+1
                 }
                 else {
-                    rand::random_range(2..=current_si+1)
+                    rand::random_range(1..=current_si)
                 };
 
                 // println!("Min = {key_min}, max = {key_max}");

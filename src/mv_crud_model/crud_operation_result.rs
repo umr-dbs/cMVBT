@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter, write};
 use std::hash::Hash;
 use crate::mv_record_model::record_point::{RecordPoint, RecordPointResult};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult::{Deleted, Inserted, MatchedRecordIter, MatchedRecords, Updated};
-use crate::mv_crud_model::query::RangeQueryIter;
-use crate::mv_record_model::version_info::{Version, VersionInfo};
+use crate::mv_query::query::RangeQueryIter;
+use crate::mv_record_model::version_info::Version;
 
 /// Defines possible Transaction execution result.
 /// *Error*, indicates execution error.

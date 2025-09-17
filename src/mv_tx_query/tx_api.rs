@@ -5,7 +5,8 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
+use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
+use crate::mv_tx_model::transaction_result::{AtomicTransactionResult, SnapShot, TransactionResult};
 
 pub trait TransactionDispatcher<
     'a,

@@ -8,11 +8,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
 use crate::mv_gc::db_tracker::{DBTracker, MDBTracker};
-use crate::mv_tree::locking_strategy::LockingStrategy;
+use crate::mv_sync::locking_strategy::LockingStrategy;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
-use crate::mv_tx_model::tx_api::TransactionDispatcher;
-use crate::mv_utils::safe_cell::SafeCell;
+use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
+use crate::mv_tx_query::tx_api::TransactionDispatcher;
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_tx_model::transaction_result::{AtomicTransactionResult, SnapShot, TransactionResult};
 
 #[derive(Clone)]
 pub enum TransactionHolder<

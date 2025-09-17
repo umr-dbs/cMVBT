@@ -4,8 +4,8 @@ use parking_lot::Mutex;
 use std::sync::atomic::Ordering::{AcqRel, Acquire};
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_tree::global_clock::{ClockHandle, GlobalClock};
-use crate::mv_utils::safe_cell::SafeCell;
+use crate::mv_sync::global_clock::{ClockHandle, GlobalClock};
+use crate::mv_sync::safe_cell::SafeCell;
 
 /// Structure wrapping the VC counter via a FairMutex.
 #[derive(Clone)]

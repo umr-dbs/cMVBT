@@ -1,17 +1,14 @@
-use std::arch::x86_64::_mm_mfence;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
-use std::sync;
 use std::sync::atomic::{AtomicUsize, fence};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Release};
 use itertools::Itertools;
-use serde::de::Unexpected::Seq;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::InternalPage;
 use crate::mv_page_model::leaf_page::LeafPage;
 use crate::mv_record_model::record_point::RecordPoint;
-use crate::mv_record_model::version_info::{Version, VersionInfo};
+use crate::mv_record_model::version_info::Version;
 use crate::mv_utils::interval::Interval;
 
 // #[derive(Clone)]

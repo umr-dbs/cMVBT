@@ -1,7 +1,7 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_tree::locking_strategy::{CRUDProtocol, OLC};
+use crate::mv_sync::locking_strategy::CRUDProtocol;
 use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
-use crate::mv_tx_model::transaction::{AtomicTransaction, SnapShot};
+use crate::mv_tx_model::transaction::{AtomicTransaction};
 use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::Rng;
@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, thread};
 use std::io::Write;
-use std::ops::Deref;
 use std::thread::{spawn, JoinHandle};
 use std::time::{Duration, SystemTime};
 use parking_lot::Mutex;
@@ -25,6 +24,7 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_gc::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
 use crate::mv_root::index_root::RootIndexType;
+use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::interval::Interval;
 
 pub const VERBOSE: bool = false;

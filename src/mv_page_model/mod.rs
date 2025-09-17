@@ -3,8 +3,8 @@ use std::hash::Hash;
 use std::sync::Arc;
 use parking_lot::lock_api::Mutex;
 use crate::mv_block::block::Block;
-use crate::mv_utils::safe_cell::SafeCell;
-use crate::mv_utils::smart_cell::{OptCell, SmartCell, SmartFlavor};
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_sync::smart_cell::{OptCell, SmartCell, SmartFlavor};
 
 pub mod internal_page;
 pub mod leaf_page;

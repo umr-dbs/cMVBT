@@ -1,8 +1,8 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::{mem, ptr, slice};
+use std::ptr;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{fence, AtomicU32};
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::{Version, VersionInfo};

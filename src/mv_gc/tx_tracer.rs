@@ -4,10 +4,11 @@ use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
+
 use crate::mv_gc::db_tracker::AUX_PROTOCOL;
 use crate::mv_test::{dec_key, inc_key};
-use crate::mv_tx_model::transaction::SnapShot;
-use crate::mv_utils::safe_cell::SafeCell;
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 const AUX_ATX_FAN_OUT: usize = 250;
 const AUX_ATX_LEAF_SIZE: usize = 499;

@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use crossbeam_skiplist::SkipMap;
 use crate::mv_root::tree_root::ValueRootInner;
-use crate::mv_tx_model::transaction::SnapShot;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub struct RootSkipList<
     const FANOUT: usize,

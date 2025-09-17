@@ -13,8 +13,8 @@ use crate::mv_root::sk_root::RootSkipList;
 use crate::mv_root::tree_root::{RootTree, ValueRootInner};
 use crate::mv_root::vanilla_root::VanillaRootSt;
 use crate::mv_tree::version_manager::VersionManager;
-use crate::mv_tx_model::transaction::SnapShot;
-use crate::mv_utils::smart_cell::LatchType;
+use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub(crate) fn make_start_value_root_inner<
     const F: usize,
@@ -47,8 +47,8 @@ impl Display for RootIndexType {
 
 impl Default for RootIndexType {
     fn default() -> Self {
-        Self::LinkedList(LatchType::default())
-        // Self::FrugalList(LatchType::default())
+        // Self::LinkedList(LatchType::default())
+        Self::FrugalList(LatchType::default())
         // Self::SkipList(LatchType::default())
     }
 }
@@ -328,8 +328,7 @@ impl<const FAN_OUT: usize,
     }
 }
 
-impl<
-    const FANOUT: usize,
+impl<const FANOUT: usize,
     const NUM_RECORDS: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Default + Clone + Display + Sync + 'static> RootSkipList<FANOUT, NUM_RECORDS, Key, Payload>

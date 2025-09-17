@@ -4,14 +4,12 @@ use std::ops::Deref;
 use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
-use CCBPlusTree::locking::locking_strategy::LockingStrategy;
-use CCBPlusTree::locking::locking_strategy::LockingStrategy::OLC;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
 use crate::mv_gc::db_tracker::AUX_PROTOCOL;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::{dec_key, inc_key};
-use crate::mv_utils::safe_cell::SafeCell;
+use crate::mv_sync::safe_cell::SafeCell;
 
 const AUX_DP_FAN_OUT: usize = 250;
 const AUX_DP_LEAF_SIZE: usize = 250;

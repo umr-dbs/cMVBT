@@ -14,13 +14,12 @@ use crate::mv_record_model::version_info::Version;
 use crate::mv_root::index_root::{RootIndex, RootIndexType};
 use crate::mv_root::root::Root;
 use crate::mv_test::VERBOSE;
-use crate::mv_tree::global_clock::GlobalClock;
-use crate::mv_tree::locking_strategy::{LockingStrategy, OLC};
+use crate::mv_sync::global_clock::GlobalClock;
+use crate::mv_sync::locking_strategy::{LockingStrategy, OLC};
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_utils::interval::Interval;
-
-use crate::mv_utils::safe_cell::SafeCell;
-use crate::mv_utils::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_sync::smart_cell::{LatchType, OptCell, SmartCell, SmartFlavor, SmartGuard};
 
 pub type LockLevel = ObjectCount;
 

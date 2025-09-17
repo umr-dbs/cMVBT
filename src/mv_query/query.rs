@@ -13,10 +13,10 @@ use crate::mv_root::index_root::RootIndexGuard;
 use crate::mv_root::root::Root;
 use crate::mv_test::VERBOSE;
 use crate::mv_tree::mvbplus_tree::{MVBPlusTree, RootItemGuard, MergeResult};
-use crate::mv_tx_model::transaction::SnapShot;
-use crate::mv_tx_model::tx_api::IsolatedSnapShot;
+use crate::mv_tx_query::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::smart_cell::sched_yield;
+use crate::mv_sync::smart_cell::sched_yield;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub struct RangeQueryIter<
     'a,
@@ -158,8 +158,8 @@ impl<const FAN_OUT: usize,
     Payload: Display + Clone + Default + Sync + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
-    pub(crate) fn retrieve_root_for(&self, lookup_version: Version) 
-        -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> 
+    pub(crate) fn retrieve_root_for(&self, lookup_version: Version)
+                                    -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         self.root
             .root_for(lookup_version)
@@ -679,7 +679,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn traversal_write(&self, key: Key)
-        -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+                                  -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let (mut _curr_block,
             mut curr_guard) = self.retrieve_root_write();

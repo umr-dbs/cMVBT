@@ -1,19 +1,19 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
-use std::ops::{Add, Sub};
+
 use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_crud_model::query::RangeQueryIter;
+use crate::mv_query::query::RangeQueryIter;
 use crate::mv_paper_tests::rand_query::RAND_ATTEMPTS_MAX;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
 use crate::mv_test::VERBOSE;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_utils::smart_cell::sched_yield;
+use crate::mv_sync::smart_cell::sched_yield;
 
 impl<'a,
     const FAN_OUT: usize,
@@ -246,16 +246,16 @@ impl<'a,
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
             }
-            CRUDOperation::Range(range, version) => match self.dispatch_crud(
-                CRUDOperation::RangeIter(range, version)) {
-                CRUDOperationResult::MatchedRecordIter(iter) =>
-                    CRUDOperationResult::MatchedRecords(iter.collect()),
-                other => other
-            },
-            // CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
-            //     self.retrieve_root_for(version),
-            //     range,
-            //     version),
+            // CRUDOperation::Range(range, version) => match self.dispatch_crud(
+            //     CRUDOperation::RangeIter(range, version)) {
+            //     CRUDOperationResult::MatchedRecordIter(iter) =>
+            //         CRUDOperationResult::MatchedRecords(iter.collect()),
+            //     other => other
+            // },
+            CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
+                self.retrieve_root_for(version),
+                range,
+                version),
             CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
                 self.retrieve_root_for(version),
                 key,

@@ -4,14 +4,11 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
 use crate::mv_block::block_manager::BlockManager;
 
-use crate::mv_page_model::{BlockRef, node};
-use crate::mv_page_model::internal_page::{InternalPage, TimeMatcher};
-use crate::mv_page_model::leaf_page::LeafPage;
+use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::node::{Node, PageType};
-use crate::mv_test::Payload;
 use crate::mv_utils::interval::Interval;
-use crate::mv_utils::safe_cell::SafeCell;
-use crate::mv_utils::smart_cell::{LatchType, SmartGuard};
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_sync::smart_cell::{LatchType, SmartGuard};
 
 #[repr(u8)]
 pub enum BlockUnsafeDegree {

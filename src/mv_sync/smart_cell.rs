@@ -1,18 +1,18 @@
-use std::fmt::{write, Display, Formatter};
-use std::{hint, mem, ptr};
+use std::fmt::{Display, Formatter};
+use std::{hint, ptr};
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
 use CCBPlusTree::locking::locking_strategy::LockingStrategy;
 use crate::mv_page_model::Attempts;
 use crate::mv_record_model::AtomicVersion;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_utils::safe_cell::SafeCell;
-use crate::mv_utils::smart_cell::SmartFlavor::{FreeCell, OLCCell};
-use crate::mv_utils::smart_cell::SmartGuard::{LockFree, OLCReader, OLCWriter};
+use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_sync::smart_cell::SmartFlavor::{FreeCell, OLCCell};
+use crate::mv_sync::smart_cell::SmartGuard::{LockFree, OLCReader, OLCWriter};
 
-pub(crate) const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
+pub const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
 const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
 
 const WRITE_OBSOLETE_FLAG_VERSION: LatchVersion = 0xC_000000000000000;
@@ -119,8 +119,8 @@ type LatchVersion = Version;
 type IsRead = bool;
 
 pub struct OptCell<E: Default> {
-    pub(crate) cell: SafeCell<E>,
-    pub(crate) cell_version: AtomicVersion,
+    pub cell: SafeCell<E>,
+    pub cell_version: AtomicVersion,
 }
 
 impl<E: Default + Display> Display for OptCell<E> {
@@ -393,7 +393,7 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
 
 impl<E: Default> SmartCell<E> {
     #[inline(always)]
-    pub(crate) fn unsafe_borrow(&self) -> &E {
+    pub fn unsafe_borrow(&self) -> &E {
         match self.0.as_ref() {
             OLCCell(opt) => opt.cell.as_ref(),
             FreeCell(ptr) => ptr.as_ref(),

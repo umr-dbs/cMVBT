@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use serde::{Deserialize, Serialize};
-use crate::mv_page_model::{Attempts, Height, Level};
-use crate::mv_utils::smart_cell::LatchType;
+use crate::mv_page_model::{Height, Level};
+use crate::mv_sync::smart_cell::LatchType;
 
 #[inline(always)]
 pub const fn OLC() -> LockingStrategy {

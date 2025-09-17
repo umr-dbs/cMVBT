@@ -20,6 +20,9 @@ mod mv_tx_model;
 mod mv_gc;
 mod mv_paper_tests;
 mod mv_root;
+mod mv_query;
+mod mv_tx_query;
+mod mv_sync;
 
 const EX_FAN_OUT: usize = 127;
 const EX_N: usize = 127;

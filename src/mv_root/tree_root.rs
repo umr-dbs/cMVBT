@@ -9,9 +9,8 @@ use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::root::Root;
 use crate::mv_tree::mvbplus_tree::INIT_TREE_HEIGHT;
 use crate::mv_tree::version_manager::VersionManager;
-use crate::mv_tx_model::transaction::SnapShot;
-use crate::mv_utils::smart_cell::LatchType;
-
+use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_tx_model::transaction_result::SnapShot;
 // pub(crate) fn make_start_value_root_inner_tree<
 //     const F: usize,
 //     const N: usize,

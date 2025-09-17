@@ -1,9 +1,9 @@
-use std::fmt::{Display, Pointer};
+use std::fmt::Display;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::{mem, ptr};
+use std::ptr;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU16, fence, AtomicU32};
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;

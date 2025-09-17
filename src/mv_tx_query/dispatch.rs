@@ -4,8 +4,9 @@ use std::mem;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_tx_model::transaction::{AtomicTransaction, AtomicTransactionResult, SnapShot, Transaction, TransactionResult};
-use crate::mv_tx_model::tx_api::TransactionDispatcher;
+use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
+use crate::mv_tx_model::transaction_result::{AtomicTransactionResult, TransactionResult};
+use crate::mv_tx_query::tx_api::TransactionDispatcher;
 
 impl<'a,
     const FAN_OUT: usize,

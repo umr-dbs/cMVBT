@@ -8,7 +8,7 @@ use crate::mv_gc::bz_tracer::{DeadPageValue, BzTrace};
 use crate::mv_gc::tx_tracer::TxTrace;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_tx_model::transaction::SnapShot;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub(crate) const AUX_PROTOCOL: LockingStrategy = OLC;
 

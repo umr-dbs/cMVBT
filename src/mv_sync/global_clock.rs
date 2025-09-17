@@ -1,10 +1,10 @@
 use parking_lot::lock_api::MutexGuard;
 use parking_lot::{Mutex, RawMutex};
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::Ordering::Relaxed;
+use std::ops::Deref;
+
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
+use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_tree::version_manager::VersionManager;
-use crate::mv_utils::safe_cell::SafeCell;
 
 pub(crate) enum GlobalClock {
     Locked(Mutex<Version>),

@@ -7,8 +7,8 @@ use crate::mv_page_model::node::PageType;
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_utils::interval::Interval;
-use crate::mv_utils::smart_cell::sched_yield;
+
+use crate::mv_sync::smart_cell::sched_yield;
 
 pub const RAND_ATTEMPTS_MAX: Attempts = 10; // for insertion generation upper bound
 
