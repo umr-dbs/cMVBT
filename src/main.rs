@@ -15,8 +15,8 @@ use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::Arc;
 use std::thread::spawn;
-use std::time::SystemTime;
-use std::{env, fs, mem};
+use std::time::{Duration, SystemTime};
+use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
@@ -72,8 +72,17 @@ fn main() {
                 let olaps_per_worker = parms[4].parse::<usize>().unwrap();
                 let skew = parms[5].parse::<f32>().unwrap();
                 let key_range = parms[6].parse().unwrap_or(Key::MAX);
+                let root_star_index = match parms[7].as_str() {
+                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
+                    _ => RootIndexType::default()
+                };
+                println!("RootStar = {}", root_star_index);
 
-                let tree = Arc::new(MVTree::default());
+                let tree
+                    = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
                 let mut check = HashMap::new();
                 let mut errors = 0;
 
@@ -95,31 +104,29 @@ fn main() {
                     }
                 }
                 for (k, _) in check.iter() {
-                    (0..rand::random_range(1..100)).for_each(|_| {
-                        tree.dispatch_crud(CRUDOperation::Update(*k, Payload::default()));
+                    (0..1_00).for_each(|_| {
+                        match tree.dispatch_crud(CRUDOperation::Update(*k, Payload::default())) {
+                            CRUDOperationResult::Updated(_) => {}
+                            _ => panic!()
+                        }
                     });
                 }
 
-                //
-                // for (k, v) in check.iter() {
-                //     match tree.dispatch_crud(CRUDOperation::Point(*k, *v)) {
-                //         CRUDOperationResult::MatchedRecords(vec)
-                //         if !vec.is_empty() => {}
-                //         CRUDOperationResult::MatchedRecords(_) => {
-                //             println!("Empty result of point: key={k}, version={v}");
-                //         }
-                //         _ => {
-                //             println!("Error crud point: key={k}, version={v}");
-                //             errors += 1
-                //         }
-                //     }
-                // }
-
+                // test root retrival time.
                 mem::drop(check);
 
+                thread::sleep(Duration::from_millis(100));
+
+                println!("Roots present = {}", tree.root.count_roots());
+                let start_root = SystemTime::now();
+                tree.retrieve_root_for(1);
+                let end_root = SystemTime::now().duration_since(start_root).unwrap();
+                println!("{root_star_index} -> Root access: {end_root:?}");
+
+                return;
                 let start_time_iter = SystemTime::now();
                 let iter_range = tree
-                    .dispatch_crud(CRUDOperation::RangeIter((0..=Key::MAX).into(), Version::MAX));
+                    .dispatch_crud(CRUDOperation::RangeIter((0..=Key::MAX).into(), 10));
 
                 let iter_res = match iter_range {
                     CRUDOperationResult::MatchedRecordIter(iter) => iter,
@@ -134,7 +141,7 @@ fn main() {
 
                 let start_time_range = SystemTime::now();
                 let res_all = tree
-                    .dispatch_crud(CRUDOperation::Range((0..=Key::MAX).into(), Version::MAX));
+                    .dispatch_crud(CRUDOperation::Range((0..=Key::MAX).into(), 10));
 
                 let all_res = match res_all {
                     CRUDOperationResult::MatchedRecords(vec) => vec,

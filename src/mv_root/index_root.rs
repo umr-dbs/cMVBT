@@ -199,6 +199,23 @@ impl<const FAN_OUT: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Display + Default + Clone + Sync + 'static> RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    pub(crate) fn count_roots(&self) -> usize {
+        match self {
+            RootIndex::FrugalList(fg) => unsafe {
+                (*fg.data_ptr()).len()
+            },
+            RootIndex::BTree(t) => unsafe {
+                2usize.pow((*t.data_ptr()).height() as _) - 1
+            }
+            RootIndex::SkipList(sk) => unsafe {
+                (*sk.data_ptr()).0.len()
+            }
+            RootIndex::LinkedList(ll) => unsafe {
+                (*ll.data_ptr()).len()
+            }
+        }
+    }
+
     pub(crate) fn index_type(&self, latch_type: LatchType) -> RootIndexType {
         match self {
             RootIndex::FrugalList(..) => RootIndexType::FrugalList(latch_type),
