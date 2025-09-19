@@ -61,8 +61,8 @@ fn main() {
     let args = env::args();
     let mut parms = args.collect_vec();
 
-    if parms.len() == 1 {
-        parms.extend(["test", "20000", "1", "10", "0", "MAX"].map(String::from));
+    if true || parms.len() == 1 {
+        parms.extend(["test", "10000", "1", "10", "0", "MAX", "bt"].map(String::from));
     }
     if parms.len() > 1  {
         match parms[1].as_str() {

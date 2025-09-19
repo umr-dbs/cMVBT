@@ -2,6 +2,7 @@ use std::collections::LinkedList;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
+use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use crossbeam_skiplist::SkipMap;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use crate::mv_block::block::BlockUnsafeDegree;
@@ -10,7 +11,7 @@ use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::frugal_root::{AtomicFrugalList, FrugalRootList};
 use crate::mv_root::root::Root;
 use crate::mv_root::sk_root::RootSkipList;
-use crate::mv_root::tree_root::{RootTree, ValueRootInner};
+use crate::mv_root::tree_root::{RootTree, ValueRootInner, TREE_ROOT_MAX_KEY, TREE_ROOT_MIN_KEY};
 use crate::mv_root::vanilla_root::VanillaRootSt;
 use crate::mv_tree::version_manager::VersionManager;
 use crate::mv_sync::smart_cell::LatchType;
@@ -199,13 +200,24 @@ impl<const FAN_OUT: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Display + Default + Clone + Sync + 'static> RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    // BTree counter is extremely expensive, as it actually scans index for count.
     pub(crate) fn count_roots(&self) -> usize {
         match self {
             RootIndex::FrugalList(fg) => unsafe {
                 (*fg.data_ptr()).len()
             },
             RootIndex::BTree(t) => unsafe {
-                2usize.pow((*t.data_ptr()).height() as _) - 1
+                let (_nv, cr)
+                    = (*t.data_ptr()).0
+                    .dispatch(CCBPlusTree::crud_model::crud_operation::
+                        CRUDOperation::Range((TREE_ROOT_MIN_KEY..TREE_ROOT_MAX_KEY).into()));
+
+                match cr {
+                    CCBPlusTree::crud_model::crud_operation_result::
+                    CRUDOperationResult::MatchedRecords(r) =>
+                        r.len(),
+                    _ => unreachable!("BTree for Root index is empty!")
+                }
             }
             RootIndex::SkipList(sk) => unsafe {
                 (*sk.data_ptr()).0.len()
@@ -226,8 +238,15 @@ impl<const FAN_OUT: usize,
     }
     pub fn new(variant: RootIndexType, block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         match variant {
-            RootIndexType::BTree(latch) =>
-                Self::BTree(Arc::new(Mutex::new(RootTree::new(latch)))),
+            RootIndexType::BTree(latch) => {
+                let rt = RootTree::new(latch);
+                let (root_inner, version)
+                    = make_start_value_root_inner(block_manager, latch);
+
+                rt.append_root(Root::new(root_inner.0, version, root_inner.1));
+
+                Self::BTree(Arc::new(Mutex::new(rt)))
+            },
             RootIndexType::SkipList(latch) => {
                 let sk = RootSkipList::new();
                 let (root_inner, version)

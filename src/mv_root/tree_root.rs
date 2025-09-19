@@ -6,6 +6,7 @@ use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
 
 use crate::mv_page_model::{BlockRef, Height};
+use crate::mv_record_model::version_info::Version;
 use crate::mv_root::root::Root;
 use crate::mv_tree::mvbplus_tree::INIT_TREE_HEIGHT;
 use crate::mv_tree::version_manager::VersionManager;
@@ -20,6 +21,9 @@ use crate::mv_tx_model::transaction_result::SnapShot;
 // {
 //     (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionManager::START_VERSION)
 // }
+
+pub(crate) const TREE_ROOT_MIN_KEY: Version = VersionManager::START_VERSION;
+pub(crate) const TREE_ROOT_MAX_KEY: Version = Version::MAX;
 
 #[derive(Clone, Default)]
 pub(crate) struct ValueRootInner<
@@ -97,10 +101,10 @@ impl<const FANOUT: usize,
     pub fn new(latch_type: LatchType) -> Self {
         Self(BPlusTree::new_with(
             latch_type.into_cc_locking_strategy(),
-            VersionManager::START_VERSION,
-            SnapShot::MAX,
-            |v| v + 1,
-            |v| v - 1))
+            TREE_ROOT_MIN_KEY,
+            TREE_ROOT_MAX_KEY,
+            |v| v.checked_add(1).unwrap_or(SnapShot::MAX),
+            |v| v.checked_sub(1).unwrap_or(SnapShot::MIN)))
     }
 
     #[inline(always)]
