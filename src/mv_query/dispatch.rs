@@ -245,7 +245,8 @@ impl<'a,
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
-            }
+            }   // TODO: Make an index size distinction for incremental or bulk loader?!
+                // TODO: Or make the step loader default -> no dups elimination needed!
             // CRUDOperation::Range(range, version) => match self.dispatch_crud(
             //     CRUDOperation::RangeIter(range, version)) {
             //     CRUDOperationResult::MatchedRecordIter(iter) =>

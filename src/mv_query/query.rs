@@ -42,9 +42,7 @@ impl<'a,
         Self {
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
-            path: vec![(Interval::new(
-                tree.snapshot_current().mv_tree().min_key,
-                tree.snapshot_current().mv_tree().max_key),
+            path: vec![(Interval::new(tree.min_key, tree.max_key),
                         tree.snapshot_current().mv_tree().retrieve_root_for(version))],
             buff: VecDeque::new(),
         }
