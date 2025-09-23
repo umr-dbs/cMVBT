@@ -2,7 +2,7 @@ use std::collections::LinkedList;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
-use crossbeam_skiplist::SkipMap;
+
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use crate::mv_block::block::BlockUnsafeDegree;
 use crate::mv_block::block_manager::BlockManager;
@@ -342,42 +342,5 @@ impl<const FAN_OUT: usize,
                 true
             }
         }
-    }
-}
-
-impl<const FANOUT: usize,
-    const NUM_RECORDS: usize,
-    Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
-    Payload: Default + Clone + Display + Sync + 'static> RootSkipList<FANOUT, NUM_RECORDS, Key, Payload>
-{
-    pub fn new() -> Self {
-        Self(SkipMap::new())
-    }
-
-    #[inline(always)]
-    pub fn height(&self) -> Height {
-        self.0.back().unwrap().value().height()
-    }
-
-    #[inline(always)]
-    pub fn current_root(&self) -> Root<FANOUT, NUM_RECORDS, Key, Payload> {
-        let last
-            = self.0.back().unwrap();
-
-        Root::new(last.value().block(), *last.key(), last.value().height())
-    }
-
-    #[inline(always)]
-    pub fn root_for(&self, si: SnapShot) -> Root<FANOUT, NUM_RECORDS, Key, Payload> {
-        let root_si
-            = self.0.range(..=si).rev().next().unwrap();
-
-        Root::new(root_si.value().block(), *root_si.key(), root_si.value().height())
-    }
-
-    #[inline(always)]
-    pub fn append_root(&self, root: Root<FANOUT, NUM_RECORDS, Key, Payload>) -> bool {
-        self.0.insert(root.version, ValueRootInner(root.block, root.height));
-        true
     }
 }
