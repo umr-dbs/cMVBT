@@ -79,7 +79,7 @@ impl Display for LatchType {
 }
 
 impl LatchType {
-    pub fn into_cc_locking_strategy(self) -> LockingStrategy {
+    pub const fn into_cc_locking_strategy(self) -> LockingStrategy {
         match self {
             LatchType::Optimistic => LockingStrategy::OLC,
             LatchType::None => LockingStrategy::MonoWriter
