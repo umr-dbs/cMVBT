@@ -3,7 +3,7 @@ use std::hash::Hash;
 use std::mem;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
 use crate::mv_tx_model::transaction_result::{AtomicTransactionResult, TransactionResult};
 use crate::mv_tx_query::tx_api::TransactionDispatcher;
@@ -13,7 +13,7 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Send + Sync + 'static
-> TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> TransactionDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline]
     fn dispatch_transaction(&'a self, mut tx: Transaction<Key, Payload>) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
         let snapshot

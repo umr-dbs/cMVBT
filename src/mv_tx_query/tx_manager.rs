@@ -7,9 +7,10 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
-use crate::mv_gc::db_tracker::{DBTracker, MDBTracker};
-use crate::mv_sync::locking_strategy::LockingStrategy;
-use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
+use crate::mv_gc::tracker_handle::{TrackerHandleSt, TrackerHandle};
+use crate::mv_sync::clock::ClockType;
+use crate::mv_sync::latch_protocol::LatchProtocol;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
 use crate::mv_tx_query::tx_api::TransactionDispatcher;
 use crate::mv_sync::safe_cell::SafeCell;
@@ -157,10 +158,10 @@ impl<const FAN_OUT: usize,
 }
 
 type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
-= AtomicPtr<MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+= AtomicPtr<MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 type TxDispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
-= &'static MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
+= &'static MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 const POOL_DISABLED: usize = 0;
 pub struct TransactionManager<
@@ -169,7 +170,7 @@ pub struct TransactionManager<
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
 > {
-    db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
+    db_tracker: SafeCell<Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pool: Option<ThreadPool>,
     index: Dispatcher<FAN_OUT, NUM_RECORDS, Key, Payload>,
 }
@@ -193,7 +194,7 @@ impl<const FAN_OUT: usize,
 > TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub fn db_tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>> {
+    pub fn db_tracker(&self) -> Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         self.db_tracker.clone()
     }
 
@@ -203,20 +204,20 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn index(&self) -> &MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn index(&self) -> &MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_ref().unwrap()
         }
     }
 
     #[inline(always)]
-    pub fn index_mut(&self) -> &mut MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn index_mut(&self) -> &mut MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_mut().unwrap()
         }
     }
 
-    pub fn locking_protocol(&self) -> &LockingStrategy {
+    pub fn locking_protocol(&self) -> &LatchProtocol {
         &self.index().locking_strategy
     }
 
@@ -248,7 +249,7 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn enable_gc(&self) {
-        *self.db_tracker.get_mut() = Some(Arc::new(DBTracker::new()));
+        *self.db_tracker.get_mut() = Some(Arc::new(TrackerHandleSt::new()));
 
         let clone
             = self.db_tracker.clone();
@@ -306,14 +307,14 @@ impl<const FAN_OUT: usize,
         self.pool.take();
     }
 
-    pub fn new_unmanaged(index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
+    pub fn new_unmanaged(index: MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         Self::new(POOL_DISABLED, index, gc)
     }
     
-    pub fn new(threads: usize, index: MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
+    pub fn new(threads: usize, index: MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         let manager = Self {
             db_tracker: if gc {
-                SafeCell::new(Some(Arc::new(DBTracker::new())))
+                SafeCell::new(Some(Arc::new(TrackerHandleSt::new())))
             }
             else {
                 SafeCell::new(None)
@@ -346,7 +347,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn enq_bookkeeping_from_tracker(
-        tracker: Option<&MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+        tracker: Option<&TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>,
         tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool
     {
         if tx.is_read() {
@@ -361,7 +362,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn deq_bookkeeping(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>, si: SnapShot) {
+    fn deq_bookkeeping(db_tracker: TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>, si: SnapShot) {
         db_tracker.on_tx_completed(si)
     }
 

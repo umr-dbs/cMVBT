@@ -1,6 +1,6 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_sync::locking_strategy::CRUDProtocol;
-use crate::mv_tree::mvbplus_tree::{ClockType, MVBPlusTree};
+use crate::mv_sync::latch_protocol::CRUDProtocol;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction};
 use crossbeam_channel::{bounded, Sender, TryRecvError};
 use itertools::{Either, Itertools};
@@ -21,9 +21,10 @@ use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_gc::tx_manager::TransactionManager;
+use crate::mv_tx_query::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
 use crate::mv_root::index_root::RootIndexType;
+use crate::mv_sync::clock::ClockType;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::interval::Interval;
 
@@ -396,7 +397,7 @@ pub fn execute_experiments() {
                 if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
                     print!("{SYSTEM_STR},{experiment_id},INIT,{init_target_tx}");
                     index_handler = Some(Either::Left(Arc::new(TransactionManager::new_unmanaged(
-                        MVBPlusTree::make_standard(protocol, clock_type, RootIndexType::default()),
+                        MVTreeSt::make_standard(protocol, clock_type, RootIndexType::default()),
                         experiment.gc_enable
                     ))));
                     olap_handle = Some(run_olaps(index_handler.clone().unwrap(),
@@ -918,7 +919,7 @@ fn experiment(
     let manager = match index_handler {
         Either::Left(m_manager) => m_manager,
         Either::Right((protocol, clock_type)) => Arc::new(TransactionManager::new_unmanaged(
-            MVBPlusTree::make_standard(protocol, clock_type, RootIndexType::default()),
+            MVTreeSt::make_standard(protocol, clock_type, RootIndexType::default()),
             gc_enable,
         )),
     };

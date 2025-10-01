@@ -5,7 +5,7 @@ use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
-use crate::mv_gc::db_tracker::AUX_PROTOCOL;
+use crate::mv_gc::tracker_handle::AUX_PROTOCOL;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::{dec_key, inc_key};
@@ -18,7 +18,7 @@ type DeadPageKey = Version;
 pub(crate) type DeadPageValue<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
 = BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
-pub(crate) struct BzTrace<
+pub(crate) struct BlockTrace<
     const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display + 'static,
@@ -28,7 +28,7 @@ pub(crate) struct BzTrace<
 impl<const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display + 'static,
-    Payload: Clone + Default + 'static> Deref for BzTrace<P_F, P_N, Key, Payload>
+    Payload: Clone + Default + 'static> Deref for BlockTrace<P_F, P_N, Key, Payload>
 {
     type Target = BPlusTree<AUX_DP_FAN_OUT, AUX_DP_LEAF_SIZE, DeadPageKey, DeadPageValue<P_F, P_N, Key, Payload>>;
 
@@ -41,7 +41,7 @@ impl<const P_F: usize,
 impl<const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display,
-    Payload: Clone + Default> BzTrace<P_F, P_N, Key, Payload>
+    Payload: Clone + Default> BlockTrace<P_F, P_N, Key, Payload>
 {
     pub(crate) fn new() -> Self {
         Self(SafeCell::new(BPlusTree::new_with(

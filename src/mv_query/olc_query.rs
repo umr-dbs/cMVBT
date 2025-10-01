@@ -1,20 +1,21 @@
 use std::fmt::Display;
 use std::hash::Hash;
 
-use crate::mv_block::block::{BlockGuard, BlockUnsafeDegree};
+use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::{Attempts, BlockRef};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::smart_cell::sched_yield;
+use crate::mv_tree::smo::BlockUnsafeDegree;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
+> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
     pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {

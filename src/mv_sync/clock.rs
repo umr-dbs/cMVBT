@@ -1,10 +1,28 @@
+use std::fmt::{Display, Formatter};
 use parking_lot::lock_api::MutexGuard;
 use parking_lot::{Mutex, RawMutex};
 use std::ops::Deref;
-
+use serde::{Deserialize, Serialize};
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::safe_cell::SafeCell;
-use crate::mv_tree::version_manager::VersionManager;
+use crate::mv_sync::version_handle::VersionHandle;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum ClockType {
+    FREE,
+    OPT,
+    SYNC,
+}
+
+impl Display for ClockType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClockType::FREE => write!(f, "FREE"),
+            ClockType::OPT => write!(f, "OPT"),
+            ClockType::SYNC => write!(f, "SYNC"),
+        }
+    }
+}
 
 pub(crate) enum GlobalClock {
     Locked(Mutex<Version>),
@@ -15,9 +33,9 @@ pub(crate) enum GlobalClock {
 impl Clone for GlobalClock {
     fn clone(&self) -> Self {
         match self {
-            GlobalClock::Locked(_) => Self::Locked(Mutex::new(VersionManager::START_VERSION)),
-            GlobalClock::Atomic(_) => Self::Atomic(AtomicVersion::new(VersionManager::START_VERSION)),
-            GlobalClock::Free(_) => Self::Free(SafeCell::new(VersionManager::START_VERSION))
+            GlobalClock::Locked(_) => Self::Locked(Mutex::new(VersionHandle::START_VERSION)),
+            GlobalClock::Atomic(_) => Self::Atomic(AtomicVersion::new(VersionHandle::START_VERSION)),
+            GlobalClock::Free(_) => Self::Free(SafeCell::new(VersionHandle::START_VERSION))
         }
     }
 }

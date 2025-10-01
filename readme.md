@@ -1,5 +1,5 @@
 # MVTree
-- Release Date: 06.08.2025
+- Release Date: 01.10.2025
 - Latest Version: 0.0.85 (Beta)
 ---------------------------------------
 ## PiBench Integration: https://github.com/umr-dbs/pibench_ext
@@ -9,5 +9,5 @@
 # Built-in (On/Off) GC via TransactionsManager.
 ---------------------------------------
 # Contact
-    Name:               Amir El-Shaikh
-    E-Mail:             elshaikh@mathematik.uni-marburg.de
+    Name:               Amir Tonta
+    E-Mail:             amir.tonta@mathematik.uni-marburg.de

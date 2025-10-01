@@ -4,39 +4,39 @@ use std::hash::Hash;
 use std::sync::Arc;
 use CCBPlusTree::locking::locking_strategy::LockingStrategy;
 use CCBPlusTree::locking::locking_strategy::LockingStrategy::OLC;
-use crate::mv_gc::bz_tracer::{DeadPageValue, BzTrace};
-use crate::mv_gc::tx_tracer::TxTrace;
+use crate::mv_gc::block_tracer::{DeadPageValue, BlockTrace};
+use crate::mv_gc::query_tracer::TransactionTrace;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub(crate) const AUX_PROTOCOL: LockingStrategy = OLC;
 
-pub type MDBTracker<
+pub type TrackerHandle<
     const P_F: usize,
     const P_N: usize,
     Key,
-    Payload> = Arc<DBTracker<P_F, P_N, Key, Payload>>;
+    Payload> = Arc<TrackerHandleSt<P_F, P_N, Key, Payload>>;
 
-pub struct DBTracker<
+pub struct TrackerHandleSt<
     const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display + 'static,
     Payload: Clone + Default + 'static>
 {
-    live_tx: TxTrace,
-    dead_blocks: BzTrace<P_F, P_N, Key, Payload>,
+    live_tx: TransactionTrace,
+    dead_blocks: BlockTrace<P_F, P_N, Key, Payload>,
 }
 
 impl<const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display,
-    Payload: Clone + Default> DBTracker<P_F, P_N, Key, Payload>
+    Payload: Clone + Default> TrackerHandleSt<P_F, P_N, Key, Payload>
 {
     pub fn new() -> Self {
         Self {
-            live_tx: TxTrace::new(),
-            dead_blocks: BzTrace::new(),
+            live_tx: TransactionTrace::new(),
+            dead_blocks: BlockTrace::new(),
         }
     }
 

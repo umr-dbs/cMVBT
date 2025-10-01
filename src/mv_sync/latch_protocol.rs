@@ -4,8 +4,8 @@ use crate::mv_page_model::{Height, Level};
 use crate::mv_sync::smart_cell::LatchType;
 
 #[inline(always)]
-pub const fn OLC() -> LockingStrategy {
-    LockingStrategy::OLC
+pub const fn OLC() -> LatchProtocol {
+    LatchProtocol::OLC
 }
 
 pub trait LevelExtras {
@@ -20,29 +20,29 @@ impl LevelExtras for Level {
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
-pub enum LockingStrategy {
+pub enum LatchProtocol {
     #[default]
     MonoWriter,
     OLC,
 }
 
-pub type CRUDProtocol = LockingStrategy;
+pub type CRUDProtocol = LatchProtocol;
 
-impl Display for LockingStrategy {
+impl Display for LatchProtocol {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LockingStrategy::MonoWriter => write!(f, "MonoWriter"),
-            LockingStrategy::OLC => write!(f, "OLC"),
+            LatchProtocol::MonoWriter => write!(f, "MonoWriter"),
+            LatchProtocol::OLC => write!(f, "OLC"),
         }
     }
 }
 
-impl LockingStrategy {
+impl LatchProtocol {
     #[inline(always)]
     pub const fn latch_type(&self) -> LatchType {
         match self {
-            LockingStrategy::MonoWriter => LatchType::None,
-            LockingStrategy::OLC => LatchType::Optimistic,
+            LatchProtocol::MonoWriter => LatchType::None,
+            LatchProtocol::OLC => LatchType::Optimistic,
         }
     }
 

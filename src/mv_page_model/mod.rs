@@ -33,21 +33,3 @@ impl<const FAN_OUT: usize,
         write!(f, "IsLeaf: {}, Len: {}", self.unsafe_borrow().is_leaf(), self.unsafe_borrow().len())
     }
 }
-
-impl<const FAN_OUT: usize,
-    const NUM_RECORDS: usize,
-    Key: Default + Ord + Hash + Copy + Display,
-    Payload: Clone + Default
-> Block<FAN_OUT, NUM_RECORDS, Key, Payload> {
-    #[inline(always)]
-    pub fn into_free(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::FreeCell(
-            SafeCell::new(self))))
-    }
-
-    #[inline(always)]
-    pub fn into_olc(self) -> SmartCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>> {
-        SmartCell(Arc::new(SmartFlavor::OLCCell(
-            OptCell::new(self))))
-    }
-}

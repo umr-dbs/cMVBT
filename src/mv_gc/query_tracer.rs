@@ -5,7 +5,7 @@ use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
 use CCBPlusTree::tree::bplus_tree::BPlusTree;
 
-use crate::mv_gc::db_tracker::AUX_PROTOCOL;
+use crate::mv_gc::tracker_handle::AUX_PROTOCOL;
 use crate::mv_test::{dec_key, inc_key};
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_tx_model::transaction_result::SnapShot;
@@ -25,10 +25,10 @@ impl Display for NullValue {
     }
 }
 
-pub(crate) struct TxTrace
+pub(crate) struct TransactionTrace
 (SafeCell<BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, TxLiveKey, TxLiveValue>>);
 
-impl Deref for TxTrace {
+impl Deref for TransactionTrace {
     type Target = BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, TxLiveKey, TxLiveValue>;
 
     fn deref(&self) -> &Self::Target {
@@ -36,7 +36,7 @@ impl Deref for TxTrace {
     }
 }
 
-impl TxTrace {
+impl TransactionTrace {
     pub(crate) fn new() -> Self {
         Self(SafeCell::new(BPlusTree::new_with(
             AUX_PROTOCOL,

@@ -12,7 +12,7 @@ use crate::mv_page_model::{BlockRef, ObjectCount};
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::smart_cell::{LatchType, SmartCell, SmartFlavor};
-use crate::mv_gc::db_tracker::MDBTracker;
+use crate::mv_gc::tracker_handle::TrackerHandle;
 
 const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a mv_block // outdated due to omitted mv_block-id
@@ -61,13 +61,13 @@ type DeadPages<
 // = Arc<SafeCell<BPlusTree<250, 250, Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>>>>;
 
 
-pub struct BlockManager<
+pub struct BlockHandle<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default + 'static
 > {
-    db_tracker: SafeCell<Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
+    db_tracker: SafeCell<Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pub reuse_count: AtomicUsize,
     pub alloc_count: AtomicUsize,
     // block_id_counter: AtomicBlockID,
@@ -77,7 +77,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
-> Clone for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> Clone for BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
@@ -93,9 +93,9 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default
-> Default for BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> Default for BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
-        BlockManager::new()
+        BlockHandle::new()
     }
 }
 
@@ -104,7 +104,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default + 'static
-> BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>
+> BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     // /// Generates and returns a new atomic (unique across callers) BlockID.
     // #[inline(always)]
@@ -118,7 +118,7 @@ impl<const FAN_OUT: usize,
     }
     
     #[inline(always)]
-    pub(crate) fn tracker(&self) -> Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>  {
+    pub(crate) fn tracker(&self) -> Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>  {
         self.db_tracker.clone()
     }
 
@@ -174,7 +174,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn new_with_gc(db_tracker: MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
+    pub fn new_with_gc(db_tracker: TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             db_tracker: SafeCell::new(Some(db_tracker)),
@@ -183,7 +183,7 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub fn pass_aux_tx_tracker(&self, db_tracker: Option<MDBTracker<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
+    pub fn pass_aux_tx_tracker(&self, db_tracker: Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
         // if db_tracker.is_some() {
         // debug_assert!(db_tracker.is_some());
         

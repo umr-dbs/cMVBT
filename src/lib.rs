@@ -3,9 +3,9 @@ use std::{mem, ptr};
 use std::ops::Deref;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::AtomicTransaction;
-use mv_gc::tx_manager::TransactionManager;
+use mv_tx_query::tx_manager::TransactionManager;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_utils::interval::Interval;
 
@@ -18,7 +18,6 @@ mod mv_utils;
 mod mv_test;
 mod mv_tx_model;
 mod mv_gc;
-mod mv_paper_tests;
 mod mv_root;
 mod mv_query;
 mod mv_tx_query;
@@ -30,7 +29,7 @@ const EX_N: usize = 127;
 type EX_KEY = u64;
 type EX_VALUE = u64;
 
-type MVBTreeApi = MVBPlusTree<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE>;
+type MVBTreeApi = MVTreeSt<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE>;
 
 pub const MONO: u8 = 0;
 pub const OLC: u8 = 2;

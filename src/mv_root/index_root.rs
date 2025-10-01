@@ -4,26 +4,26 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
-use crate::mv_block::block::BlockUnsafeDegree;
-use crate::mv_block::block_manager::BlockManager;
+use crate::mv_block::block_handle::BlockHandle;
 use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::frugal_root::{AtomicFrugalList, FrugalRootList};
 use crate::mv_root::root::Root;
 use crate::mv_root::sk_root::RootSkipList;
 use crate::mv_root::tree_root::{RootTree, ValueRootInner};
 use crate::mv_root::vanilla_root::VanillaRootSt;
-use crate::mv_tree::version_manager::VersionManager;
+use crate::mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_tree::smo::BlockUnsafeDegree;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub(crate) fn make_start_value_root_inner<
     const F: usize,
     const N: usize,
     Key: Display + Default + Ord + Copy + Hash,
-    Payload: Default + Clone>(bk: &BlockManager<F, N, Key, Payload>, latch_type: LatchType
+    Payload: Default + Clone>(bk: &BlockHandle<F, N, Key, Payload>, latch_type: LatchType
 ) -> (ValueRootInner<F, N, Key, Payload>, SnapShot)
 {
-    (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionManager::START_VERSION)
+    (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionHandle::START_VERSION)
 }
 
 #[derive(Copy, Clone)]
@@ -224,7 +224,7 @@ impl<const FAN_OUT: usize,
             RootIndex::LinkedList(..) => RootIndexType::LinkedList(latch_type),
         }
     }
-    pub fn new(variant: RootIndexType, block_manager: &BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
+    pub fn new(variant: RootIndexType, block_manager: &BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         match variant {
             RootIndexType::BTree(latch) =>
                 Self::BTree(Arc::new(Mutex::new(RootTree::new(latch)))),

@@ -3,25 +3,25 @@ use std::hash::Hash;
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering::{AcqRel, Acquire};
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_sync::global_clock::{ClockHandle, GlobalClock};
+use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_sync::clock::{ClockHandle, GlobalClock};
 use crate::mv_sync::safe_cell::SafeCell;
 
 /// Structure wrapping the VC counter via a FairMutex.
 #[derive(Clone)]
-pub struct VersionManager {
+pub struct VersionHandle {
     pub committed_version: GlobalClock,
 }
 
-/// Implements default initializer for VersionManager.
-impl Default for VersionManager {
+/// Implements default initializer for VersionHandle.
+impl Default for VersionHandle {
     fn default() -> Self {
-        VersionManager::new_locked()
+        VersionHandle::new_locked()
     }
 }
 
 /// Implements core functions for VersionManager.
-impl VersionManager {
+impl VersionHandle {
     /// Default first version.
     pub const START_VERSION: Version = 1;
 
@@ -64,7 +64,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn current_version(&self) -> Version {
         self.version_manager.committed_version()
@@ -82,7 +82,7 @@ impl<const FAN_OUT: usize,
 
     /// Uses supplied lock to increment commit counter and releasing it afterward.
     #[inline]
-    pub(crate) fn try_end_commit<'a>(&self, mut guard: ClockHandle<'a>) -> Result<Version, ClockHandle<'a>> {
+    pub(crate) fn try_end_commit<'a>(&self, guard: ClockHandle<'a>) -> Result<Version, ClockHandle<'a>> {
         match guard {
             ClockHandle::Locked(mut claw) => {
                 *claw = *claw + 1;

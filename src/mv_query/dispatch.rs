@@ -7,12 +7,12 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_query::query::RangeQueryIter;
-use crate::mv_paper_tests::rand_query::RAND_ATTEMPTS_MAX;
+use crate::mv_query::rand_query::RAND_ATTEMPTS_MAX;
+use crate::mv_query::iter_query::RangeQueryIter;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
 use crate::mv_test::VERBOSE;
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::smart_cell::sched_yield;
 
 impl<'a,
@@ -20,7 +20,7 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
+> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {

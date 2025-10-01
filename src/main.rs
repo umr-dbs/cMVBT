@@ -4,8 +4,8 @@ use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::{format_insertions, Key, Payload, Sampler, FAN_OUT, LOG_REORG, NUM_RECORDS};
-use crate::mv_tree::mvbplus_tree::MVBPlusTree;
-use crate::mv_tree::version_manager::VersionManager;
+use crate::mv_tree::mvtree::MVTreeSt;
+use mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::safe_cell::SafeCell;
 use chrono::{DateTime, Local};
 use itertools::Itertools;
@@ -34,7 +34,6 @@ mod mv_tx_model;
 mod mv_tx_query;
 mod mv_sync;
 mod mv_utils;
-mod mv_paper_tests;
 // struct NoCacheAllocator;
 // unsafe impl GlobalAlloc for NoCacheAllocator {
 //     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -55,7 +54,7 @@ const BERNHARD_TESTS: bool = false;
 
 const BERNHARD_TESTS_NEW: bool = true;
 
-type MVTree = MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>;
+type MVTree = MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 fn main() {
     let args = env::args();
@@ -202,7 +201,7 @@ fn main() {
                     _ => RootIndexType::default()
                 };
                 let index
-                    = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
+                    = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
 
                 println!("root_start_index = {}", root_star_index);
 
@@ -610,7 +609,7 @@ fn bernhard_tests_new() {
     Loading query {QUERY_NAME}...");
 
     let mv_tree
-        = Arc::new(MVTree::default());
+        = Arc::new(MVTreeSt::default());
 
     let num_cruds = load_query(QUERY_NAME, mv_tree.clone());
 
@@ -652,7 +651,7 @@ fn bernhard_tests_new() {
 
                 let current_si = index.current_version();
 
-                let si = rand::random_range(VersionManager::START_VERSION..=current_si);
+                let si = rand::random_range(VersionHandle::START_VERSION..=current_si);
 
                 let time_start = SystemTime::now();
 
@@ -877,7 +876,7 @@ fn bernhard_tests() {
 
                     let current_si = index.current_version();
 
-                    let si = rand::random_range(VersionManager::START_VERSION..=current_si);
+                    let si = rand::random_range(VersionHandle::START_VERSION..=current_si);
 
                     let time_start = SystemTime::now();
 

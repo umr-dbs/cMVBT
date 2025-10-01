@@ -1,4 +1,6 @@
 pub mod smart_cell;
 pub mod safe_cell;
-pub mod locking_strategy;
-pub mod global_clock;
+pub mod latch_protocol;
+pub mod clock;
+pub mod version_handle;
+pub mod block_sync;
