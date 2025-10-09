@@ -2,15 +2,12 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
-use CCBPlusTree::locking::locking_strategy::LockingStrategy;
-use CCBPlusTree::locking::locking_strategy::LockingStrategy::OLC;
+
 use crate::mv_gc::block_tracer::{DeadPageValue, BlockTrace};
 use crate::mv_gc::query_tracer::TransactionTrace;
 use crate::mv_page_model::BlockRef;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tx_model::transaction_result::SnapShot;
-
-pub(crate) const AUX_PROTOCOL: LockingStrategy = OLC;
 
 pub type TrackerHandle<
     const P_F: usize,

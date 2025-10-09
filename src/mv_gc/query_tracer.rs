@@ -1,20 +1,11 @@
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
-use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
-use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
-use CCBPlusTree::tree::bplus_tree::BPlusTree;
 
-use crate::mv_gc::tracker_handle::AUX_PROTOCOL;
-use crate::mv_test::{dec_key, inc_key};
-use crate::mv_sync::safe_cell::SafeCell;
+use crossbeam_skiplist::SkipSet;
+
 use crate::mv_tx_model::transaction_result::SnapShot;
 
-const AUX_ATX_FAN_OUT: usize = 250;
-const AUX_ATX_LEAF_SIZE: usize = 499;
-
-type TxLiveKey = SnapShot;
-type TxLiveValue = NullValue;
+type QueryTracer = SkipSet<SnapShot>;
 
 #[derive(Default, Clone)]
 pub struct NullValue;
@@ -25,54 +16,41 @@ impl Display for NullValue {
     }
 }
 
-pub(crate) struct TransactionTrace
-(SafeCell<BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, TxLiveKey, TxLiveValue>>);
+pub(crate) struct TransactionTrace(QueryTracer);
 
 impl Deref for TransactionTrace {
-    type Target = BPlusTree<AUX_ATX_FAN_OUT, AUX_ATX_LEAF_SIZE, TxLiveKey, TxLiveValue>;
+    type Target = QueryTracer;
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
+        &self.0
     }
 }
 
 impl TransactionTrace {
     pub(crate) fn new() -> Self {
-        Self(SafeCell::new(BPlusTree::new_with(
-            AUX_PROTOCOL,
-            SnapShot::MIN,
-            SnapShot::MAX,
-            inc_key,
-            dec_key,
-        )))
+        Self(QueryTracer::new())
     }
 
     #[inline(always)]
     pub(crate) fn peek_min(&self) -> SnapShot {
-        match self.dispatch(CRUDOperation::PeekMin) {
-            (_, CRUDOperationResult::MatchedRecord(Some(r))) => r.key(),
-            _ => SnapShot::MAX
-        }
+        self.front()
+            .map_or(SnapShot::MAX, |entry| *entry)
     }
 
     #[inline(always)]
     pub(crate) fn peek_max(&self) -> SnapShot {
-        match self.dispatch(CRUDOperation::PeekMax) {
-            (_, CRUDOperationResult::MatchedRecord(Some(r))) => r.key(),
-            _ => SnapShot::MIN
-        }
+        self.back()
+            .map_or(SnapShot::MIN, |entry| *entry)
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_start(&self, snapshot: SnapShot) -> bool {
-        match self.dispatch(CRUDOperation::Insert(snapshot, NullValue)) {
-            (.., CRUDOperationResult::Inserted(..)) => true,
-            _ => false
-        }
+        let _ = self.insert(snapshot);
+        true
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_completed(&self, snap_shot: SnapShot) {
-        let _ = self.dispatch(CRUDOperation::Delete(snap_shot));
+        let _ = self.remove(&snap_shot);
     }
 }

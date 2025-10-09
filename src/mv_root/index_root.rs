@@ -226,8 +226,17 @@ impl<const FAN_OUT: usize,
     }
     pub fn new(variant: RootIndexType, block_manager: &BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         match variant {
-            RootIndexType::BTree(latch) =>
-                Self::BTree(Arc::new(Mutex::new(RootTree::new(latch)))),
+            RootIndexType::BTree(latch) => {
+                let rt = RootTree::new(latch);
+
+                let (root_inner, version)
+                    = make_start_value_root_inner(block_manager, latch);
+
+                rt.append_root(
+                    Root::new(root_inner.0, version, root_inner.1));
+
+                Self::BTree(Arc::new(Mutex::new(rt)))
+            },
             RootIndexType::SkipList(latch) => {
                 let sk = RootSkipList::new();
                 let (root_inner, version)
