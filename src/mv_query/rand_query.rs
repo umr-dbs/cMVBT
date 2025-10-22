@@ -58,7 +58,7 @@ impl<const FAN_OUT: usize,
                 = curr_page_ref.active_dead_count();
 
             let mut index
-                = rand::random_range(0..live_n as usize);
+                = if live_n == 0 { 0 } else { rand::random_range(0..live_n as usize) };
 
             if VERBOSE {
                 println!("traversal_write_internal_olc: Loop: {traversal_loops}, attempts {attempts}, live_index: {index}");

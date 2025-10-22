@@ -13,11 +13,12 @@ use libc::exit;
 use rand::prelude::SliceRandom;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread::spawn;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
+use crossbeam_channel::TryRecvError;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
 
@@ -65,6 +66,113 @@ fn main() {
     }
     if parms.len() > 1  {
         match parms[1].as_str() {
+            "cont1" => {
+
+            }
+            "cont2" => {
+                // inserts constant
+                let inserts_per_second = parms[2].parse::<usize>().unwrap();
+                let olaps_per_second = parms[3].parse::<usize>().unwrap();
+                let runtime_seconds = parms[4].parse::<usize>().unwrap();
+
+                let runtime = Duration::from_secs(runtime_seconds as _);
+                let skew = parms[5].parse::<f32>().unwrap();
+                let root_star_index = match parms[6].as_str() {
+                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
+                    _ => RootIndexType::default()
+                };
+                println!("RootStar = {}", root_star_index);
+
+                let tree
+                    = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
+
+                let tree_insert
+                    = tree.clone();
+
+                let (insert_controller, insert_wire)
+                    = crossbeam_channel::bounded::<()>(0);
+
+                let insert_thread = spawn(move || {
+                    let interval
+                        = Duration::from_secs_f64(1.0  / inserts_per_second as f64);
+
+                    let mut run_ticks = 0usize;
+                    let mut skipped_ticks = 0;
+                    let mut next_tick = Instant::now();
+                    loop {
+                        match insert_wire.try_recv() {
+                            Err(TryRecvError::Disconnected) =>
+                                break (run_ticks, skipped_ticks),
+                            _ => {
+                                let now = Instant::now();
+                                if now >= next_tick {
+                                    let _ = tree_insert.dispatch_crud(CRUDOperation::InsertRand);
+
+                                    let elapsed
+                                        = now.duration_since(next_tick);
+
+                                    let skipped_ticks_now
+                                        = (elapsed.as_secs_f64() / interval.as_secs_f64())
+                                        .floor() as u64 + 1;
+
+                                    skipped_ticks += skipped_ticks_now;
+                                    next_tick += interval * skipped_ticks_now as u32;
+                                } else {
+                                    thread::sleep(next_tick - now);
+                                }
+
+                                run_ticks += 1;
+                            }
+                        }
+                    }
+                });
+
+                let (olap_controller, olap_wire)
+                    = crossbeam_channel::bounded::<()>(0);
+
+                // thread::sleep(Duration::from_secs(1));
+                let olap_thread = spawn(move || {
+                    let mut run_ticks = 0usize;
+                    loop {
+                        match olap_wire.try_recv() {
+                            Err(TryRecvError::Disconnected) =>
+                                break run_ticks,
+                            _ => {
+                                let _ = tree.dispatch_crud(
+                                    CRUDOperation::Range(
+                                        (0..Key::MAX).into(),
+                                        rand::random_range(1..=tree.current_version()))
+                                );
+
+                                run_ticks += 1;
+                            }
+
+                        }
+                    }
+                });
+
+                let time = Instant::now();
+                while time.elapsed() < runtime {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                mem::drop(insert_controller);
+                mem::drop(olap_controller);
+                let (inserts, skipped_inserts) = insert_thread.join().unwrap();
+                let olaps_executed = olap_thread.join().unwrap();
+                println!("\
+                Insertion rate: {}\n\
+                Runtime: {}seconds\n\
+                Inserted: {}\n\
+                Inserts skipped: {}\n\
+                Olaps executed:  {}",
+                         inserts_per_second,
+                         runtime_seconds,
+                         inserts, skipped_inserts,
+                         olaps_executed);
+            }
             "test" => {
                 let n = parms[2].parse().unwrap();
                 let num_olaps = parms[3].parse::<usize>().unwrap();
