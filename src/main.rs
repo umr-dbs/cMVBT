@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
 use crossbeam_channel::TryRecvError;
+use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
 
@@ -381,12 +382,17 @@ fn olap_tests(index: Arc<MVTree>,
                               RootIndexType::LinkedList(_) => "ll"
                           });
 
-    let _nc = fs::remove_file(format!("{v_index}_olap_skew_{skew}.csv"));
+    let lazy = if RANGE_DISPATCH_LAZY {
+        "_lazy"
+    } else { "" };
+
+    let file_log = format!("{v_index}{lazy}_olap_skew_{skew}.csv");
+    let _nc = fs::remove_file(file_log.as_str());
     let mut olap_file = fs::OpenOptions::new()
         .append(true)
         .create(true)
         .write(true)
-        .open(format!("{v_index}_olap_skew_{skew}.csv"))
+        .open(file_log.as_str())
         .unwrap();
 
     olap_file
