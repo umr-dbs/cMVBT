@@ -839,6 +839,8 @@ pub const F_ABS_OFF: usize = 28;
 pub const FAN_OUT: usize = 127;
 pub const NUM_RECORDS: usize = 127;
 
+pub type MVTree = MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
+
 pub type Key = u64;
 // pub type Payload = PayloadIndirection;
 pub type Payload = u64;

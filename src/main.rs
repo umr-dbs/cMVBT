@@ -3,7 +3,7 @@ use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_test::{format_insertions, Key, Payload, Sampler, FAN_OUT, LOG_REORG, NUM_RECORDS};
+use crate::mv_test::{format_insertions, Key, MVTree, Payload, Sampler, FAN_OUT, LOG_REORG, NUM_RECORDS};
 use crate::mv_tree::mvtree::MVTreeSt;
 use mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::safe_cell::SafeCell;
@@ -18,10 +18,11 @@ use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::TryRecvError;
+use crossbeam_channel::{unbounded, Receiver, TryRecvError};
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
 
 mod mv_block;
 mod mv_crud_model;
@@ -56,123 +57,91 @@ const BERNHARD_TESTS: bool = false;
 
 const BERNHARD_TESTS_NEW: bool = true;
 
-type MVTree = MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 fn main() {
     let args = env::args();
     let mut parms = args.collect_vec();
 
     if true || parms.len() == 1 {
-        parms.extend(["test", "10000", "1", "10", "0", "MAX", "bt"].map(String::from));
+        parms.extend([
+            "insert_rate_limiter",
+            "false",    // log
+            "1",       // runtime secs
+            "1",       // insert threads
+            "100",      // fps
+            "10",       // olap threads
+            "1000000",       // olaps per thread
+            "0",        // olaps skew
+            "MAX",      // olaps key range
+            "false",    // olap si target fresh only
+        ].map(String::from));
     }
     if parms.len() > 1  {
         match parms[1].as_str() {
-            "cont1" => {
+            "insert_rate_limiter" => {
+                let log                = parms[2].parse::<bool>().unwrap_or(false);
+                let runtime_sec        = parms[3].parse::<u64>().unwrap_or(10);
+                let num_workers        = parms[4].parse::<usize>().unwrap_or(10);
+                let fps               = parms[5].parse::<usize>().unwrap_or(100);
+                let crud                    = CRUDOperation::InsertRand;
+                let index = Arc::new(MVTree::default());
+                let olap_workers      = parms[6].parse::<usize>().unwrap_or(10);
+                let olaps_per_worker  = parms[7].parse::<usize>().unwrap_or(10);
+                let olap_skew_workers   = parms[8].parse::<f32>().unwrap_or(0f32);
+                let olaps_key_range    = parms[9].parse::<Key>().unwrap_or(Key::MAX);
+                let olaps_si_freshest  = parms[10].parse::<bool>().unwrap_or(false);
+                let (info_sender, info_receiver)
+                    = unbounded();
 
-            }
-            "cont2" => {
-                // inserts constant
-                let inserts_per_second = parms[2].parse::<usize>().unwrap();
-                let olaps_per_second = parms[3].parse::<usize>().unwrap();
-                let runtime_seconds = parms[4].parse::<usize>().unwrap();
+                let file_name
+                    = format!("runtime_{runtime_sec}_workers_{num_workers}_fps_{fps}_crud_{crud}.csv");
 
-                let runtime = Duration::from_secs(runtime_seconds as _);
-                let skew = parms[5].parse::<f32>().unwrap();
-                let root_star_index = match parms[6].as_str() {
-                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
-                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
-                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
-                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
-                    _ => RootIndexType::default()
-                };
-                println!("RootStar = {}", root_star_index);
+                let _ = fs::remove_file(file_name.as_str());
+                let mut log_file = BufWriter::new(OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(file_name.as_str()).unwrap());
 
-                let tree
-                    = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
+                log_file.write_all(b"tid,crud,fps,load,tick_ops,total_ops\n").unwrap();
 
-                let tree_insert
-                    = tree.clone();
+                let start_time       = Instant::now();
+                let workers = (0..num_workers)
+                    .map(|_| ThreadWorker::new(
+                        index.clone(),
+                        fps,
+                        crud.clone(),
+                        log,
+                        info_sender.clone()))
+                    .collect_vec();
 
-                let (insert_controller, insert_wire)
-                    = crossbeam_channel::bounded::<()>(0);
+                let signal = info_receiver.clone();
+                spawn(move || olap_tests(
+                    index,
+                    olap_workers,
+                    olaps_per_worker,
+                    olap_skew_workers,
+                    olaps_key_range,
+                    olaps_si_freshest,
+                    Some(signal)));
 
-                let insert_thread = spawn(move || {
-                    let interval
-                        = Duration::from_secs_f64(1.0  / inserts_per_second as f64);
-
-                    let mut run_ticks = 0usize;
-                    let mut skipped_ticks = 0;
-                    let mut next_tick = Instant::now();
-                    loop {
-                        match insert_wire.try_recv() {
-                            Err(TryRecvError::Disconnected) =>
-                                break (run_ticks, skipped_ticks),
-                            _ => {
-                                let now = Instant::now();
-                                if now >= next_tick {
-                                    let _ = tree_insert.dispatch_crud(CRUDOperation::InsertRand);
-
-                                    let elapsed
-                                        = now.duration_since(next_tick);
-
-                                    let skipped_ticks_now
-                                        = (elapsed.as_secs_f64() / interval.as_secs_f64())
-                                        .floor() as u64 + 1;
-
-                                    skipped_ticks += skipped_ticks_now;
-                                    next_tick += interval * skipped_ticks_now as u32;
-                                } else {
-                                    thread::sleep(next_tick - now);
-                                }
-
-                                run_ticks += 1;
-                            }
-                        }
+                while start_time.elapsed().as_secs() < runtime_sec {
+                    match info_receiver.try_recv() {
+                        Ok(info) =>
+                            log_file.write_all(format!("{}\n", info).as_bytes()).unwrap(),
+                        _ => thread::yield_now()
                     }
-                });
-
-                let (olap_controller, olap_wire)
-                    = crossbeam_channel::bounded::<()>(0);
-
-                // thread::sleep(Duration::from_secs(1));
-                let olap_thread = spawn(move || {
-                    let mut run_ticks = 0usize;
-                    loop {
-                        match olap_wire.try_recv() {
-                            Err(TryRecvError::Disconnected) =>
-                                break run_ticks,
-                            _ => {
-                                let _ = tree.dispatch_crud(
-                                    CRUDOperation::Range(
-                                        (0..Key::MAX).into(),
-                                        rand::random_range(1..=tree.current_version()))
-                                );
-
-                                run_ticks += 1;
-                            }
-
-                        }
-                    }
-                });
-
-                let time = Instant::now();
-                while time.elapsed() < runtime {
-                    thread::sleep(Duration::from_millis(100));
                 }
-                mem::drop(insert_controller);
-                mem::drop(olap_controller);
-                let (inserts, skipped_inserts) = insert_thread.join().unwrap();
-                let olaps_executed = olap_thread.join().unwrap();
-                println!("\
-                Insertion rate: {}\n\
-                Runtime: {}seconds\n\
-                Inserted: {}\n\
-                Inserts skipped: {}\n\
-                Olaps executed:  {}",
-                         inserts_per_second,
-                         runtime_seconds,
-                         inserts, skipped_inserts,
-                         olaps_executed);
+
+                println!("Total Ops = {}", workers
+                    .into_iter()
+                    .map(|t| t.stop())
+                    .collect_vec()
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap())
+                    .sum::<usize>());
+
+                mem::drop(info_receiver);
             }
             "test" => {
                 let n = parms[2].parse().unwrap();
@@ -270,7 +239,7 @@ fn main() {
                     }
 
                 }
-                // olap_tests(tree, num_olaps, olaps_per_worker, skew, key_range, false)
+                // olap_tests(tree, num_olaps, olaps_per_worker, skew, key_range, false, None)
             }
             "generate" => {
                 let query_file_name= parms[2].as_str();
@@ -318,7 +287,7 @@ fn main() {
 
                 println!("Finished executing {} CRUD operations from {query_file_name},\
                  starting OLAP testings...", format_insertions(num));
-                olap_tests(index, num_olaps, workers_per_thread, skew, range, false);
+                olap_tests(index, num_olaps, workers_per_thread, skew, range, false, None);
             }
             s => println!("unknown command '{s}'-")
         }
@@ -369,7 +338,8 @@ fn olap_tests(index: Arc<MVTree>,
               workers_per_thread: usize,
               skew: f32,
               range: u64,
-              fixed_si: bool)
+              fixed_si: bool,
+              control_signal: Option<Receiver<ThreadWorkerInfo>>)
 {
     println!("Starting OLAPs...");
 
@@ -408,7 +378,12 @@ fn olap_tests(index: Arc<MVTree>,
         .unwrap();
 
     for _ in 0..num_olaps {
-        let index = index.clone();
+        let index
+            = index.clone();
+
+        let signal
+            = control_signal.clone();
+
         olaps.push(spawn(move || {
             let mut results = vec![];
             for _ in 1..workers_per_thread {
@@ -452,9 +427,16 @@ fn olap_tests(index: Arc<MVTree>,
                     _ => panic!()
                 };
                 results.push(
-                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent)
-                )
+                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent));
+
+                if let Some(signal) = signal.as_ref() {
+                    match signal.try_recv() {
+                        Err(TryRecvError::Disconnected) => break,
+                        _ => { }
+                    }
+                }
             }
+
             results
         }))
     }
