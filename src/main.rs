@@ -78,6 +78,32 @@ fn main() {
     }
     if parms.len() > 1  {
         match parms[1].as_str() {
+            "sorted_insert" => {
+                let query_file_name = parms[2].clone();
+                let n: usize = parms[3].parse().unwrap();
+                let _nc = fs::remove_file(query_file_name.as_str());
+
+                let mut query_file = BufWriter::new(OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(format!("{query_file_name}"))
+                    .unwrap());
+
+                let mut querys = 0_usize;
+
+                let mut io_handle = |key: Key| {
+                    let mut buff = [INSERT, 0, 0, 0, 0, 0, 0, 0, 0];
+                    buff[1..].copy_from_slice(key.to_le_bytes().as_slice());
+
+                    querys += 1;
+                    query_file.write_all(buff.as_slice()).unwrap()
+                };
+
+                (0..n as Key).into_iter().for_each(|op| io_handle(op));
+                query_file.flush().unwrap();
+
+                println!("Generated {querys} / {n} keys in sorted order in {query_file_name}!")
+            }
             "insert_rate_limiter" => {
                 let log                = parms[2].parse::<bool>().unwrap_or(false);
                 let runtime_sec        = parms[3].parse::<u64>().unwrap_or(10);
@@ -94,7 +120,7 @@ fn main() {
                     = unbounded();
 
                 let file_name
-                    = format!("runtime_{runtime_sec}_workers_{num_workers}_fps_{fps}_crud_{crud}.csv");
+                    = format!("mv_runtime_{runtime_sec}_workers_{num_workers}_fps_{fps}_crud_{crud}.csv");
 
                 let _ = fs::remove_file(file_name.as_str());
                 let mut log_file = BufWriter::new(OpenOptions::new()
@@ -263,6 +289,41 @@ fn main() {
                     block_deletes,
                 );
                 println!("Finished generate.")
+            }
+            "load_cc" => {
+                let query_file_name= parms[2].to_string();
+
+                let num_olaps = parms[3].parse().unwrap();
+                let workers_per_thread = parms[4].parse().unwrap();
+                let skew = parms[5].parse().unwrap();
+                let range = parms[6].parse().unwrap_or(Key::MAX);
+                let root_star_index = match parms[7].as_str() {
+                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
+                    _ => RootIndexType::default()
+                };
+                let index
+                    = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
+
+                println!("root_start_index = {}", root_star_index);
+
+                let index_c = index.clone();
+                let (olap_signal, olap_sink)
+                    = unbounded();
+
+                let query_file_name_clone = query_file_name.clone();
+                let num = spawn(move || load_query(query_file_name_clone.as_str(), index_c));
+                let olaps = spawn(move || olap_tests(
+                    index, num_olaps, workers_per_thread, skew, range, false, Some(olap_sink)));
+
+                let num = num.join().unwrap();
+                mem::drop(olap_signal);
+
+                olaps.join().unwrap();
+
+                println!("Finished executing {} CRUD operations from {query_file_name}", format_insertions(num));
             }
             "load" => {
                 let query_file_name= parms[2].as_str();
@@ -504,7 +565,7 @@ fn make_splash() {
     println!(" |               # Repository: https://github.com/umr-dbs/MV-BPlusTree   |");
     println!(" |               -----------------------------------------------------   |");
     println!(" |                                                                       |");
-    println!(" |               ...MV-B⁺Tree Application Launching...                   |");
+    println!(" |               ...MV-Tree Application Launching...                     |");
     println!(" +-------------+                                           +-------------+");
     println!("                \\_______                           _______/");
     println!("                        \\_________________________/");
@@ -570,7 +631,7 @@ fn generate_query(
     }
     mem::drop(map);
 
-    let _nc = fs::remove_file("{query_file_name}");
+    let _nc = fs::remove_file(format!("{query_file_name}"));
     let mut query_file = BufWriter::new(OpenOptions::new()
         .create(true)
         .append(true)
