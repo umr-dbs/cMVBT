@@ -8,7 +8,7 @@ use crate::mv_tree::mvtree::MVTreeSt;
 use mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::safe_cell::SafeCell;
 use chrono::{DateTime, Local};
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use libc::exit;
 use rand::prelude::SliceRandom;
 use std::fs::OpenOptions;
@@ -18,7 +18,7 @@ use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
-use crossbeam_channel::{unbounded, Receiver, TryRecvError};
+use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
@@ -147,7 +147,7 @@ fn main() {
                     olap_workers,
                     olaps_per_worker,
                     olap_skew_workers,
-                    olaps_key_range,
+                    Either::Left(olaps_key_range),
                     olaps_si_freshest,
                     Some(signal)));
 
@@ -314,9 +314,55 @@ fn main() {
                     = unbounded();
 
                 let query_file_name_clone = query_file_name.clone();
-                let num = spawn(move || load_query(query_file_name_clone.as_str(), index_c));
+                let num = spawn(move || load_query(
+                    query_file_name_clone.as_str(), index_c, None));
                 let olaps = spawn(move || olap_tests(
-                    index, num_olaps, workers_per_thread, skew, range, false, Some(olap_sink)));
+                    index, num_olaps, workers_per_thread, skew, Either::Left(range), false, Some(olap_sink)));
+
+                let num = num.join().unwrap();
+                mem::drop(olap_signal);
+
+                olaps.join().unwrap();
+
+                println!("Finished executing {} CRUD operations from {query_file_name}", format_insertions(num));
+            }
+            "load_cc_new" => {
+                let query_file_name= parms[2].to_string();
+
+                let num_olaps = parms[3].parse().unwrap();
+                let workers_per_thread = parms[4].parse().unwrap();
+                let skew = parms[5].parse().unwrap();
+                let root_star_index = match parms[6].as_str() {
+                    "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+                    "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+                    "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+                    "bt" => RootIndexType::BTree(LatchType::Optimistic),
+                    _ => RootIndexType::default()
+                };
+                let index
+                    = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
+
+                println!("root_start_index = {}", root_star_index);
+
+                let (loader_signal, loader_sink)
+                    = unbounded();
+
+                let index_c = index.clone();
+                let (olap_signal, olap_sink)
+                    = unbounded();
+
+                let query_file_name_clone = query_file_name.clone();
+                let num = spawn(move ||
+                    load_query(query_file_name_clone.as_str(), index_c, Some(loader_signal)));
+
+                let olaps = spawn(move || olap_tests(
+                    index,
+                    num_olaps,
+                    workers_per_thread,
+                    skew,
+                    Either::Right(loader_sink),
+                    false,
+                    Some(olap_sink)));
 
                 let num = num.join().unwrap();
                 mem::drop(olap_signal);
@@ -344,11 +390,17 @@ fn main() {
 
                 println!("root_start_index = {}", root_star_index);
 
-                let num = load_query(query_file_name, index.clone());
+                let num = load_query(query_file_name, index.clone(), None);
 
                 println!("Finished executing {} CRUD operations from {query_file_name},\
                  starting OLAP testings...", format_insertions(num));
-                olap_tests(index, num_olaps, workers_per_thread, skew, range, false, None);
+                olap_tests(index,
+                           num_olaps,
+                           workers_per_thread,
+                           skew,
+                           Either::Left(range),
+                           false,
+                           None);
             }
             s => println!("unknown command '{s}'-")
         }
@@ -396,9 +448,9 @@ fn main() {
 
 fn olap_tests(index: Arc<MVTree>,
               num_olaps: usize,
-              workers_per_thread: usize,
+              tx_per_thread: usize,
               skew: f32,
-              range: u64,
+              range: Either<Key, Receiver<Key>>,
               fixed_si: bool,
               control_signal: Option<Receiver<ThreadWorkerInfo>>)
 {
@@ -445,22 +497,33 @@ fn olap_tests(index: Arc<MVTree>,
         let signal
             = control_signal.clone();
 
+        let range = range.clone();
         olaps.push(spawn(move || {
             let mut results = vec![];
-            for _ in 1..workers_per_thread {
-                let mut key_min
-                    = rand::random_range(0..Key::MAX);
+            for _ in 1..tx_per_thread {
+                let mut key_max = 1000;
+                let mut key_min= Key::MIN;
+                if let Either::Left(range) = range {
+                    key_min = rand::random_range(0..range);
+                    key_max = key_min.checked_add(1000).unwrap_or(Key::MAX);
 
-                let mut key_max
-                    = key_min.checked_add(range).unwrap_or(Key::MAX);
-
-                if range == Key::MAX {
-                    key_min = 0;
-                    key_max = Key::MAX - 1;
+                    if range == Key::MAX {
+                        key_min = 0;
+                        key_max = Key::MAX;
+                    }
+                    else if key_max >= Key::MAX {
+                        key_max = key_min;
+                        key_min -= range;
+                    }
                 }
-                else if key_max >= Key::MAX {
-                    key_max = key_min;
-                    key_min -= range;
+                else if let Either::Right(ref range) = range {
+                    match range.try_recv() {
+                        Ok(key) => {
+                            key_max = key;
+                            key_min = key_max.checked_sub(1000).unwrap_or(0);
+                        }
+                        _ => {}
+                    }
                 }
 
                 let current_si
@@ -698,7 +761,9 @@ fn generate_query(
     println!("Generated: {} CRUD Ops", format_insertions(querys))
 }
 
-fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
+fn load_query(query_file: &str, index: Arc<MVTree>,
+              report_signal: Option<Sender<Key>>) -> usize
+{
     let mut query_file = BufReader::new(OpenOptions::new()
         .read(true)
         .open(format!("{query_file}"))
@@ -712,12 +777,16 @@ fn load_query(query_file: &str, index: Arc<MVTree>) -> usize {
         match query_file.read_exact(buff.as_mut_slice()) {
             Ok(..) => match buff[0] {
                 INSERT => {
+                    let key = Key::from_le_bytes((&buff[1..]).try_into().unwrap());
                     let crud = CRUDOperation::Insert(
-                        Key::from_le_bytes((&buff[1..]).try_into().unwrap()),
+                        key,
                         payload
                     );
 
                     if let CRUDOperationResult::Inserted(..) = index.dispatch_crud(crud) {
+                        if let Some(ref sender) = report_signal {
+                            sender.send(key).unwrap();
+                        }
                     } else {
                         panic!("Error loading query insert number = {}", query_count)
                     }
@@ -768,7 +837,7 @@ fn bernhard_tests_new() {
     let mv_tree
         = Arc::new(MVTreeSt::default());
 
-    let num_cruds = load_query(QUERY_NAME, mv_tree.clone());
+    let num_cruds = load_query(QUERY_NAME, mv_tree.clone(), None);
 
     println!("[Loaded] - \
     Query with {} CRUD instructions dispatched to MVTree.", format_insertions(num_cruds));
