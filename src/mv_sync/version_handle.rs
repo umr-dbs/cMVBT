@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use parking_lot::Mutex;
-use std::sync::atomic::Ordering::{AcqRel, Acquire};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::clock::{ClockHandle, GlobalClock};
@@ -92,11 +92,8 @@ impl<const FAN_OUT: usize,
                 *version = *version + 1;
                 Ok(*version)
             },
-            ClockHandle::Optimistic(atomic, seen) =>
-                match atomic.compare_exchange_weak(seen, seen + 1, AcqRel, Acquire) {
-                    Ok(prev) => Ok(prev + 1),
-                    Err(curr) => Err(ClockHandle::Optimistic(atomic, curr))
-                }
+            ClockHandle::Optimistic(atomic, ..) =>
+                Ok(atomic.fetch_add(1, SeqCst)),
         }
     }
 }

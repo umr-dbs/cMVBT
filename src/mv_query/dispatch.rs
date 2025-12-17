@@ -474,11 +474,11 @@ impl<'a,
 
                     match leaf_page.as_records()
                         .iter()
-                        .find(|r| r.key == gen_key)
+                        .rfind(|r| r.key == gen_key)
                     {
                         None => break Some(gen_key),
-                        // Some(record) if record.version().is_deleted() =>
-                        //     break Some(gen_key), // Incorrect logic: Must update not insert!
+                        Some(record) if record.version().is_deleted() =>
+                            break Some(gen_key),
                         _ if rand_attempts >= RAND_ATTEMPTS_MAX => break None,
                         _ => {
                             rand_attempts += 1;

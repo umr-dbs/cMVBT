@@ -18,6 +18,8 @@ use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
@@ -189,12 +191,13 @@ fn main() {
                 let mut check = HashMap::new();
                 let mut errors = 0;
 
+                let p = AtomicU64::new(0);
                 while check.len() < n {
                     let key
-                        = rand::random_range(0..Key::MAX);
+                        = rand::random_range(0..100_000_000);
 
                     if !check.contains_key(&key) {
-                        match tree.dispatch_crud(CRUDOperation::Insert(key, Payload::default())) {
+                        match tree.dispatch_crud(CRUDOperation::Insert(key, p.fetch_add(1, SeqCst))) {
                             CRUDOperationResult::Inserted(v) => {
                                 check.insert(key, v);
                             }
@@ -208,8 +211,25 @@ fn main() {
                 }
                 for (k, _) in check.iter() {
                     (0..1_00).for_each(|_| {
-                        match tree.dispatch_crud(CRUDOperation::Update(*k, Payload::default())) {
+                        match tree.dispatch_crud(CRUDOperation::Update(*k, p.fetch_add(1, SeqCst))) {
                             CRUDOperationResult::Updated(_) => {}
+                            _ => panic!()
+                        }
+                    });
+                }
+
+                for (k, v) in check.iter() {
+                    (0..1_00).for_each(|o| {
+                        match tree.dispatch_crud(CRUDOperation::Point(*k, *v + o)) {
+                            CRUDOperationResult::MatchedRecords(r) =>
+                            if r.len() == 1 && r[0].payload <= *v + o {
+
+                            }
+                            else {
+                                println!("Found Version = {}\nQuery Version = {}",
+                                         r[0].payload,
+                                         *v + o);
+                            }
                             _ => panic!()
                         }
                     });
@@ -226,6 +246,15 @@ fn main() {
                 let end_root = SystemTime::now().duration_since(start_root).unwrap();
                 println!("{root_star_index} -> Root access: {end_root:?}");
 
+                olap_tests(
+                    tree,
+                    num_olaps,
+                    olaps_per_worker,
+                    0f32,
+                    Either::Left(key_range),
+                    false,
+                    None
+                );
                 return;
                 let start_time_iter = SystemTime::now();
                 let iter_range = tree
@@ -344,24 +373,25 @@ fn main() {
 
                 println!("root_start_index = {}", root_star_index);
 
-                let (loader_signal, loader_sink)
-                    = unbounded();
+                let atomic_key
+                    = Arc::new(AtomicU64::new(0));
 
                 let index_c = index.clone();
                 let (olap_signal, olap_sink)
                     = unbounded();
 
+                let atomic_key_clone = atomic_key.clone();
                 let query_file_name_clone = query_file_name.clone();
                 let num = spawn(move ||
-                    load_query(query_file_name_clone.as_str(), index_c, Some(loader_signal)));
+                    load_query(query_file_name_clone.as_str(), index_c, Some(atomic_key_clone)));
 
                 let olaps = spawn(move || olap_tests(
                     index,
                     num_olaps,
                     workers_per_thread,
                     skew,
-                    Either::Right(loader_sink),
-                    false,
+                    Either::Right(atomic_key),
+                    true,
                     Some(olap_sink)));
 
                 let num = num.join().unwrap();
@@ -450,7 +480,7 @@ fn olap_tests(index: Arc<MVTree>,
               num_olaps: usize,
               tx_per_thread: usize,
               skew: f32,
-              range: Either<Key, Receiver<Key>>,
+              range: Either<Key, Arc<AtomicU64>>,
               fixed_si: bool,
               control_signal: Option<Receiver<ThreadWorkerInfo>>)
 {
@@ -500,37 +530,33 @@ fn olap_tests(index: Arc<MVTree>,
         let range = range.clone();
         olaps.push(spawn(move || {
             let mut results = vec![];
-            for _ in 1..tx_per_thread {
+            let mut tx_c = 0;
+            while tx_c < tx_per_thread {
                 let mut key_max = 1000;
                 let mut key_min= Key::MIN;
                 if let Either::Left(range) = range {
                     key_min = rand::random_range(0..range);
                     key_max = key_min.checked_add(1000).unwrap_or(Key::MAX);
 
-                    if range == Key::MAX {
-                        key_min = 0;
-                        key_max = Key::MAX;
-                    }
-                    else if key_max >= Key::MAX {
-                        key_max = key_min;
-                        key_min -= range;
-                    }
+                    // if range == Key::MAX {
+                    //     key_min = 0;
+                    //     key_max = Key::MAX;
+                    // }
+                    // else if key_max >= Key::MAX {
+                    //     key_max = key_min;
+                    //     key_min -= range;
+                    // }
                 }
                 else if let Either::Right(ref range) = range {
-                    match range.try_recv() {
-                        Ok(key) => {
-                            key_max = key;
-                            key_min = key_max.checked_sub(1000).unwrap_or(0);
-                        }
-                        _ => {}
-                    }
+                    key_max =  range.load(Acquire);
+                    key_min = key_max.checked_sub(1000).unwrap_or(0);
                 }
 
                 let current_si
                     = index.current_version();
 
                 let si = if fixed_si  {
-                    current_si+1
+                    current_si
                 }
                 else {
                     rand::random_range(1..=current_si)
@@ -559,6 +585,8 @@ fn olap_tests(index: Arc<MVTree>,
                         _ => { }
                     }
                 }
+
+                tx_c += 1;
             }
 
             results
@@ -762,7 +790,7 @@ fn generate_query(
 }
 
 fn load_query(query_file: &str, index: Arc<MVTree>,
-              report_signal: Option<Sender<Key>>) -> usize
+              report_signal: Option<Arc<AtomicU64>>) -> usize
 {
     let mut query_file = BufReader::new(OpenOptions::new()
         .read(true)
@@ -785,7 +813,7 @@ fn load_query(query_file: &str, index: Arc<MVTree>,
 
                     if let CRUDOperationResult::Inserted(..) = index.dispatch_crud(crud) {
                         if let Some(ref sender) = report_signal {
-                            sender.send(key).unwrap();
+                            sender.store(key, Ordering::Release);
                         }
                     } else {
                         panic!("Error loading query insert number = {}", query_count)
