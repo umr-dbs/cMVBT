@@ -37,7 +37,7 @@ impl<const FANOUT: usize,
     #[inline(always)]
     pub fn root_for(&self, si: SnapShot) -> Root<FANOUT, NUM_RECORDS, Key, Payload> {
         let root_si
-            = self.0.range(..=si).rev().next().unwrap();
+            = self.0.range(..=si).last().unwrap();
 
         Root::new(root_si.value().block(), *root_si.key(), root_si.value().height())
     }

@@ -535,20 +535,11 @@ fn olap_tests(index: Arc<MVTree>,
                 let mut key_max = 1000;
                 let mut key_min= Key::MIN;
                 if let Either::Left(range) = range {
-                    key_min = rand::random_range(0..range);
-                    key_max = key_min.checked_add(1000).unwrap_or(Key::MAX);
-
-                    // if range == Key::MAX {
-                    //     key_min = 0;
-                    //     key_max = Key::MAX;
-                    // }
-                    // else if key_max >= Key::MAX {
-                    //     key_max = key_min;
-                    //     key_min -= range;
-                    // }
+                    key_min = 0;
+                    key_max = range;
                 }
                 else if let Either::Right(ref range) = range {
-                    key_max =  range.load(Acquire);
+                    key_max = range.load(Acquire);
                     key_min = key_max.checked_sub(1000).unwrap_or(0);
                 }
 
@@ -582,7 +573,7 @@ fn olap_tests(index: Arc<MVTree>,
                 if let Some(signal) = signal.as_ref() {
                     match signal.try_recv() {
                         Err(TryRecvError::Disconnected) => break,
-                        _ => { }
+                        _ => continue
                     }
                 }
 

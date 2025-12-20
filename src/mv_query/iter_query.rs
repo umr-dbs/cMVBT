@@ -77,7 +77,7 @@ impl<'a,
             = self.mv_tree().inc_key;
 
         loop {
-            if self.path.is_empty() || self.range.lower > self.range.upper || self.range.lower == self.mv_tree().max_key {
+            if self.path.is_empty() || self.range.lower > self.range.upper {
                 return None
             }
             let (curr_fence, curr_block)
@@ -98,13 +98,12 @@ impl<'a,
                         .enumerate()
                         .rev()
                         .skip(start_pos_si)
-                        .filter_map(|(pos, (v, range))|
+                        .find_map(|(pos, (v, range))|
                             if range.contains(self.range.lower) && v.matched(si) {
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))
                             } else {
                                 None
                             })
-                        .next()
                     {
                         Some(next) => self.path.push(next),
                         _ => {
@@ -130,9 +129,13 @@ impl<'a,
                             r.version().matches(si) && self.range.contains(r.key()))
                         .map(RecordPointResult::from));
 
-                    self.range.lower = inc(curr_fence.upper);
                     self.path.pop();
 
+                    if self.range.lower == self.mv_tree().max_key {
+                        return self.buff.pop_front()
+                    }
+
+                    self.range.lower = inc(curr_fence.upper);
                     if !self.buff.is_empty() {
                         return self.buff.pop_front()
                     }

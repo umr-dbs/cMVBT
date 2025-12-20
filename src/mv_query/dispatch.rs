@@ -168,7 +168,14 @@ impl<'a,
                     }
                 };
 
-                match leaf_page.delete(key, committed_version) {
+                // Invariant: (I use local window for now; later ima split this into
+                // publish first, the mark delete)
+
+                // A version must not become invisible
+                // before its replacement is guaranteed to be visible everywhere.
+                // -> Old version stays visible throughout the publication window.
+                
+                match leaf_page.delete(key, committed_version+1) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(0, 1);
                         CRUDOperationResult::Updated(committed_version)

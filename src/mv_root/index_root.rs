@@ -317,7 +317,7 @@ impl<const FAN_OUT: usize,
             RootIndex::SkipList(sk, ..) =>  unsafe {
                 &*sk.data_ptr() }.root_for(si),
             RootIndex::LinkedList(ll, ..) =>  unsafe {
-                &*ll.data_ptr() }.iter().rev().find(|r| r.version() <= si).unwrap().clone(),
+                &*ll.data_ptr() }.iter().rfind(|r| r.version() <= si).unwrap().clone(),
             RootIndex::FrugalList(fg) => unsafe {
                 let fg
                     = &*fg.data_ptr();
