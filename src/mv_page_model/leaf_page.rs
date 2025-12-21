@@ -291,4 +291,26 @@ impl<const NUM_RECORDS: usize,
             _ => Ok(None)
         }
     }
+
+    #[inline]
+    pub(crate) fn delete_after_update(&mut self, key: Key, del: Version) -> Result<Option<VersionInfo>, ()>  {
+        match self.as_records_mut()
+            .iter_mut()
+            .rev()
+            .skip(1)
+            .find(|record| record.key == key)
+        {
+            Some(record) => {
+                let ver_info = record
+                    .version_mut();
+
+                if ver_info.delete(del) {
+                    Ok(Some(ver_info.clone()))
+                } else {
+                    Err(())
+                }
+            }
+            _ => Ok(None)
+        }
+    }
 }

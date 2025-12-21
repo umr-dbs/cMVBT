@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use std::hash::Hash;
 use parking_lot::lock_api::MutexGuard;
 use parking_lot::{Mutex, RawMutex};
 use std::ops::Deref;
@@ -6,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::version_handle::VersionHandle;
+use crate::mv_tree::mvtree::MVTreeSt;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum ClockType {
@@ -82,5 +84,16 @@ impl ClockHandle<'_> {
     /// Returns false, otherwise.
     pub(crate) const fn is_locked(&self) -> bool {
         !self.is_free()
+    }
+
+    #[inline]
+    pub(crate) fn end_commit<
+        const FAN_OUT: usize,
+        const NUMBER_RECORDS: usize,
+        Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+        Payload: Display + Clone + Default + Sync + 'static
+    >(self, index: &MVTreeSt<FAN_OUT, NUMBER_RECORDS, Key, Payload>) -> Version
+    {
+        index.end_commit(self)
     }
 }

@@ -131,12 +131,8 @@ impl<'a,
 
                     self.path.pop();
 
-                    if self.range.lower == self.mv_tree().max_key {
-                        return self.buff.pop_front()
-                    }
-
                     self.range.lower = inc(curr_fence.upper);
-                    if !self.buff.is_empty() {
+                    if !self.buff.is_empty() || self.range.lower == self.mv_tree().max_key {
                         return self.buff.pop_front()
                     }
                 }

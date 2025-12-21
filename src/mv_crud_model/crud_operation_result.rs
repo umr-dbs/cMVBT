@@ -92,7 +92,7 @@ impl<'a,
                        iter.range.upper(),
                        iter.isolated_snapshot.snapshot()),
             CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyAlreadyDeleted) =>
-                write!(f, "ZeroAffected(KeyAlreadyDeleted"),
+                write!(f, "ZeroAffected(KeyAlreadyDeleted)"),
             CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyDoesNotExist) =>
                 write!(f, "ZeroAffected(KeyDoesNotExist)"),
             CRUDOperationResult::InsertedRand(key, version) =>

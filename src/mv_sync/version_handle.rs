@@ -6,6 +6,7 @@ use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::clock::{ClockHandle, GlobalClock};
 use crate::mv_sync::safe_cell::SafeCell;
+use crate::mv_sync::smart_cell::sched_yield;
 
 /// Structure wrapping the VC counter via a FairMutex.
 #[derive(Clone)]
@@ -72,7 +73,7 @@ impl<const FAN_OUT: usize,
 
     /// Applies adaptive lock on commit version counter.
     #[inline]
-    pub(crate) fn begin_commit(&self) -> ClockHandle {
+    pub(crate) fn begin_commit(&self) -> ClockHandle<'_> {
         match &self.version_manager.committed_version {
             GlobalClock::Locked(claw) => ClockHandle::Locked(claw.lock()),
             GlobalClock::Atomic(opt) => ClockHandle::Optimistic(&opt, opt.load(Acquire)),
@@ -95,5 +96,29 @@ impl<const FAN_OUT: usize,
             ClockHandle::Optimistic(atomic, ..) =>
                 Ok(atomic.fetch_add(1, SeqCst)),
         }
+    }
+
+    #[inline]
+    pub(crate) fn end_commit(&self, mut commit_handle: ClockHandle) -> Version {
+        let mut commit_attempts = 0;
+        loop {
+            match self.try_end_commit(commit_handle) {
+                Ok(commit) if commit_attempts > 0 =>
+                    break commit,
+                Ok(commit) =>
+                    break commit,
+                Err(opt) => {
+                    commit_attempts += 1;
+                    sched_yield(commit_attempts);
+                    commit_handle = opt
+                }
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn commit(&self) -> Version {
+        self.begin_commit()
+            .end_commit(self)
     }
 }

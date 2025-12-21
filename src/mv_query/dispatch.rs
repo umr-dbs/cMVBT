@@ -134,51 +134,21 @@ impl<'a,
                     _ => { }
                 }
 
-                let mut commit_handle
-                    = self.begin_commit();
-
                 let version
-                    = commit_handle.read_handle_version();
+                    = self.commit();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                let mut commit_attempts
-                    = 0;
+                // soft commit for atomic visibility of new published record
+                leaf_page.commit_delta(1, 0);
 
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let records = leaf_page
-                                .as_records_uncommitted_mut();
-
-                            records.get_unchecked_mut(current_len)
-                                .version_mut()
-                                .insert_version = commit;
-
-                            break commit;
-                        }
-                        Ok(..) => break version,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
-
-                // Invariant: (I use local window for now; later ima split this into
-                // publish first, the mark delete)
-
-                // A version must not become invisible
-                // before its replacement is guaranteed to be visible everywhere.
-                // -> Old version stays visible throughout the publication window.
-                
-                match leaf_page.delete(key, committed_version+1) {
+                match leaf_page.delete_after_update(key, version) {
                     Ok(Some(..)) => {
-                        leaf_page.commit_delta(0, 1);
-                        CRUDOperationResult::Updated(committed_version)
+                        // Apply second soft atomic commit for lifetime end
+                        leaf_page.commit_delta(-1, 1);
+                        CRUDOperationResult::Updated(version)
                     }
                     Ok(None) => {
                         leaf_page.undo_uncommitted(current_len);

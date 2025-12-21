@@ -802,12 +802,13 @@ fn load_query(query_file: &str, index: Arc<MVTree>,
                         payload
                     );
 
-                    if let CRUDOperationResult::Inserted(..) = index.dispatch_crud(crud) {
+                    let r = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Inserted(..) = r {
                         if let Some(ref sender) = report_signal {
                             sender.store(key, Ordering::Release);
                         }
                     } else {
-                        panic!("Error loading query insert number = {}", query_count)
+                        panic!("Error loading query insert number = {}: {r}", query_count)
                     }
                 }
                 UPDATE => {
@@ -816,20 +817,22 @@ fn load_query(query_file: &str, index: Arc<MVTree>,
                         payload
                     );
 
-                    if let CRUDOperationResult::Updated(..) = index.dispatch_crud(crud) {
+                    let r = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Updated(..) = r {
                     }
                     else {
-                        panic!("Error loading query update number = {}", query_count)
+                        panic!("Error loading query update number = {}: {r}", query_count)
                     }
                 }
                 DELETE => {
                     let crud = CRUDOperation::Delete(
                         Key::from_le_bytes(buff[1..].try_into().unwrap()));
 
-                    if let CRUDOperationResult::Deleted(..) = index.dispatch_crud(crud) {
+                    let r = index.dispatch_crud(crud);
+                    if let CRUDOperationResult::Deleted(..) = r {
                     }
                     else {
-                        panic!("Error loading query delete number = {}", query_count)
+                        panic!("Error loading query delete number = {}: {r}", query_count)
                     }
                 }
                 _ => panic!("Unknown CRUD Operation for blocks in load query!"),
