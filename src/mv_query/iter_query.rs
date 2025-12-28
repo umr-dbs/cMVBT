@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
+use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
@@ -127,6 +128,7 @@ impl<'a,
                         // .skip(start_pos_si)
                         .filter(|r|
                             r.version().matches(si) && self.range.contains(r.key()))
+                        .unique_by(|r| r.key())
                         .map(RecordPointResult::from));
 
                     self.path.pop();

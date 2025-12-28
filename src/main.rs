@@ -296,6 +296,28 @@ fn main() {
                 }
                 // olap_tests(tree, num_olaps, olaps_per_worker, skew, key_range, false, None)
             }
+            "append" => {
+                let query_file_name= parms[2].as_str();
+                let total_blocks: usize = parms[4].parse().unwrap();
+                let block_inserts: usize = parms[5].parse().unwrap();
+                let block_updates: usize = parms[6].parse().unwrap();
+                let block_deletes: usize = parms[7].parse().unwrap();
+
+                println!("Appending-Mode\n\
+                total_blocks = {total_blocks}\n\
+                block_inserts = {block_inserts}\n\
+                block_updates = {block_updates}\n\
+                block_deletes = {block_deletes}");
+                generate_query(
+                    query_file_name,
+                    0,
+                    total_blocks,
+                    block_inserts,
+                    block_updates,
+                    block_deletes,
+                );
+                println!("Finished generate.")
+            }
             "generate" => {
                 let query_file_name= parms[2].as_str();
                 let init_population: usize = parms[3].parse().unwrap();
@@ -713,7 +735,13 @@ fn generate_query(
     }
     mem::drop(map);
 
-    let _nc = fs::remove_file(format!("{query_file_name}"));
+    if init_population > 0 {
+        let _nc = fs::remove_file(format!("{query_file_name}"));
+    }
+    else {
+        load_query(query_file_name, mv_tree.clone(), None);
+    }
+
     let mut query_file = BufWriter::new(OpenOptions::new()
         .create(true)
         .append(true)
@@ -777,7 +805,14 @@ fn generate_query(
     }
 
     query_file.flush().unwrap();
-    println!("Generated: {} CRUD Ops", format_insertions(querys))
+    if init_population > 0 {
+        println!("Generated: {} CRUD Ops", format_insertions(querys))
+    }
+    else {
+        let total_crud = query_file.into_inner().unwrap().metadata().unwrap().len() / 9;
+        println!("Appended: {} CRUD Ops. Total: {} CRUD Ops", format_insertions(querys), format_insertions(total_crud as _))
+    }
+
 }
 
 fn load_query(query_file: &str, index: Arc<MVTree>,
