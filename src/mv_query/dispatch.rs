@@ -47,42 +47,18 @@ impl<'a,
                 let current_len
                     = leaf_page.len();
 
-                let mut commit_handle
-                    = self.begin_commit();
-
                 let version
-                    = commit_handle.read_handle_version();
+                    = self.start_tx_commit();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                let mut commit_attempts
-                    = 0;
-
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let records
-                                = leaf_page.as_records_uncommitted_mut();
-
-                            records.get_unchecked_mut(current_len)
-                                .version_mut()
-                                .insert_version = commit;
-
-                            break commit;
-                        }
-                        Ok(..) => break version,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
-
                 leaf_page.commit_delta(1, 0);
-                CRUDOperationResult::Inserted(committed_version)
+
+                self.end_tx_commit(version);
+
+                CRUDOperationResult::Inserted(version)
             }
             CRUDOperation::Update(key, payload) => {
                 let leaf_guard = if is_concurrent {
@@ -113,7 +89,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::Updated(self.current_version())
+                                return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
                             _ => { }
                         }
@@ -126,7 +102,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::Updated(self.current_version())
+                                return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
                             _ => { }
                         }
@@ -135,7 +111,7 @@ impl<'a,
                 }
 
                 let version
-                    = self.commit();
+                    = self.start_tx_commit();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
@@ -148,6 +124,8 @@ impl<'a,
                     Ok(Some(..)) => {
                         // Apply second soft atomic commit for lifetime end
                         leaf_page.commit_delta(-1, 1);
+                        self.end_tx_commit(version);
+
                         CRUDOperationResult::Updated(version)
                     }
                     Ok(None) => {
@@ -187,39 +165,25 @@ impl<'a,
                 if VERBOSE {
                     println!("[key={key}] - Begin_commit()");
                 }
-                let mut commit_handle
-                    = self.begin_commit();
-
                 if VERBOSE {
                     println!("[key={key}] - Loop start");
                 }
-                let mut commit_attempts
-                    = 0;
 
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) => break commit,
-                        Err(opt) => {
-                            if VERBOSE {
-                                println!("[key={key}] - Commit failed; Attempt {commit_attempts}");
-                            }
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
+                let version
+                    = self.start_tx_commit();
+
                 if VERBOSE {
-                    println!("[key={key}] - Commit succeeded: {committed_version}, Attempts: {commit_attempts}");
+                    println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
                 }
-                match leaf_page.delete(key, committed_version) {
+                match leaf_page.delete(key, version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(-1, 1);
                         if VERBOSE {
                             println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
                         }
 
-                        CRUDOperationResult::Deleted(committed_version)
+                        self.end_tx_commit(version);
+                        CRUDOperationResult::Deleted(version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
@@ -289,7 +253,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::UpdatedRand(key, self.current_version())
+                                return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
                             _ => { }
                         }
@@ -302,7 +266,7 @@ impl<'a,
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
 
-                                return CRUDOperationResult::UpdatedRand(key, self.current_version())
+                                return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
                             _ => { }
                         }
@@ -310,44 +274,22 @@ impl<'a,
                     _ => { }
                 }
 
-                let mut commit_handle
-                    = self.begin_commit();
-
                 let version
-                    = commit_handle.read_handle_version();
+                    = self.start_tx_commit();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                let mut commit_attempts
-                    = 0;
-
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let records = leaf_page
-                                .as_records_uncommitted_mut();
-
-                            records.get_unchecked_mut(current_len)
-                                .version_mut()
-                                .insert_version = commit;
-
-                            break commit;
-                        }
-                        Ok(..) => break version,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
-
-                match leaf_page.delete(key, committed_version) {
+                // two steps soft commit: Mark new record visible
+                leaf_page.commit_delta(1, 0);
+                match leaf_page.delete(key, version) {
                     Ok(Some(..)) => {
-                        leaf_page.commit_delta(0, 1);
-                        CRUDOperationResult::UpdatedRand(key, committed_version)
+                        // second step soft commit: Correct counters
+                        leaf_page.commit_delta(-1, 1);
+                        self.end_tx_commit(version);
+
+                        CRUDOperationResult::UpdatedRand(key, version)
                     }
                     Ok(None) => {
                         leaf_page.undo_uncommitted(current_len);
@@ -389,36 +331,21 @@ impl<'a,
                     }
                 };
 
-                let mut commit_handle
-                    = self.begin_commit();
+                let version
+                    = self.start_tx_commit();
 
-                let mut commit_attempts
-                    = 0;
-
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) => break commit,
-                        Err(opt) => {
-                            if VERBOSE {
-                                println!("[key={key}] - Commit failed; Attempt {commit_attempts}");
-                            }
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
                 if VERBOSE {
-                    println!("[key={key}] - Commit succeeded: {committed_version}, Attempts: {commit_attempts}");
+                    println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
                 }
-                match leaf_page.delete(key, committed_version) {
+                match leaf_page.delete(key, version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(-1, 1);
                         if VERBOSE {
                             println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
                         }
 
-                        CRUDOperationResult::DeletedRand(key, committed_version)
+                        self.end_tx_commit(version);
+                        CRUDOperationResult::DeletedRand(key, version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
@@ -482,42 +409,17 @@ impl<'a,
                 let current_len
                     = leaf_page.len();
 
-                let mut commit_handle
-                    = self.begin_commit();
-
                 let version
-                    = commit_handle.read_handle_version();
+                    = self.start_tx_commit();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                let mut commit_attempts
-                    = 0;
-
-                let committed_version = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let records
-                                = leaf_page.as_records_uncommitted_mut();
-
-                            records.get_unchecked_mut(current_len)
-                                .version_mut()
-                                .insert_version = commit;
-
-                            break commit;
-                        }
-                        Ok(..) => break version,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
-
                 leaf_page.commit_delta(1, 0);
-                CRUDOperationResult::InsertedRand(key, committed_version)
+                self.end_tx_commit(version);
+                
+                CRUDOperationResult::InsertedRand(key, version)
             }
             _ => CRUDOperationResult::Error,
         }

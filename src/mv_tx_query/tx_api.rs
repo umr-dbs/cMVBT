@@ -19,12 +19,12 @@ pub trait TransactionDispatcher<
     fn dispatch_transaction(
         &'a self,
         tx: Transaction<Key, Payload>,
-    ) -> TransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>;
+    ) -> TransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>;
 
     fn dispatch_atomic_transaction(
         &'a self,
         tx: AtomicTransaction<Key, Payload>,
-    ) -> AtomicTransactionResult<FAN_OUT, NUM_RECORDS, Key, Payload>;
+    ) -> AtomicTransactionResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>;
 }
 
 pub struct IsolatedSnapShot<
@@ -96,6 +96,6 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn snapshot_current(&self) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key, Payload> {
-        IsolatedSnapShot(self.version_manager.committed_version(), unsafe { mem::transmute(self) })
+        IsolatedSnapShot(self.current_version_for_reader(), unsafe { mem::transmute(self) })
     }
 }

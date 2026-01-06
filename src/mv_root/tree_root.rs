@@ -9,8 +9,8 @@ use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_record_model::version_info::Version;
 use crate::mv_root::root::Root;
 use crate::mv_tree::mvtree::INIT_TREE_HEIGHT;
-use crate::mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_sync::version_handle;
 use crate::mv_tx_model::transaction_result::SnapShot;
 // pub(crate) fn make_start_value_root_inner_tree<
 //     const F: usize,
@@ -22,7 +22,7 @@ use crate::mv_tx_model::transaction_result::SnapShot;
 //     (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionManager::START_VERSION)
 // }
 
-pub(crate) const TREE_ROOT_MIN_KEY: Version = VersionHandle::START_VERSION;
+pub(crate) const TREE_ROOT_MIN_KEY: Version = version_handle::START_VERSION;
 pub(crate) const TREE_ROOT_MAX_KEY: Version = Version::MAX;
 
 #[derive(Clone, Default)]

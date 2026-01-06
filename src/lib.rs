@@ -133,7 +133,7 @@ impl MVBTreeWithGCApiExport {
     #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
         let querying_v
-            = self.index().current_version();
+            = self.index().current_version_for_reader();
 
         match self.execute_on_caller_thread(AtomicTransaction::new(
             Some(querying_v),
@@ -187,7 +187,7 @@ impl MVBTreeWithGCApiExport {
     #[inline(always)]
     fn scan(&self, key: *const u8, _key_sz: usize, mut scan_sz: i32, mut values_out: *mut *mut u8) -> i32 {
         let querying_v
-            = self.index().current_version();
+            = self.index().current_version_for_reader();
 
         let key_start = unsafe { *(key as *const u64) };
         let key_end = key_start + scan_sz as u64 - 1;

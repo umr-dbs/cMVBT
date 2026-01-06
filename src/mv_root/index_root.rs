@@ -11,8 +11,8 @@ use crate::mv_root::root::Root;
 use crate::mv_root::sk_root::RootSkipList;
 use crate::mv_root::tree_root::{RootTree, ValueRootInner};
 use crate::mv_root::vanilla_root::VanillaRootSt;
-use crate::mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_sync::version_handle;
 use crate::mv_tree::smo::BlockUnsafeDegree;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
@@ -23,7 +23,7 @@ pub(crate) fn make_start_value_root_inner<
     Payload: Default + Clone>(bk: &BlockHandle<F, N, Key, Payload>, latch_type: LatchType
 ) -> (ValueRootInner<F, N, Key, Payload>, SnapShot)
 {
-    (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), VersionHandle::START_VERSION)
+    (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), version_handle::START_VERSION)
 }
 
 #[derive(Copy, Clone)]

@@ -218,79 +218,38 @@ impl<const FAN_OUT: usize,
                               right_fence,
                               right
             ) => {
-                let mut commit_handle
-                    = self.begin_commit();
+                let version
+                    = self.start_tx_commit();
 
                 internal_page.push_uncommitted(
                     left_fence,
-                    commit_handle.read_handle_version(),
+                    version,
                     left,
                     current_len);
 
                 internal_page.push_uncommitted(
                     right_fence,
-                    commit_handle.read_handle_version(),
+                    version,
                     right,
                     current_len + 1);
 
-                let mut commit_attempts
-                    = 0;
-
-                loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let versions
-                                = internal_page.versions_byKey_uncommitted_mut();
-
-                            *versions.get_unchecked_mut(current_len) = commit;
-                            *versions.get_unchecked_mut(current_len + 1) = commit;
-
-                            break;
-                        }
-                        Ok(..) => break,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                }
-
-                internal_page.mark_version_obsolete(child_index);
                 internal_page.commit_delta(1, 1);
+                internal_page.mark_version_obsolete(child_index);
+                self.end_tx_commit(version);
             }
             BlockSplit::ByVersion(fresh) => {
-                let mut commit_handle
-                    = self.begin_commit();
+                let version
+                    = self.start_tx_commit();
 
                 internal_page.push_uncommitted(
                     fence,
-                    commit_handle.read_handle_version(),
+                    version,
                     fresh,
                     current_len);
 
-                let mut commit_attempts
-                    = 0;
-
-                loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => {
-                            *internal_page
-                                .get_version_mut(current_len) = commit;
-
-                            break;
-                        }
-                        Ok(..) => break,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                }
-
-                internal_page.mark_version_obsolete(child_index);
                 internal_page.commit_delta(0, 1);
+                internal_page.mark_version_obsolete(child_index);
+                self.end_tx_commit(version);
             }
         }
 
@@ -339,43 +298,23 @@ impl<const FAN_OUT: usize,
 
                 merged_fence.merged(&fence_sibling);
 
-                let mut commit_handle
-                    = self.begin_commit();
+                let version
+                    = self.start_tx_commit();
 
                 mufasa_internal_page.push_uncommitted(
                     merged_fence,
-                    commit_handle.read_handle_version(),
+                    version,
                     merged_block,
                     mufasa_len);
 
-                let mut commit_attempts
-                    = 0;
-
-                loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => {
-                            *mufasa_internal_page
-                                .get_version_mut(mufasa_len) = commit;
-
-                            break;
-                        }
-                        Ok(..) => break,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                }
+                mufasa_internal_page
+                    .commit_delta(-1, 2);
 
                 mufasa_internal_page
                     .mark_version_obsolete(index_sibling);
 
                 mufasa_internal_page
                     .mark_version_obsolete(index_simba);
-
-                mufasa_internal_page
-                    .commit_delta(-1, 2);
 
                 self.block_manager.register_dead_col([
                     (mufasa_internal_page.get_version(index_simba),
@@ -415,55 +354,29 @@ impl<const FAN_OUT: usize,
                 let mufasa_len
                     = mufasa_internal_page.sum_len();
 
-                let mut commit_handle
-                    = self.begin_commit();
+                let version
+                    = self.start_tx_commit();
 
                 mufasa_internal_page.push_uncommitted(
                     left_interval,
-                    commit_handle.read_handle_version(),
+                    version,
                     left,
                     mufasa_len);
 
                 mufasa_internal_page.push_uncommitted(
                     right_interval,
-                    commit_handle.read_handle_version(),
+                    version,
                     right,
                     mufasa_len + 1);
 
-                let mut commit_attempts
-                    = 0;
-
-                loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let versions_uncommitted = mufasa_internal_page
-                                .versions_byKey_uncommitted_mut();
-
-                            *versions_uncommitted.get_unchecked_mut(mufasa_len)
-                                = commit;
-
-                            *versions_uncommitted.get_unchecked_mut(mufasa_len + 1)
-                                = commit;
-
-                            break;
-                        }
-                        Ok(..) => break,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                }
+                mufasa_internal_page
+                    .commit_delta(0, 2);
 
                 mufasa_internal_page
                     .mark_version_obsolete(index_sibling);
 
                 mufasa_internal_page
                     .mark_version_obsolete(index_simba);
-
-                mufasa_internal_page
-                    .commit_delta(0, 2);
 
                 self.block_manager.register_dead_col([
                     (mufasa_internal_page.get_version(index_simba),
@@ -1180,40 +1093,14 @@ impl<const FAN_OUT: usize,
                     .as_mut()
                     .as_internal_page();
 
-                let mut commit_handle
-                    = self.begin_commit();
-
-                let opt_commit_version = commit_handle
-                    .read_handle_version();
+                let version
+                    = self.start_tx_commit();
 
                 root_internal_page
-                    .push_uncommitted(left_fence, opt_commit_version, left, 0);
+                    .push_uncommitted(left_fence, version, left, 0);
 
                 root_internal_page
-                    .push_uncommitted(right_fence, opt_commit_version, right, 1);
-
-                let mut commit_attempts
-                    = 0;
-
-                let committed = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) if commit_attempts > 0 => unsafe {
-                            let versions
-                                = root_internal_page.versions_byKey_uncommitted_mut();
-
-                            *versions.get_unchecked_mut(0) = commit;
-                            *versions.get_unchecked_mut(1) = commit;
-
-                            break commit;
-                        },
-                        Ok(commit) => break commit,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
+                    .push_uncommitted(right_fence, version, right, 1);
 
                 root_internal_page.commit_delta(2, 0);
 
@@ -1229,29 +1116,17 @@ impl<const FAN_OUT: usize,
                 }
 
                 self.root.append_root(
-                    Root::new(new_root_block.clone(), committed, height + 1));
+                    Root::new(new_root_block.clone(), version, height + 1));
+
+                self.end_tx_commit(version);
 
                 root_guard = new_root_latch;
+
                 (height + 1, new_root_block)
             }
             BlockSplit::ByVersion(new_root_block) => {
-                let mut commit_handle
-                    = self.begin_commit();
-
-                let mut commit_attempts
-                    = 0;
-
-                let committed = loop {
-                    match self.try_end_commit(commit_handle) {
-                        Ok(commit) =>
-                            break commit,
-                        Err(opt) => {
-                            commit_attempts += 1;
-                            sched_yield(commit_attempts);
-                            commit_handle = opt
-                        }
-                    }
-                };
+                let version
+                    = self.start_tx_commit();
 
                 let mut new_root_latch
                     = new_root_block.borrow_read();
@@ -1265,9 +1140,12 @@ impl<const FAN_OUT: usize,
                 }
 
                 self.root.append_root(
-                    Root::new(new_root_block.clone(), committed, height));
+                    Root::new(new_root_block.clone(), version, height));
+
+                self.end_tx_commit(version);
 
                 root_guard = new_root_latch;
+
                 (height, new_root_block)
             }
         };

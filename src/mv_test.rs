@@ -24,7 +24,6 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_tx_query::tx_manager::TransactionManager;
 use crate::mv_page_model::node::PageType;
 use crate::mv_root::index_root::RootIndexType;
-use crate::mv_sync::clock::ClockType;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::interval::Interval;
 
@@ -112,7 +111,7 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
             = manager.tx_dispatcher();
 
         let mut current_version
-            = index.current_version();
+            = index.current_version_for_reader();
         
         let si_steps = current_version / number_olaps as u64;
         let limit = if FIXED_RANGE_VAR_SI {
@@ -134,7 +133,7 @@ pub fn olap(olap_id: u64, handler: IndexHandler, number_olaps: usize, n: usize)
                 target_si = si_steps * olap_id;
             }
             else {
-                current_version = index.current_version();
+                current_version = index.current_version_for_reader();
                 target_si = rand::random_range(1..=current_version);
 
                 key_range.lower = uni_form.sample(&mut rand::rng()) as RangeMax;
@@ -191,7 +190,6 @@ pub struct GroupConfig {
     olaps_tx_per_worker: usize,
     protocol: CRUDProtocol,
     v_index_type: VersionIndexType,
-    clock: ClockType,
     skew: f64,
     skew_n: usize,
     gc_enable: bool,
@@ -239,7 +237,7 @@ impl GroupConfig {
     }
 
     fn index_handler(&self) -> IndexHandler {
-        Either::Right((self.protocol.clone(), self.clock.clone()))
+        Either::Right(self.protocol.clone())
     }
 
     fn is_read_only(&self) -> bool {
@@ -268,7 +266,6 @@ impl Default for GroupConfig {
             chain_groups: vec![],
             protocol: Default::default(),
             v_index_type: VersionIndexType::VANILLA,
-            clock: ClockType::FREE,
             skew: 0.1,
             skew_n: 10000,
             gc_enable: false,
@@ -288,10 +285,9 @@ impl Display for GroupConfig {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{},{},{},{}",
             self.protocol,
             self.v_index_type,
-            self.clock,
             self.skew,
             self.skew_n,
             self.gc_enable,
@@ -326,7 +322,7 @@ impl Display for SubGroupConfig {
 }
 
 pub type IndexHandler =
-    Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>>, (CRUDProtocol, ClockType)>;
+    Either<Arc<TransactionManager<FAN_OUT, NUM_RECORDS, Key, Payload>>, CRUDProtocol>;
 
 fn load_config_experiments() -> Vec<GroupConfig> {
     match OpenOptions::new().read(true).open(CONFIG_PARAMETERS) {
@@ -362,7 +358,6 @@ pub fn execute_experiments() {
     time,\
     protocol,\
     version_index,\
-    clock,\
     skew,\
     skew_n,\
     gc_enable,\
@@ -394,10 +389,10 @@ pub fn execute_experiments() {
             let mut total_running_time = 0u128;
             
             if experiment.olap_workers > 0 {
-                if let Either::Right((protocol, clock_type)) = experiment.index_handler() {
+                if let Either::Right(protocol) = experiment.index_handler() {
                     print!("{SYSTEM_STR},{experiment_id},INIT,{init_target_tx}");
                     index_handler = Some(Either::Left(Arc::new(TransactionManager::new_unmanaged(
-                        MVTreeSt::make_standard(protocol, clock_type, RootIndexType::default()),
+                        MVTreeSt::make_standard(protocol, RootIndexType::default()),
                         experiment.gc_enable
                     ))));
                     olap_handle = Some(run_olaps(index_handler.clone().unwrap(),
@@ -597,11 +592,10 @@ pub fn execute_experiments() {
                     let (olap_w, olaps_per_w, olaps_joint_workload)
                         = (inner_group.olap_workers, inner_group.olaps_tx_per_worker, inner_group.olap_joint_workload);
 
-                    println!(",{},{},{},{},{h},{r},{alloc},{reuse},\
+                    println!(",{},{},{},{h},{r},{alloc},{reuse},\
                     {total_olap_time},{olap_w},{olaps_per_w},{avg_olap_sleep_time},{olaps_joint_workload},{total_running_time}",
                              experiment.protocol,
                              experiment.v_index_type,
-                             experiment.clock,
                              inner_group);
                 });
         })
@@ -920,8 +914,8 @@ fn experiment(
 
     let manager = match index_handler {
         Either::Left(m_manager) => m_manager,
-        Either::Right((protocol, clock_type)) => Arc::new(TransactionManager::new_unmanaged(
-            MVTreeSt::make_standard(protocol, clock_type, RootIndexType::default()),
+        Either::Right(protocol) => Arc::new(TransactionManager::new_unmanaged(
+            MVTreeSt::make_standard(protocol, RootIndexType::default()),
             gc_enable,
         )),
     };

@@ -5,7 +5,6 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_test::{format_insertions, Key, MVTree, Payload, Sampler, FAN_OUT, LOG_REORG, NUM_RECORDS};
 use crate::mv_tree::mvtree::MVTreeSt;
-use mv_sync::version_handle::VersionHandle;
 use crate::mv_sync::safe_cell::SafeCell;
 use chrono::{DateTime, Local};
 use itertools::{Either, Itertools};
@@ -14,7 +13,7 @@ use rand::prelude::SliceRandom;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::sync::{mpsc, Arc};
-use std::thread::spawn;
+use std::thread::{spawn, yield_now};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, fs, mem, thread};
 use std::collections::{HashMap, HashSet};
@@ -24,6 +23,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
 use crate::mv_sync::smart_cell::LatchType;
+use crate::mv_sync::version_handle;
 use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
 
 mod mv_block;
@@ -240,7 +240,7 @@ fn main() {
 
                 thread::sleep(Duration::from_millis(100));
 
-                println!("Roots present = {}", tree.root.count_roots());
+                println!("Roots present = {}", tree.count_roots());
                 let start_root = SystemTime::now();
                 tree.retrieve_root_for(1);
                 let end_root = SystemTime::now().duration_since(start_root).unwrap();
@@ -506,7 +506,7 @@ fn olap_tests(index: Arc<MVTree>,
               fixed_si: bool,
               control_signal: Option<Receiver<ThreadWorkerInfo>>)
 {
-    println!("Starting OLAPs...");
+    println!("Starting OLAPs...{num_olaps} threads, {tx_per_thread} scans per thread.");
 
     let mut olaps = vec![];
     let v_index = format!("mv_{}",
@@ -565,14 +565,18 @@ fn olap_tests(index: Arc<MVTree>,
                     key_min = key_max.checked_sub(1000).unwrap_or(0);
                 }
 
-                let current_si
-                    = index.current_version();
+                let mut current_si = index.current_version_for_reader();
+
+                while current_si == version_handle::START_VERSION {
+                    yield_now();
+                    current_si = index.current_version_for_reader();
+                }
 
                 let si = if fixed_si  {
                     current_si
                 }
                 else {
-                    rand::random_range(1..=current_si)
+                    rand::random_range(version_handle::START_VERSION..=current_si)
                 };
 
                 // println!("Min = {key_min}, max = {key_max}");
@@ -932,9 +936,13 @@ fn bernhard_tests_new() {
 
                 let key_min = 0;
 
-                let current_si = index.current_version();
+                let mut current_si = index.current_version_for_reader();
 
-                let si = rand::random_range(VersionHandle::START_VERSION..=current_si);
+                while current_si == version_handle::START_VERSION {
+                    yield_now();
+                    current_si = index.current_version_for_reader();
+                }
+                let si = rand::random_range(version_handle::START_VERSION..=current_si);
 
                 let time_start = SystemTime::now();
 
@@ -1157,9 +1165,14 @@ fn bernhard_tests() {
                         key_min -= RANGE_SIZE;
                     }
 
-                    let current_si = index.current_version();
+                    let mut current_si = index.current_version_for_reader();
 
-                    let si = rand::random_range(VersionHandle::START_VERSION..=current_si);
+                    while current_si == version_handle::START_VERSION {
+                        yield_now();
+                        current_si = index.current_version_for_reader();
+                    }
+
+                    let si = rand::random_range(version_handle::START_VERSION..=current_si);
 
                     let time_start = SystemTime::now();
 

@@ -20,7 +20,7 @@ impl<const FAN_OUT: usize,
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub(crate) fn retrieve_root_for(&self, lookup_version: Version)
+    pub fn retrieve_root_for(&self, lookup_version: Version)
                                     -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         self.root

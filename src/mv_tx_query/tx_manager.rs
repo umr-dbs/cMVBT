@@ -8,7 +8,6 @@ use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
 use crate::mv_gc::tracker_handle::{TrackerHandleSt, TrackerHandle};
-use crate::mv_sync::clock::ClockType;
 use crate::mv_sync::latch_protocol::LatchProtocol;
 use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
@@ -219,10 +218,6 @@ impl<const FAN_OUT: usize,
 
     pub fn locking_protocol(&self) -> &LatchProtocol {
         &self.index().locking_strategy
-    }
-
-    pub fn clock_type(&self) -> ClockType {
-        self.index().clock_type()
     }
 
     pub fn disable_gc(&self) {

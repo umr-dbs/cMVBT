@@ -1,6 +1,6 @@
 [package]
-name = "MV-BPlusTree"
-version = "0.0.96"
+name = "MVTree"
+version = "0.0.97"
 edition = "2021"
 authors = ["Amir Tonta <amir.tonta@mathematik.uni-marburg.de>"]
 description = "MV-Tree Research Implementation"
@@ -21,7 +21,7 @@ rustflags = ["-C", "target-cpu=native"]
 hardware-lock-elision = []
 
 [lib]
-name = "mv_b_tree"
+name = "mvtree"
 path = "src/lib.rs"
 crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -36,8 +36,9 @@ rand_distr = "0.5.1"
 rand = "0.9.2"
 itertools = "0.14.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision", "arc_lock"] }
-serde_json = "1.0.145"
+serde_json = "1.0.148"
 serde = "1.0.228"
-arc-swap = "1.7.1"
+arc-swap = "1.8.0"
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2.178"
+libc = "0.2.179"
+num_cpus = "1.17"

@@ -1,99 +1,100 @@
-use std::fmt::{Display, Formatter};
-use std::hash::Hash;
-use parking_lot::lock_api::MutexGuard;
-use parking_lot::{Mutex, RawMutex};
 use std::ops::Deref;
-use serde::{Deserialize, Serialize};
-use crate::mv_record_model::version_info::{AtomicVersion, Version};
-use crate::mv_sync::safe_cell::SafeCell;
-use crate::mv_sync::version_handle::VersionHandle;
-use crate::mv_tree::mvtree::MVTreeSt;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
+use std::sync::OnceLock;
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum ClockType {
-    FREE,
-    OPT,
-    SYNC,
+use crate::mv_record_model::version_info::{AtomicVersion, Version};
+use crate::mv_sync::version_handle;
+
+thread_local! {
+    static STATE: ThreadState = ThreadState::new();
 }
 
-impl Display for ClockType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ClockType::FREE => write!(f, "FREE"),
-            ClockType::OPT => write!(f, "OPT"),
-            ClockType::SYNC => write!(f, "SYNC"),
+struct ThreadState {
+    tid: usize
+}
+
+impl ThreadState {
+    fn new() -> Self {
+        ThreadState {
+            tid: THREAD_ID.fetch_add(1, Relaxed),
+        }
+    }
+
+    const fn tid(&self) -> usize { self.tid }
+}
+
+impl Drop for ThreadState {
+    fn drop(&mut self) {
+        unsafe {
+            committed().get_unchecked(self.tid).store(Version::MAX, Release);
         }
     }
 }
 
-pub(crate) enum GlobalClock {
-    Locked(Mutex<Version>),
-    Atomic(AtomicVersion),
-    Free(SafeCell<Version>)
+static THREAD_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[repr(align(64))]
+struct PaddedAtomic(AtomicVersion);
+impl Deref for PaddedAtomic {
+    type Target = AtomicVersion;
+    fn deref(&self) -> &AtomicVersion { &self.0 }
 }
+
+static SHARDED_COMMITTED: OnceLock<Vec<PaddedAtomic>> = OnceLock::new();
+
+#[inline]
+fn committed() -> &'static [PaddedAtomic] {
+    SHARDED_COMMITTED.get_or_init(||
+        (0..num_cpus::get_physical()).map(|_| PaddedAtomic(AtomicVersion::new(Version::MAX))).collect())
+}
+
+#[inline]
+pub(crate) fn committed_read() -> Version {
+    // STATE.with(|_| { }); // never init. the state for readers, only writers via commit
+    let v = committed()
+        .iter()
+        .take(THREAD_ID.load(Acquire) + 1)
+        .fold(Version::MAX,
+              |a, b| a.min(b.load(Acquire)));
+
+    if v == Version::MAX {
+        version_handle::START_VERSION // empty root -> matched
+    }
+    else {
+        v
+    }
+}
+
+#[inline]
+pub fn thread_local_commit(id: usize, version: Version) {
+    unsafe {
+        committed().get_unchecked(id).store(version, Release);
+    }
+}
+
+pub(crate) struct GlobalClock(pub(crate) AtomicVersion);
 
 impl Clone for GlobalClock {
     fn clone(&self) -> Self {
-        match self {
-            GlobalClock::Locked(_) => Self::Locked(Mutex::new(VersionHandle::START_VERSION)),
-            GlobalClock::Atomic(_) => Self::Atomic(AtomicVersion::new(VersionHandle::START_VERSION)),
-            GlobalClock::Free(_) => Self::Free(SafeCell::new(VersionHandle::START_VERSION))
-        }
+        GlobalClock(AtomicVersion::new(self.0.load(SeqCst)))
     }
 }
 
-/// Holds Version Commit Clock atomic strategy, either locked in multi-threaded or
-/// single writer mode.
-// #[repr(u8)]
-pub enum ClockHandle<'a> {
-    Locked(MutexGuard<'a, RawMutex, Version>),
-    Free(&'a mut Version),
-    Optimistic(&'a AtomicVersion, Version)
-}
-
-/// Implements variant checkers for VCClock.
-impl ClockHandle<'_> {
-    /// Returns true, if this clock is not locked.
-    /// /// Returns false, otherwise.
-    pub(crate) const fn is_free(&self) -> bool {
-        match self {
-            Self::Free(..) => true,
-            _ => false,
-        }
+impl GlobalClock {
+    pub(crate) const fn new() -> GlobalClock {
+        GlobalClock(AtomicVersion::new(version_handle::START_VERSION))
     }
 
-    #[inline]
-    pub(crate) fn read_handle_version(&self) -> Version {
-        match self {
-            ClockHandle::Locked(guard) => *guard.deref(),
-            ClockHandle::Free(v) => **v,
-            ClockHandle::Optimistic(.., seen) => *seen
-        }
+    // pushes completed work to visible, for readers
+    #[inline(always)]
+    pub(crate) fn end_commit(&self, version: Version) {
+        STATE.with(|t_state| thread_local_commit(t_state.tid(), version))
     }
 
-    /// Returns true, if this clock is optimistic.
-    /// /// Returns false, otherwise.
-    pub(crate) const fn is_optimistic(&self) -> bool {
-        match self {
-            Self::Optimistic(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns true, if this clock is locked.
-    /// Returns false, otherwise.
-    pub(crate) const fn is_locked(&self) -> bool {
-        !self.is_free()
-    }
-
-    #[inline]
-    pub(crate) fn end_commit<
-        const FAN_OUT: usize,
-        const NUMBER_RECORDS: usize,
-        Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
-        Payload: Display + Clone + Default + Sync + 'static
-    >(self, index: &MVTreeSt<FAN_OUT, NUMBER_RECORDS, Key, Payload>) -> Version
-    {
-        index.end_commit(self)
+    // global commit counter, e.g., to apply work
+    #[inline(always)]
+    pub(crate) fn start_commit(&self) -> Version {
+         self.0.fetch_add(1, SeqCst)
     }
 }

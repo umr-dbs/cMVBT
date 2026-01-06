@@ -82,10 +82,10 @@ impl<const FAN_OUT: usize,
 
             match r {
                 BlockUnsafeDegree::Overflow => unsafe {
-                    mv_test::SPLITS_ROOT_COUNTER.lock().push(self.current_version())
+                    mv_test::SPLITS_ROOT_COUNTER.lock().push(self.current_version_for_reader())
                 }
                 BlockUnsafeDegree::ActiveUnderflow => unsafe {
-                    mv_test::MERGE_ROOT_COUNTER.lock().push(self.current_version())
+                    mv_test::MERGE_ROOT_COUNTER.lock().push(self.current_version_for_reader())
                 }
                 _ => {}
             }
@@ -158,9 +158,9 @@ impl<const FAN_OUT: usize,
 
                         match r {
                             BlockUnsafeDegree::Overflow =>
-                                mv_test::SPLITS_COUNTER.lock().push(self.current_version()),
+                                mv_test::SPLITS_COUNTER.lock().push(self.current_version_for_reader()),
                             BlockUnsafeDegree::ActiveUnderflow =>
-                                mv_test::MERGES_COUNTER.lock().push(self.current_version()),
+                                mv_test::MERGES_COUNTER.lock().push(self.current_version_for_reader()),
                             _ => {}
                         }
                     }
