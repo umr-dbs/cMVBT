@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use std::sync::OnceLock;
-
+use std::thread::AccessError;
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::version_handle;
 
@@ -27,7 +27,9 @@ impl ThreadState {
 impl Drop for ThreadState {
     fn drop(&mut self) {
         unsafe {
-            committed().get_unchecked(self.tid).store(Version::MAX, Release);
+            committed()
+                .get_unchecked(self.tid)
+                .store(committed_max(), Relaxed);
         }
     }
 }
@@ -49,14 +51,26 @@ fn committed() -> &'static [PaddedAtomic] {
         (0..num_cpus::get_physical()).map(|_| PaddedAtomic(AtomicVersion::new(Version::MAX))).collect())
 }
 
+fn committed_max() -> Version {
+    committed()
+        .iter()
+        .max_by_key(|a| a.load(SeqCst))
+        .unwrap()
+        .load(Relaxed)
+}
+
 #[inline]
 pub(crate) fn committed_read() -> Version {
     // STATE.with(|_| { }); // never init. the state for readers, only writers via commit
+    if let Ok(tid) = STATE.try_with(|state| state.tid) {
+        thread_local_commit(tid, committed_max())
+    }
+
     let v = committed()
         .iter()
-        .take(THREAD_ID.load(Acquire) + 1)
+        .take(THREAD_ID.load(Relaxed) + 1)
         .fold(Version::MAX,
-              |a, b| a.min(b.load(Acquire)));
+              |a, b| a.min(b.load(Relaxed)));
 
     if v == Version::MAX {
         version_handle::START_VERSION // empty root -> matched
@@ -69,7 +83,7 @@ pub(crate) fn committed_read() -> Version {
 #[inline]
 pub fn thread_local_commit(id: usize, version: Version) {
     unsafe {
-        committed().get_unchecked(id).store(version, Release);
+        committed().get_unchecked(id).store(version, Relaxed);
     }
 }
 
