@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use std::thread::yield_now;
 use parking_lot::Mutex;
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
+use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::version_handle;
 
 thread_local! {
@@ -17,8 +18,25 @@ static GLOBAL_MIN: AtomicVersion
 static GLOBAL_DIRTY: AtomicBool
     = AtomicBool::new(true);
 
+const MAX_READS_IN_ROW_EPSILON: usize
+    = 10;
+
+static THREAD_ID: AtomicUsize
+    = AtomicUsize::new(0);
+
+static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomic>>>
+    = OnceLock::new();
+
+#[repr(align(64))]
+struct PaddedAtomic(AtomicVersion);
+impl Deref for PaddedAtomic {
+    type Target = AtomicVersion;
+    fn deref(&self) -> &AtomicVersion { &self.0 }
+}
+
 struct ThreadState {
-    tid: usize
+    tid: usize,
+    reads_in_row: SafeCell<usize>,
 }
 
 impl ThreadState {
@@ -43,6 +61,7 @@ impl ThreadState {
             else {
                 break ThreadState {
                     tid: THREAD_ID.fetch_add(1, Relaxed),
+                    reads_in_row: SafeCell::new(0),
                 }
             }
         }
@@ -51,46 +70,9 @@ impl ThreadState {
 
 impl Drop for ThreadState {
     fn drop(&mut self) {
-        loop { unsafe {
-            let committed
-                = committed();
-
-            let my_commit = committed
-                .get_unchecked(self.tid).load(Relaxed);
-
-            if my_commit == Version::MAX {
-                break
-            }
-
-            if committed
-                .iter()
-                .take(THREAD_ID.load(Relaxed) + 1)
-                .all(|l_commit| l_commit.load(Relaxed) >= my_commit)
-            {
-                committed
-                    .get_unchecked(self.tid)
-                    .store(Version::MAX, Relaxed);
-
-                GLOBAL_DIRTY.store(true, Relaxed);
-                break
-            }
-
-            yield_now()
-        } }
+        thread_local_commit(self.tid, Version::MAX)
     }
 }
-
-static THREAD_ID: AtomicUsize = AtomicUsize::new(0);
-
-#[repr(align(64))]
-struct PaddedAtomic(AtomicVersion);
-impl Deref for PaddedAtomic {
-    type Target = AtomicVersion;
-    fn deref(&self) -> &AtomicVersion { &self.0 }
-}
-
-static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomic>>> = OnceLock::new();
-
 #[inline]
 fn committed() -> &'static [PaddedAtomic] {
     unsafe {
@@ -105,21 +87,17 @@ fn committed() -> &'static [PaddedAtomic] {
 
 #[inline]
 pub(crate) fn committed_read() -> Version {
-    // STATE.with(|_| { }); // never init. the state for readers, only writers via commit
-    if let Ok(tid) = STATE.try_with(|state| state.tid) {
-        let committed = committed();
-        let my_commit = unsafe { committed.get_unchecked(tid).load(Relaxed) };
-
-        if my_commit != Version::MAX {
-            if committed
-                .iter()
-                .take(THREAD_ID.load(Relaxed) + 1)
-                .all(|l_commit| l_commit.load(Relaxed) >= my_commit)
-            {
-                thread_local_commit(tid, Version::MAX);
+    let _ = STATE.try_with(|state| {
+        if *state.reads_in_row != usize::MAX {
+            if *state.reads_in_row > MAX_READS_IN_ROW_EPSILON {
+                thread_local_commit(state.tid, Version::MAX);
+                *state.reads_in_row.get_mut() = usize::MAX;
+            }
+            else {
+                *state.reads_in_row.get_mut() = *state.reads_in_row + 1;
             }
         }
-    }
+    });
 
     if !GLOBAL_DIRTY.load(Relaxed) {
         GLOBAL_MIN.load(Relaxed)
@@ -146,7 +124,7 @@ pub(crate) fn committed_read() -> Version {
 }
 
 #[inline]
-pub fn thread_local_commit(id: usize, version: Version) {
+fn thread_local_commit(id: usize, version: Version) {
     unsafe {
         committed().get_unchecked(id).store(version, Relaxed);
         GLOBAL_DIRTY.store(true, Relaxed);
@@ -169,6 +147,7 @@ impl GlobalClock {
     // global commit counter, e.g., to apply work
     #[inline(always)]
     pub(crate) fn start_commit(&self) -> Version {
-         self.0.fetch_add(1, SeqCst)
+        STATE.with(|t_state| *t_state.reads_in_row.get_mut() = 0);
+        self.0.fetch_add(1, SeqCst)
     }
 }
