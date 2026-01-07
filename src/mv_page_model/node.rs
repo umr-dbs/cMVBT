@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, fence};
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::InternalPage;
@@ -90,7 +90,7 @@ impl<const FAN_OUT: usize,
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn m_type(&self) -> usize {
-        self.m_type.load(Acquire)
+        self.m_type.load(Relaxed)
     }
 
     #[inline(always)]
@@ -280,12 +280,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn mark_leaf(&mut self) {
-        self.m_type.store(PAGE_TYPE_LEAF, Release)
+        self.m_type.store(PAGE_TYPE_LEAF, SeqCst)
     }
 
     #[inline]
     pub fn mark_internal(&mut self) {
-        self.m_type.store(PAGE_TYPE_INTERNAL, Release)
+        self.m_type.store(PAGE_TYPE_INTERNAL, SeqCst)
     }
 }
 
