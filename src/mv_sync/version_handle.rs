@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::sync::atomic::Ordering::Relaxed;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::clock::committed_read;
@@ -14,7 +15,7 @@ impl<const FAN_OUT: usize,
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn current_version_for_reader(&self) -> Version {
-        committed_read()
+        committed_read(self.global_clock.0.load(Relaxed))
     }
 
     #[inline(always)]

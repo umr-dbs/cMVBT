@@ -128,7 +128,7 @@ impl<'a,
                         // .skip(start_pos_si)
                         .filter(|r|
                             r.version().matches(si) && self.range.contains(r.key()))
-                        .unique_by(|r| r.key())
+                        // .unique_by(|r| r.key())
                         .map(RecordPointResult::from));
 
                     self.path.pop();

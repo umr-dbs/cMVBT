@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::OnceLock;
-use std::thread::yield_now;
+use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::safe_cell::SafeCell;
@@ -12,26 +12,39 @@ thread_local! {
     static STATE: ThreadState = ThreadState::new();
 }
 
-static GLOBAL_MIN: AtomicVersion
-    = AtomicVersion::new(version_handle::START_VERSION);
+static GLOBAL_MIN: PaddedAtomicVersion
+    = PaddedAtomicVersion(AtomicVersion::new(version_handle::START_VERSION));
 
-static GLOBAL_DIRTY: AtomicBool
-    = AtomicBool::new(true);
+static GLOBAL_DIRTY: PaddedAtomicBool
+    = PaddedAtomicBool(AtomicBool::new(false));
 
 const MAX_READS_IN_ROW_EPSILON: usize
-    = 10;
+    = 100;
+
+const READ_IN_ROW_INACTIVE: usize
+    = usize::MAX;
+
+const INACTIVE_COMMIT_VERSION_MAX: Version
+    = Version::MAX;
 
 static THREAD_ID: AtomicUsize
     = AtomicUsize::new(0);
 
-static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomic>>>
+static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomicVersion>>>
     = OnceLock::new();
 
 #[repr(align(64))]
-struct PaddedAtomic(AtomicVersion);
-impl Deref for PaddedAtomic {
+struct PaddedAtomicVersion(AtomicVersion);
+impl Deref for PaddedAtomicVersion {
     type Target = AtomicVersion;
     fn deref(&self) -> &AtomicVersion { &self.0 }
+}
+
+#[repr(align(64))]
+struct PaddedAtomicBool(AtomicBool);
+impl Deref for PaddedAtomicBool {
+    type Target = AtomicBool;
+    fn deref(&self) -> &AtomicBool { &self.0 }
 }
 
 struct ThreadState {
@@ -40,6 +53,51 @@ struct ThreadState {
 }
 
 impl ThreadState {
+    #[inline(always)]
+    fn has_active_commit(&self) -> bool { *self.reads_in_row != READ_IN_ROW_INACTIVE }
+
+    #[inline(always)]
+    fn set_inactive_commit(&self) {
+        *self.reads_in_row.get_mut() = READ_IN_ROW_INACTIVE;
+        thread_local_commit_inactive(self.tid);
+        // let committed
+        //     = committed();
+        //
+        // let my_min = unsafe { committed.get_unchecked(self.tid).load(Relaxed) };
+        //
+        // let curr_min = committed
+        //     .iter()
+        //     .enumerate()
+        //     .filter(|(pos, ..)| *pos != self.tid)
+        //     .min_by(|(.., l_commit_0), (.., l_commit_1)|
+        //         l_commit_0.load(Relaxed).cmp(&l_commit_1.load(Relaxed)))
+        //     .map(|(_, l_commit_min)| l_commit_min.load(Relaxed))
+        //     .unwrap_or(my_min);
+        //
+        // if curr_min > my_min {
+        //     *self.reads_in_row.get_mut() = READ_IN_ROW_INACTIVE;
+        //     thread_local_commit_inactive(self.tid);
+        // }
+        // else {
+        //     self.inc_reads()
+        // }
+    }
+
+    #[inline(always)]
+    fn has_reads_in_row_max(&self) -> bool {
+        *self.reads_in_row > MAX_READS_IN_ROW_EPSILON
+    }
+
+    #[inline(always)]
+    fn inc_reads(&self) {
+        *self.reads_in_row.get_mut() = *self.reads_in_row + 1
+    }
+
+    #[inline(always)]
+    fn reset_reads(&self) {
+        *self.reads_in_row.get_mut() = 0
+    }
+
     fn new() -> Self {
         loop {
             let tid_curr = THREAD_ID.load(SeqCst);
@@ -51,7 +109,7 @@ impl ThreadState {
                 {
                     Some(mut lock) => lock
                         .extend((0..num_cpus::get_physical())
-                            .map(|_| PaddedAtomic(AtomicVersion::new(Version::MAX)))),
+                            .map(|_| PaddedAtomicVersion(AtomicVersion::new(INACTIVE_COMMIT_VERSION_MAX)))),
                     _ => {
                         yield_now();
                         continue
@@ -70,32 +128,30 @@ impl ThreadState {
 
 impl Drop for ThreadState {
     fn drop(&mut self) {
-        thread_local_commit(self.tid, Version::MAX)
+        thread_local_commit_inactive(self.tid)
     }
 }
+
 #[inline]
-fn committed() -> &'static [PaddedAtomic] {
+fn committed() -> &'static [PaddedAtomicVersion] {
     unsafe {
         &*SHARDED_COMMITTED.get_or_init(||
             Mutex::new(
                 (0..num_cpus::get_physical())
-                    .map(|_| PaddedAtomic(AtomicVersion::new(Version::MAX)))
+                    .map(|_| PaddedAtomicVersion(AtomicVersion::new(INACTIVE_COMMIT_VERSION_MAX)))
                     .collect()))
             .data_ptr()
     }
 }
 
 #[inline]
-pub(crate) fn committed_read() -> Version {
-    let _ = STATE.try_with(|state| {
-        if *state.reads_in_row != usize::MAX {
-            if *state.reads_in_row > MAX_READS_IN_ROW_EPSILON {
-                thread_local_commit(state.tid, Version::MAX);
-                *state.reads_in_row.get_mut() = usize::MAX;
-            }
-            else {
-                *state.reads_in_row.get_mut() = *state.reads_in_row + 1;
-            }
+pub(crate) fn committed_read(clock_time: Version) -> Version {
+    let _ = STATE.try_with(|state| if state.has_active_commit() {
+        if state.has_reads_in_row_max() {
+            state.set_inactive_commit();
+        }
+        else {
+            state.inc_reads()
         }
     });
 
@@ -105,22 +161,21 @@ pub(crate) fn committed_read() -> Version {
     else {
         let agg_min_commit = committed()
             .iter()
-            .take(THREAD_ID.load(Relaxed) + 1)
-            .fold(Version::MAX,
+            .take(THREAD_ID.load(Relaxed))
+            .fold(clock_time,
                   |acc, l_commit| acc.min(l_commit.load(Relaxed)));
 
-        if agg_min_commit == Version::MAX {
-            GLOBAL_MIN.store(version_handle::START_VERSION, Relaxed);
-            GLOBAL_DIRTY.store(false, Relaxed);
+        let oo_min
+            = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
 
-            version_handle::START_VERSION // empty root -> matched
-        }
-        else {
-            GLOBAL_MIN.store(agg_min_commit, Relaxed);
-            GLOBAL_DIRTY.store(false, Relaxed);
-            agg_min_commit
-        }
+        GLOBAL_DIRTY.store(false, Relaxed);
+        agg_min_commit.max(oo_min)
     }
+}
+
+#[inline(always)]
+fn thread_local_commit_inactive(id: usize) {
+    thread_local_commit(id, INACTIVE_COMMIT_VERSION_MAX);
 }
 
 #[inline]
@@ -134,7 +189,7 @@ fn thread_local_commit(id: usize, version: Version) {
 pub(crate) struct GlobalClock(pub(crate) AtomicVersion);
 
 impl GlobalClock {
-    pub(crate) const fn new() -> GlobalClock {
+    pub(crate) fn new() -> GlobalClock {
         GlobalClock(AtomicVersion::new(version_handle::START_VERSION))
     }
 
@@ -147,7 +202,7 @@ impl GlobalClock {
     // global commit counter, e.g., to apply work
     #[inline(always)]
     pub(crate) fn start_commit(&self) -> Version {
-        STATE.with(|t_state| *t_state.reads_in_row.get_mut() = 0);
+        STATE.with(|t_state| t_state.reset_reads());
         self.0.fetch_add(1, SeqCst)
     }
 }

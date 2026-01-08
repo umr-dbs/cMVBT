@@ -345,10 +345,10 @@ fn main() {
                 let query_file_name= parms[2].to_string();
 
                 let num_olaps = parms[3].parse().unwrap();
-                let workers_per_thread = parms[4].parse().unwrap();
-                let skew = parms[5].parse().unwrap();
-                let range = parms[6].parse().unwrap_or(Key::MAX);
-                let root_star_index = match parms[7].as_str() {
+                // let workers_per_thread = parms[4].parse().unwrap();
+                let skew = parms[4].parse().unwrap();
+                let range = parms[5].parse().unwrap_or(Key::MAX);
+                let root_star_index = match parms[6].as_str() {
                     "sk" => RootIndexType::SkipList(LatchType::Optimistic),
                     "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
                     "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
@@ -368,7 +368,7 @@ fn main() {
                 let num = spawn(move || load_query(
                     query_file_name_clone.as_str(), index_c, None));
                 let olaps = spawn(move || olap_tests(
-                    index, num_olaps, workers_per_thread, skew, Either::Left(range), false, Some(olap_sink)));
+                    index, num_olaps, 1, skew, Either::Left(range), false, Some(olap_sink)));
 
                 let num = num.join().unwrap();
                 mem::drop(olap_signal);
@@ -506,7 +506,21 @@ fn olap_tests(index: Arc<MVTree>,
               fixed_si: bool,
               control_signal: Option<Receiver<ThreadWorkerInfo>>)
 {
-    println!("Starting OLAPs...{num_olaps} threads, {tx_per_thread} scans per thread.");
+    if control_signal.is_none() {
+        println!("Starting OLAPs...{num_olaps} threads, \
+        {tx_per_thread} scans per thread.");
+    }
+    else {
+        println!("Starting OLAPs...{num_olaps} threads, \
+         with control signal for continuous scans per thread");
+    }
+
+    if range.is_left() {
+        println!("Scan key-range is fixed to 0..={}", range.as_ref().left().unwrap())
+    }
+    else {
+        println!("Scan key-range is dynamic to 0..=LastKey")
+    }
 
     let mut olaps = vec![];
     let v_index = format!("mv_{}",
