@@ -99,9 +99,9 @@ impl ThreadState {
     }
 
     fn new() -> Self {
+        let tid = THREAD_ID.fetch_add(1, SeqCst);
         loop {
-            let tid_curr = THREAD_ID.load(SeqCst);
-            if tid_curr >= committed().len() {
+            if tid >= committed().len() {
                 match SHARDED_COMMITTED
                     .get()
                     .unwrap()
@@ -118,7 +118,7 @@ impl ThreadState {
             }
             else {
                 break ThreadState {
-                    tid: THREAD_ID.fetch_add(1, Relaxed),
+                    tid,
                     reads_in_row: SafeCell::new(0),
                 }
             }
