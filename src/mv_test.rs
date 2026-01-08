@@ -446,7 +446,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
                 - Root* = {root_star_index}",
              num_cpus::get_physical(),
              num_cpus::get(),
-             if concurrent { "Continuous".to_string() } else { format!("{scans_per_thread}") });
+             if concurrent { format!("Continuous\n- OLTP Threads = {scans_per_thread}") } else { format!("{scans_per_thread}") });
 
 
     if concurrent {
