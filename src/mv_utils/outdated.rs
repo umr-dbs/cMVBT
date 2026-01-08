@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::fs::OpenOptions;
-use std::{mem, ptr};
+use std::{fs, mem, ptr};
+use std::io::BufWriter;
 use std::ptr::null_mut;
 use std::sync::Arc;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
-use std::thread::spawn;
+use std::thread::{spawn, yield_now};
 use std::time::SystemTime;
 
 const FAN_OUT: usize = mv_test::FAN_OUT;
@@ -29,6 +30,479 @@ pub const MAKE_INDEX: fn(LockingStrategy) -> INDEX
 = |ls| INDEX::new_with(ls, inc_key, dec_key, Key::MIN, Key::MAX);
 
 pub type Tree = Arc<INDEX>;
+// struct NoCacheAllocator;
+// unsafe impl GlobalAlloc for NoCacheAllocator {
+//     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+//         System.alloc(layout)
+//     }
+//     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+//         System.dealloc(ptr, layout)
+//     }
+// }
+//
+// #[global_allocator]
+// static GLOBAL: NoCacheAllocator = NoCacheAllocator;
+
+// static TOTAL_TX_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+const MANUEL_MAIN: bool = false;
+const BERNHARD_TESTS: bool = false;
+
+const BERNHARD_TESTS_NEW: bool = true;
+
+fn bernhard_tests_new() {
+    const NUMBER_OLAPS: usize = 12;
+    const OLAP_TX_PER_WORKER: usize = 20;
+    const QUERY_NAME: &str = "query_0";
+
+    println!("[Starting] - \
+    Loading query {QUERY_NAME}...");
+
+    let mv_tree
+        = Arc::new(MVTreeSt::default());
+
+    let num_cruds = load_query(QUERY_NAME, mv_tree.clone(), None);
+
+    println!("[Loaded] - \
+    Query with {} CRUD instructions dispatched to MVTree.", format_insertions(num_cruds));
+
+    println!("[OLAP Start] - \
+    Starting {NUMBER_OLAPS} OLAP workers with {OLAP_TX_PER_WORKER} CRUD instructions per worker...");
+
+    let skew = 0;
+    let _nc = fs::remove_file(format!("mv_olap_skew_{skew}.csv"));
+    let mut olap_file = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(format!("mv_olap_skew_{skew}.csv"))
+        .unwrap();
+
+    olap_file
+        .write_all(
+            b"target_snapshot,\
+            current_snapshot,\
+            sleep_time,\
+            range_start,\
+            range_end,\
+            count_results,\
+            latency\n",
+        )
+        .unwrap();
+    let mut olaps = vec![];
+    for _ in 0..NUMBER_OLAPS {
+        let index = mv_tree.clone();
+        olaps.push(spawn(move || {
+            let mut results = vec![];
+            for _ in 1..OLAP_TX_PER_WORKER {
+                let key_max = rand::random_range(0..Key::MAX);
+
+                let key_min = 0;
+
+                let mut current_si = index.current_version_for_reader();
+
+                while current_si == version_handle::START_VERSION {
+                    yield_now();
+                    current_si = index.current_version_for_reader();
+                }
+                let si = rand::random_range(version_handle::START_VERSION..=current_si);
+
+                let time_start = SystemTime::now();
+
+                let crud =
+                    index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
+
+                let time_spent = SystemTime::now()
+                    .duration_since(time_start)
+                    .unwrap()
+                    .as_nanos();
+
+                let count_results = match crud {
+                    CRUDOperationResult::MatchedRecords(data) => data.len(),
+                    _ => 0,
+                };
+                results.push((
+                    si,
+                    current_si,
+                    0u128,
+                    key_min,
+                    key_max,
+                    count_results,
+                    time_spent,
+                ))
+            }
+            results
+        }))
+    }
+
+    let olaps = olaps
+        .into_iter()
+        .map(|j| j.join().unwrap())
+        .flatten()
+        .collect::<Vec<_>>();
+
+    olaps.into_iter().for_each(
+        |(target_si, current_si, sleep_time, key_min, key_max, count_results, time_spent)| {
+            olap_file
+                .write_all(
+                    format!(
+                        "\
+                            {target_si},\
+                            {current_si},\
+                            {sleep_time},\
+                            {key_min},\
+                            {key_max},\
+                            {count_results},\
+                            {time_spent}\n"
+                    )
+                        .as_bytes(),
+                )
+                .unwrap();
+        },
+    );
+
+    println!(">> Finished dispatching olaps...");
+}
+
+fn bernhard_tests() {
+    const INSERTIONS: Key = 10_000;
+    const UPDATES: Key = 100_000_000 as Key;
+    const DELETIONS: f64 = 0.9_f64;
+    const NUMBER_OLAPS: usize = 12;
+    const NUMBER_UPDATERS: usize = 1;
+    const OLAP_TX_PER_WORKER: usize = 2000;
+    const RANGE_SIZE: Key = 1_000;
+    const SKEWs: [f64; 3] = [0f64, 0.4, 1.4];
+
+    let deletions_number = (DELETIONS * INSERTIONS as f64) as usize;
+    println!(
+        "\t- Inserts = {}\n\t- Updates = {}\n\t- Deletions = {} ({}% of keys)",
+        format_insertions(INSERTIONS as _),
+        format_insertions(UPDATES as _),
+        format_insertions(deletions_number),
+        DELETIONS * 100.0
+    );
+
+    for skew in SKEWs {
+        println!(
+            "\t- Skew = {}\n\t- ####################################################",
+            skew
+        );
+        let mv_tree = MVTree::default();
+
+        let mut data_inserts = (0..INSERTIONS).collect_vec();
+
+        data_inserts.shuffle(&mut rand::rng());
+
+        data_inserts.iter().for_each(|key| {
+            let crud_ins = mv_tree.dispatch_crud(CRUDOperation::Insert(*key, *key));
+
+            match crud_ins {
+                CRUDOperationResult::Inserted(_) => {}
+                _ => panic!("Error in Inserted crud"),
+            }
+        });
+
+        let mut sampler = Sampler::new(skew, INSERTIONS - 1);
+
+        (0..UPDATES).for_each(|_| {
+            let crud = CRUDOperation::Update(sampler.sample(), Payload::default());
+            let crud_update = mv_tree.dispatch_crud(crud.clone());
+
+            match crud_update {
+                CRUDOperationResult::Updated(_) => {}
+                _ => panic!("Error in Updated crud = {crud}"),
+            }
+        });
+
+        let mut deletes = data_inserts.clone();
+        deletes.shuffle(&mut rand::rng());
+        deletes.truncate(deletions_number);
+
+        deletes.into_iter().for_each(|key| {
+            let crud_ins = mv_tree.dispatch_crud(CRUDOperation::Delete(key));
+
+            match crud_ins {
+                CRUDOperationResult::Deleted(_) => {}
+                _ => panic!("Error in Deleted crud"),
+            }
+        });
+
+        mem::drop(data_inserts);
+
+        println!(
+            "\t- MVTree Init. \n\t- \
+    [{NUMBER_OLAPS}] OLAPs starting with [{OLAP_TX_PER_WORKER}] transactions per worker."
+        );
+
+        // Start OLAPs here
+        let index = Arc::new(mv_tree);
+        let mut olaps = vec![];
+
+        let _nc = fs::remove_file(format!("mv_olap_skew_{skew}.csv"));
+        let mut olap_file = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .write(true)
+            .open(format!("mv_olap_skew_{skew}.csv"))
+            .unwrap();
+
+        olap_file
+            .write_all(
+                b"target_snapshot,\
+            current_snapshot,\
+            sleep_time,\
+            range_start,\
+            range_end,\
+            count_results,\
+            latency\n",
+            )
+            .unwrap();
+
+        // splits, merges, root_splits, root_merges
+
+        if LOG_REORG {
+            unsafe {
+                for (file_name, counter) in [
+                    (format!("skew_{skew}_splits.csv"), mv_test::SPLITS_COUNTER.lock()),
+                    (format!("skew_{skew}_merges.csv"), mv_test::MERGES_COUNTER.lock()),
+                    (format!("skew_{skew}_root_splits.csv"), mv_test::SPLITS_ROOT_COUNTER.lock()),
+                    (format!("skew_{skew}_root_merges.csv"), mv_test::MERGE_ROOT_COUNTER.lock()),
+                ] {
+                    let _ = fs::remove_file(file_name.as_str());
+                    let mut file_io = BufWriter::new(
+                        OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(file_name.as_str())
+                            .unwrap(),
+                    );
+
+                    file_io.write_all("current_snapshot\n".as_bytes()).unwrap();
+                    counter
+                        .iter()
+                        .for_each(|s| file_io.write_all(format!("{s}\n").as_bytes()).unwrap());
+
+                    file_io.flush().unwrap();
+                    println!(">> {file_name} written.");
+                }
+            }
+        }
+
+        let mut updaters = vec![];
+        for _ in 0..NUMBER_UPDATERS {
+            let index = index.clone();
+
+            let (sender, receiver) = std::sync::mpsc::channel::<()>();
+
+            updaters.push((
+                sender,
+                spawn(move || {
+                    let mut sampler = Sampler::new(skew, INSERTIONS - 1);
+
+                    loop {
+                        match receiver.try_recv() {
+                            Err(..) => break,
+                            _ => {
+                                index.dispatch_crud(CRUDOperation::Update(
+                                    sampler.sample(),
+                                    Payload::default(),
+                                ));
+                            }
+                        }
+                    }
+                }),
+            ))
+        }
+        for _ in 0..NUMBER_OLAPS {
+            let index = index.clone();
+            olaps.push(spawn(move || {
+                let mut results = vec![];
+                for _ in 1..OLAP_TX_PER_WORKER {
+                    let mut key_min = rand::random_range(0..INSERTIONS);
+
+                    let mut key_max = key_min + RANGE_SIZE;
+
+                    if key_max >= INSERTIONS {
+                        key_max = key_min;
+                        key_min -= RANGE_SIZE;
+                    }
+
+                    let mut current_si = index.current_version_for_reader();
+
+                    while current_si == version_handle::START_VERSION {
+                        yield_now();
+                        current_si = index.current_version_for_reader();
+                    }
+
+                    let si = rand::random_range(version_handle::START_VERSION..=current_si);
+
+                    let time_start = SystemTime::now();
+
+                    let crud =
+                        index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
+
+                    let time_spent = SystemTime::now()
+                        .duration_since(time_start)
+                        .unwrap()
+                        .as_nanos();
+
+                    let count_results = match crud {
+                        CRUDOperationResult::MatchedRecords(data) => data.len(),
+                        _ => 0,
+                    };
+                    results.push((
+                        si,
+                        current_si,
+                        0u128,
+                        key_min,
+                        key_max,
+                        count_results,
+                        time_spent,
+                    ))
+                }
+                results
+            }))
+        }
+
+        let olaps = olaps
+            .into_iter()
+            .map(|j| j.join().unwrap())
+            .flatten()
+            .collect::<Vec<_>>();
+
+        mem::drop(updaters);
+
+        olaps.into_iter().for_each(
+            |(target_si, current_si, sleep_time, key_min, key_max, count_results, time_spent)| {
+                olap_file
+                    .write_all(
+                        format!(
+                            "\
+                            {target_si},\
+                            {current_si},\
+                            {sleep_time},\
+                            {key_min},\
+                            {key_max},\
+                            {count_results},\
+                            {time_spent}\n"
+                        )
+                            .as_bytes(),
+                    )
+                    .unwrap();
+            },
+        )
+    }
+}
+
+fn manuel_main() {
+    let mv_tree = MVTree::default();
+    let n = 999000;
+
+    let inserts = vec![
+        75, 91, 78, 24, 82, 3, 10, 38, 57, 81, 51, 67, 73, 14, 37, 87, 26, 33, 66, 12, 99, 61, 29,
+        20, 45, 27, 32, 21, 6, 52, 4, 35, 16, 58, 8, 28, 23, 97, 63, 9, 92, 22, 17, 30, 79, 42, 84,
+        59, 31,
+    ];
+
+    let mut inserts = (0..n).collect_vec();
+
+    inserts.shuffle(&mut rand::rng());
+    let max = inserts.iter().max().unwrap().clone();
+
+    let updates = vec![
+        27, 63, 57, 45, 61, 59, 16, 8, 9, 78, 6, 23, 4, 17, 67, 79, 87, 66, 97, 75, 20, 22, 12, 29,
+    ];
+
+    // let updates = vec![];
+
+    let deletes = vec![
+        14, 87, 37, 59, 97, 31, 30, 21, 73, 4, 29, 78, 66, 35, 99, 32, 8, 10, 6, 81, 51, 45, 42,
+        79, 82, 22, 23, 33, 75, 26, 3, 61,
+    ];
+
+    let logged_inserts = Arc::new(SafeCell::new(vec![]));
+
+    let check_integrity = || {
+        for key in 0..=max * 2 {
+            // println!("Query: {:?}", (key, snapshot));
+            if let CRUDOperationResult::MatchedRecords(record) =
+                mv_tree.dispatch_crud(CRUDOperation::Point(key, Version::MAX - 1))
+            {
+                if record.is_empty() && inserts.contains(&key) {
+                    panic!("No point record found");
+                }
+            } else {
+                panic!("Error Point key: {}", key);
+            }
+        }
+    };
+
+    let check_integrity = || {};
+    // Inserts
+    for key in inserts.clone() {
+        let crud = mv_tree.dispatch_crud(CRUDOperation::Insert(key, key));
+
+        logged_inserts
+            .get_mut()
+            .push(if let CRUDOperationResult::Inserted(v) = crud {
+                (key, v)
+            } else {
+                println!("Error Insert key = {key}");
+                unsafe {
+                    exit(1);
+                }
+            })
+    }
+
+    check_integrity();
+    println!("Finish insert");
+    // Updates
+    // inserts.shuffle(&mut rand::rng());
+
+    // println!("Updates: {:?}", updates);
+    for key in updates.iter() {
+        if *key == 29 {
+            let s = "adasd".to_string();
+        }
+        let update = mv_tree.dispatch_crud(CRUDOperation::Update(*key, *key));
+
+        check_integrity();
+
+        logged_inserts
+            .get_mut()
+            .push(if let CRUDOperationResult::Updated(v) = update {
+                (*key, v)
+            } else {
+                println!("Update error key: {key}");
+                unsafe {
+                    exit(1);
+                }
+            });
+    }
+    println!("Finish update");
+
+    inserts.shuffle(&mut rand::rng());
+
+    // println!("Deletes: {:?}", deletes);
+    // Deletes
+    for key in inserts.iter() {
+        if *key == 61 {
+            let s = "adasd".to_string();
+        }
+        let crud = mv_tree.dispatch_crud(CRUDOperation::Delete(*key));
+
+        if let CRUDOperationResult::Deleted(d) = crud {
+            logged_inserts.get_mut().push((*key, d));
+            println!("Delete key: {key}");
+        } else {
+            println!("Delete error key: {key}");
+            // unsafe {
+            //     exit(1);
+            // }
+        }
+    }
+}
 
 pub const TREE: fn(CRUDProtocol) -> Tree = |crud| {
     Arc::new(MAKE_INDEX(crud))

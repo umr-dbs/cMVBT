@@ -1,6 +1,6 @@
 [package]
 name = "MVTree"
-version = "0.0.99"
+version = "0.0.100"
 edition = "2021"
 authors = ["Amir Tonta <amir.tonta@mathematik.uni-marburg.de>"]
 description = "MV-Tree Research Implementation"
