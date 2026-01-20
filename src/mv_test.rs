@@ -448,6 +448,26 @@ pub(crate) fn main_load(parms: Vec<String>) {
              num_cpus::get(),
              if concurrent { format!("Continuous\n- OLTP Threads = {scans_per_thread}") } else { format!("{scans_per_thread}") });
 
+    let mut oltp_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open("oltp.csv")
+        .unwrap();
+
+    oltp_file.write_all(b"\
+        is_concurrent,\
+        oltp_threads,\
+        olap_threads,\
+        v_index,\
+        skew,\
+        slice_per_thread,\
+        rest_slice,\
+        total_num_scan_tx,\
+        total_num_oltp_tx,
+        total_oltp_time,\
+        total_olap_time\n"
+    ).unwrap();
 
     if concurrent {
         let query_file_name_clone = query_file_name.clone();
@@ -457,10 +477,22 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let oltp_threads = scans_per_thread;
         let slice = oltp.len() / oltp_threads;
 
-        let work_oltp = (0..oltp_threads)
+        let mut work_oltp = (0..oltp_threads)
             .map(|_| oltp.drain(..slice).collect_vec())
             .collect_vec();
 
+        let rest_slice = oltp.len();
+        work_oltp.first_mut().unwrap().extend(oltp);
+        oltp_file.write_all(format!("\
+            true,\
+            {oltp_threads},\
+            {num_olaps},\
+            MVTree,\
+            {skew},\
+            {slice},\
+            {rest_slice}").as_bytes()).unwrap();
+
+        let start_time_oltp = Instant::now();
         let oltp_joins = work_oltp
             .into_iter()
             .map(|work| {
@@ -478,6 +510,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let (olap_signal, olap_sink)
             = unbounded();
 
+        let start_time_olap = Instant::now();
         let olaps = spawn(move || olap_tests(
             index,
             num_olaps,
@@ -503,6 +536,15 @@ pub(crate) fn main_load(parms: Vec<String>) {
     } else {
         let num = load_query(query_file_name.as_str(), index.clone(), None);
 
+        oltp_file.write_all(format!("\
+            false,\
+            1,\
+            {num_olaps},\
+            MVTree,\
+            {skew},\
+            {num},\
+            0\n").as_bytes()).unwrap();
+
         println!("- Executed {} CRUD operations from {query_file_name}, \
                  starting OLAPs...", format_insertions(num));
 
@@ -517,6 +559,8 @@ pub(crate) fn main_load(parms: Vec<String>) {
         println!("- Executed = {} OLAPs", format_insertions(num_scans_executed));
         println!("###### End Command: {} ######", parms.iter().skip(1).join(" "));
     }
+
+    oltp_file.flush().unwrap();
 }
 pub(crate) fn main_load_cc_new(parms: Vec<String>) {
     let query_file_name = parms[2].to_string();
