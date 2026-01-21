@@ -1,20 +1,38 @@
-use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-
 use crossbeam_skiplist::SkipSet;
-
+use crate::mv_sync::clock::{__tid, Tid};
 use crate::mv_tx_model::transaction_result::SnapShot;
 
-type QueryTracer = SkipSet<SnapShot>;
+#[derive(Ord, Eq, PartialEq, PartialOrd)]
+pub(crate) struct ReaderQuery(SnapShot, Tid);
 
-#[derive(Default, Clone)]
-pub struct NullValue;
-
-impl Display for NullValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "()")
+impl Into<ReaderQuery> for SnapShot {
+    fn into(self) -> ReaderQuery {
+        ReaderQuery::new(self)
     }
 }
+
+impl ReaderQuery {
+    #[inline]
+    fn new(version: SnapShot) -> ReaderQuery {
+        Self(version, __tid())
+    }
+
+    #[inline]
+    const fn snapshot(&self) -> SnapShot {
+        self.0
+    }
+}
+type QueryTracer = SkipSet<ReaderQuery>;
+
+// #[derive(Default, Clone)]
+// pub struct NullValue;
+//
+// impl Display for NullValue {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "()")
+//     }
+// }
 
 pub(crate) struct TransactionTrace(QueryTracer);
 
@@ -32,25 +50,25 @@ impl TransactionTrace {
     }
 
     #[inline(always)]
-    pub(crate) fn peek_min(&self) -> SnapShot {
+    pub(crate) fn peek_min(&self) -> Option<SnapShot> {
         self.front()
-            .map_or(SnapShot::MAX, |entry| *entry)
+            .map(|entry| entry.snapshot())
     }
 
     #[inline(always)]
-    pub(crate) fn peek_max(&self) -> SnapShot {
+    pub(crate) fn peek_max(&self) -> Option<SnapShot> {
         self.back()
-            .map_or(SnapShot::MIN, |entry| *entry)
+            .map(|entry| entry.snapshot())
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_start(&self, snapshot: SnapShot) -> bool {
-        let _ = self.insert(snapshot);
+        let _ = self.insert(snapshot.into());
         true
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_completed(&self, snap_shot: SnapShot) {
-        let _ = self.remove(&snap_shot);
+        let _ = self.remove(&snap_shot.into());
     }
 }
