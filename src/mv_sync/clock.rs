@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::sync::OnceLock;
 use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
@@ -8,8 +8,15 @@ use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::version_handle;
 
+pub type Tid = usize;
+
 thread_local! {
     static STATE: ThreadState = ThreadState::new();
+}
+
+#[inline]
+pub fn __tid() -> Tid {
+    STATE.with(|tid| tid.tid)
 }
 
 static GLOBAL_MIN: PaddedAtomicVersion
@@ -48,7 +55,7 @@ impl Deref for PaddedAtomicBool {
 }
 
 struct ThreadState {
-    tid: usize,
+    tid: Tid,
     reads_in_row: SafeCell<usize>,
 }
 

@@ -70,25 +70,21 @@ impl<const P_F: usize,
 
     #[inline]
     pub fn newest_live_si(&self) -> Option<SnapShot> {
-        let max_si = self.live_tx.peek_max();
-        if max_si == Version::MIN {
-            None
-        }
-        else {
-            Some(max_si)
-        }
+        self.live_tx.peek_max()
     }
 
     #[inline]
     pub fn free_block(&self) -> Option<BlockRef<P_F, P_N, Key, Payload>> {
-        match self.dead_blocks.pop_min() {
-            Some((dead_v, dead_block)) if dead_v.lt_self_any(self.live_tx.peek_min()) =>
-                Some(dead_block),
-            Some((live_v, live_block)) => {
-                self.register_died_page(live_v, live_block);
-                None
+        if let Some((dead_v, dead_block)) = self.dead_blocks.pop_min() {
+            if let Some(live_min_snapshot) = self.live_tx.peek_min() {
+                if dead_v.lt_self_any(live_min_snapshot) {
+                    return Some(dead_block)
+                }
             }
-            _ => None
+
+            self.register_died_page(dead_v, dead_block);
         }
+
+        None
     }
 }
