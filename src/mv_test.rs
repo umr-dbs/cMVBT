@@ -47,7 +47,7 @@ fn olap_tests(index: Arc<MVTree>,
               skew: f32,
               range: Either<Key, Arc<AtomicU64>>,
               fixed_si: bool,
-              control_signal: Option<Receiver<ThreadWorkerInfo>>) -> usize
+              control_signal: Option<Receiver<ThreadWorkerInfo>>) -> (usize, u128)
 {
     if control_signal.is_none() {
         println!("> Starting OLAPs...{num_olaps} threads, \
@@ -63,7 +63,6 @@ fn olap_tests(index: Arc<MVTree>,
         println!("> Scan key-range is dynamic to 0..=LastKey")
     }
 
-    let mut olaps = vec![];
     let v_index = format!("mv_{}",
                           match index.root_star_index() {
                               RootIndexType::FrugalList(_) => "fg",
@@ -75,6 +74,8 @@ fn olap_tests(index: Arc<MVTree>,
     let lazy = if RANGE_DISPATCH_LAZY {
         "_lazy"
     } else { "" };
+
+    let mut olaps = vec![];
 
     let file_log = format!("{v_index}{lazy}_olap_skew_{skew}.csv");
     let _nc = fs::remove_file(file_log.as_str());
@@ -99,6 +100,7 @@ fn olap_tests(index: Arc<MVTree>,
 
     let g_counter = Arc::new(AtomicUsize::new(0));
 
+    let start_olap_time = Instant::now();
     for _ in 0..num_olaps {
         let index
             = index.clone();
@@ -177,6 +179,7 @@ fn olap_tests(index: Arc<MVTree>,
         .flatten()
         .collect::<Vec<_>>();
 
+    let time_olap = start_olap_time.elapsed().as_nanos();
     // mem::drop(updaters);
 
     olaps.into_iter()
@@ -198,7 +201,7 @@ fn olap_tests(index: Arc<MVTree>,
                             {time_spent}\n").as_bytes()).unwrap();
             });
 
-    g_counter.load(SeqCst)
+    (g_counter.load(SeqCst), time_olap)
 }
 
 const INSERT: u8 = 0;
@@ -448,6 +451,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
              num_cpus::get(),
              if concurrent { format!("Continuous\n- OLTP Threads = {scans_per_thread}") } else { format!("{scans_per_thread}") });
 
+    let oltp_there = fs::exists("oltp.csv").unwrap();
     let mut oltp_file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -455,19 +459,21 @@ pub(crate) fn main_load(parms: Vec<String>) {
         .open("oltp.csv")
         .unwrap();
 
-    oltp_file.write_all(b"\
-        is_concurrent,\
-        oltp_threads,\
-        olap_threads,\
-        v_index,\
-        skew,\
-        slice_per_thread,\
-        rest_slice,\
-        total_num_scan_tx,\
-        total_num_oltp_tx,
-        total_oltp_time,\
-        total_olap_time\n"
-    ).unwrap();
+    if !oltp_there {
+        oltp_file.write_all(b"\
+            is_concurrent,\
+            oltp_threads,\
+            olap_threads,\
+            v_index,\
+            skew,\
+            slice_per_thread,\
+            rest_slice,\
+            total_num_scan_tx,\
+            total_num_oltp_tx,\
+            total_oltp_time,\
+            total_olap_time\n"
+        ).unwrap();
+    }
 
     if concurrent {
         let query_file_name_clone = query_file_name.clone();
@@ -487,7 +493,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             true,\
             {oltp_threads},\
             {num_olaps},\
-            MVTree,\
+            {root_star_index},\
             {skew},\
             {slice},\
             {rest_slice}").as_bytes()).unwrap();
@@ -510,7 +516,6 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let (olap_signal, olap_sink)
             = unbounded();
 
-        let start_time_olap = Instant::now();
         let olaps = spawn(move || olap_tests(
             index,
             num_olaps,
@@ -525,8 +530,15 @@ pub(crate) fn main_load(parms: Vec<String>) {
             .map(|j| j.join().unwrap())
             .sum::<usize>();
 
+        let oltp_total_time = start_time_oltp.elapsed().as_nanos();
         drop(olap_signal);
-        let num_scans_executed = olaps.join().unwrap();
+        let (num_scans_executed, olap_total_time) = olaps.join().unwrap();
+
+        oltp_file.write_all(format!(",\
+            {num_scans_executed},\
+            {oltp_executed},\
+            {oltp_total_time},\
+            {olap_total_time}\n").as_bytes()).unwrap();
 
         println!("- Executed {} OLTPs from {query_file_name}\n\
         - Executed = {} OLAPs", format_insertions(oltp_executed),
@@ -534,7 +546,29 @@ pub(crate) fn main_load(parms: Vec<String>) {
 
         println!("###### End Command: {} ######", parms.iter().skip(1).join(" "));
     } else {
-        let num = load_query(query_file_name.as_str(), index.clone(), None);
+        let oltp_tx_buff = load_query_into_memory(
+            query_file_name.as_str());
+
+        let num = oltp_tx_buff.len();
+        let start_oltp_time = Instant::now();
+
+        oltp_tx_buff.into_iter().for_each(|crud| {
+            let _ = index.dispatch_crud(crud);
+        });
+
+        let oltp_total_time = start_oltp_time.elapsed().as_nanos();
+
+        println!("- Executed {} CRUD operations from {query_file_name}, \
+                 starting OLAPs...", format_insertions(num));
+
+        let (num_scans_executed, olap_total_time) = olap_tests(
+            index,
+            num_olaps,
+            scans_per_thread,
+            skew,
+            Either::Left(range),
+            false,
+            None);
 
         oltp_file.write_all(format!("\
             false,\
@@ -543,18 +577,11 @@ pub(crate) fn main_load(parms: Vec<String>) {
             MVTree,\
             {skew},\
             {num},\
-            0\n").as_bytes()).unwrap();
-
-        println!("- Executed {} CRUD operations from {query_file_name}, \
-                 starting OLAPs...", format_insertions(num));
-
-        let num_scans_executed = olap_tests(index,
-                   num_olaps,
-                   scans_per_thread,
-                   skew,
-                   Either::Left(range),
-                   false,
-                   None);
+            0,\
+            {num_scans_executed},\
+            {num},\
+            {oltp_total_time},\
+            {olap_total_time}\n").as_bytes()).unwrap();
 
         println!("- Executed = {} OLAPs", format_insertions(num_scans_executed));
         println!("###### End Command: {} ######", parms.iter().skip(1).join(" "));
