@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use itertools::Itertools;
 use crate::mv_block::block::{Block, BlockGuard};
-use crate::mv_block::block_handle::BlockHandle;
+use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
@@ -103,8 +103,8 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn max_units(&self) -> usize { // absolute units
         match self.is_leaf() {
-            true => BlockHandle::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records(),
-            false => BlockHandle::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys()
+            true => BlockAllocManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_records(),
+            false => BlockAllocManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::max_keys()
         }
     }
 
@@ -127,8 +127,8 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn overflow_units_count(&self) -> usize { // trigger for overflow
         match self.is_leaf() {
-            true => BlockHandle::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_records_count(),
-            false => BlockHandle::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_keys_count()
+            true => BlockAllocManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_records_count(),
+            false => BlockAllocManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::overflow_keys_count()
         }
     }
 

@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
-use crate::mv_block::block_handle::BlockHandle;
+use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::frugal_root::{AtomicFrugalList, FrugalRootList};
 use crate::mv_root::root::Root;
@@ -20,7 +20,7 @@ pub(crate) fn make_start_value_root_inner<
     const F: usize,
     const N: usize,
     Key: Display + Default + Ord + Copy + Hash,
-    Payload: Default + Clone>(bk: &BlockHandle<F, N, Key, Payload>, latch_type: LatchType
+    Payload: Default + Clone>(bk: &BlockAllocManager<F, N, Key, Payload>, latch_type: LatchType
 ) -> (ValueRootInner<F, N, Key, Payload>, SnapShot)
 {
     (ValueRootInner::initial(bk.new_empty_leaf(latch_type)), version_handle::START_VERSION)
@@ -224,7 +224,7 @@ impl<const FAN_OUT: usize,
             RootIndex::LinkedList(..) => RootIndexType::LinkedList(latch_type),
         }
     }
-    pub fn new(variant: RootIndexType, block_manager: &BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
+    pub fn new(variant: RootIndexType, block_manager: &BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         match variant {
             RootIndexType::BTree(latch) => {
                 let rt = RootTree::new(latch);

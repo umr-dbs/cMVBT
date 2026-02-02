@@ -1,6 +1,6 @@
 # MVTree
-- Release Date: 08.01.2026
-- Latest Version: 0.0.100 (Beta)
+- Release Date: 02.02.2026
+- Latest Version: 0.0.101 (Beta)
 ---------------------------------------
 ## PiBench Integration: https://github.com/umr-dbs/pibench_ext
 # Transactions support:

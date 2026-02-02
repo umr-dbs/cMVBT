@@ -1,6 +1,9 @@
+use std::fmt::Display;
+use std::hash::Hash;
 use std::ops::Deref;
 use crossbeam_skiplist::SkipSet;
 use crate::mv_sync::clock::{__tid, Tid};
+use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
 #[derive(Ord, Eq, PartialEq, PartialOrd)]
@@ -62,13 +65,38 @@ impl TransactionTrace {
     }
 
     #[inline(always)]
-    pub(crate) fn on_tx_start(&self, snapshot: SnapShot) -> bool {
+    pub(crate) fn on_tx_start(&self, snapshot: SnapShot) {
         let _ = self.insert(snapshot.into());
-        true
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_completed(&self, snap_shot: SnapShot) {
         let _ = self.remove(&snap_shot.into());
+    }
+}
+
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
+> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+{
+    #[inline]
+    pub(crate) fn on_enter_crud_dispatch(&self, snapshot: Option<SnapShot>) {
+        if let Some(snapshot) = snapshot {
+            self.tracker()
+                .inspect(|tracker|
+                    tracker.on_tx_start(snapshot));
+        }
+    }
+
+    #[inline]
+    pub(crate) fn on_exit_crud_dispatch(&self, snapshot: Option<SnapShot>) {
+        if let Some(snapshot) = snapshot {
+            self.tracker()
+                .inspect(|tracker|
+                    tracker.on_tx_completed(snapshot));
+        }
     }
 }

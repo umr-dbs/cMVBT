@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::mv_utils::interval::Interval;
 use crate::mv_crud_model::crud_operation::CRUDOperation::{Empty, Delete, Point, Insert, Range, Update, PointSi, RangeSi, RangeIter, RangeIterSi};
 use crate::mv_record_model::version_info::Version;
+use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub type TxAtomicOperation<Key, Payload> = CRUDOperation<Key, Payload>;
 
@@ -75,12 +76,12 @@ impl<Key: Ord + Hash + Copy + Display, Payload: Clone> CRUDOperation<Key, Payloa
     /// Returns true, only if the Transaction does not require write access when executing.
     /// Returns false, otherwise.
     #[inline(always)]
-    pub const fn is_read(&self) -> bool {
+    pub const fn is_read(&self) -> Option<Version> {
         match self {
-            Insert(..) | Delete(..) | Update(..) |
-            CRUDOperation::UpdateRand |
-            CRUDOperation::DeleteRand => false,
-            _ => true,
+            Point(.., version) |
+            RangeIter(.., version) |
+            Range(.., version) => Some(*version),
+            _ => None
         }
     }
 
@@ -88,6 +89,6 @@ impl<Key: Ord + Hash + Copy + Display, Payload: Clone> CRUDOperation<Key, Payloa
     /// Returns false, otherwise.
     #[inline(always)]
     pub const fn is_write(&self) -> bool {
-        !self.is_read()
+        self.is_read().is_none()
     }
 }

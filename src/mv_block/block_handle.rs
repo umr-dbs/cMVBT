@@ -61,13 +61,13 @@ type DeadPages<
 // = Arc<SafeCell<BPlusTree<250, 250, Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>>>>;
 
 
-pub struct BlockHandle<
+pub struct BlockAllocManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default + 'static
 > {
-    db_tracker: SafeCell<Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
+    tracker: SafeCell<Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     pub reuse_count: AtomicUsize,
     pub alloc_count: AtomicUsize,
     // block_id_counter: AtomicBlockID,
@@ -77,11 +77,11 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
-> Clone for BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> Clone for BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn clone(&self) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: SafeCell::new(None),
+            tracker: SafeCell::new(None),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
@@ -93,9 +93,9 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default
-> Default for BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> Default for BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
-        BlockHandle::new()
+        BlockAllocManager::new()
     }
 }
 
@@ -104,7 +104,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + 'static,
     Payload: Clone + Default + 'static
-> BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>
+> BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     // /// Generates and returns a new atomic (unique across callers) BlockID.
     // #[inline(always)]
@@ -119,7 +119,7 @@ impl<const FAN_OUT: usize,
     
     #[inline(always)]
     pub(crate) fn tracker(&self) -> Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>  {
-        self.db_tracker.clone()
+        self.tracker.clone()
     }
 
     #[inline(always)]
@@ -167,7 +167,7 @@ impl<const FAN_OUT: usize,
     pub fn new() -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: SafeCell::new(None),
+            tracker: SafeCell::new(None),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
@@ -177,30 +177,24 @@ impl<const FAN_OUT: usize,
     pub fn new_with_gc(db_tracker: TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>) -> Self {
         Self {
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
-            db_tracker: SafeCell::new(Some(db_tracker)),
+            tracker: SafeCell::new(Some(db_tracker)),
             reuse_count: AtomicUsize::new(0),
             alloc_count: AtomicUsize::new(0),
         }
     }
 
     pub fn pass_aux_tx_tracker(&self, db_tracker: Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
-        // if db_tracker.is_some() {
-        // debug_assert!(db_tracker.is_some());
-        
-        *self.db_tracker.get_mut() = db_tracker;
-            // self.db_tracker = SafeCell::new(db_tracker);
-        // } else {
-        //     self.db_tracker.take();
-        // }
+        *self.tracker.get_mut() = db_tracker;
+
     }
     
     pub fn del_aux(&self) {
-        self.db_tracker.get_mut().take();
+        self.tracker.get_mut().take();
     }
 
     #[inline(always)]
     pub fn register_dead_col(&self, dead: [(Version, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>); 2]) {
-        self.db_tracker
+        self.tracker
             .as_ref()
             .as_ref()
             .map(|tracker|
@@ -209,7 +203,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn register_dead(&self, dead_v: Version, dead_p: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>) {
-        self.db_tracker
+        self.tracker
             .as_ref()
             .as_ref()
             .map(|tracker|
@@ -218,7 +212,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        match self.db_tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
+        match self.tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
                 self.reuse_count.fetch_add(1, Relaxed);
 

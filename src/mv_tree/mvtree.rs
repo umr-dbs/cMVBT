@@ -1,7 +1,9 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use crate::mv_block::block_handle::BlockHandle;
-use crate::mv_gc::tracker_handle::TrackerHandle;
+use std::sync::Arc;
+use crate::mv_block::block_handle::BlockAllocManager;
+use crate::mv_crud_model::crud_operation::CRUDOperation;
+use crate::mv_gc::tracker_handle::{TrackerHandle, TrackerHandleSt};
 use crate::mv_page_model::{Height, ObjectCount};
 use crate::mv_root::index_root::{RootIndex, RootIndexType};
 use crate::mv_sync::clock::GlobalClock;
@@ -20,7 +22,7 @@ pub struct MVTreeSt<
 > {
     pub(crate) root: RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub locking_strategy: LatchProtocol,
-    pub block_manager: BlockHandle<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    pub block_manager: BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) global_clock: GlobalClock,
     pub(crate) inc_key: fn(Key) -> Key,
     pub(crate) dec_key: fn(Key) -> Key,
@@ -93,6 +95,14 @@ impl<const FAN_OUT: usize,
     Payload: Display + Clone + Default + Sync + 'static
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    pub fn enable_gc(&self) {
+        self.block_manager.pass_aux_tx_tracker(Some(Arc::new(TrackerHandleSt::new())))
+    }
+
+    pub fn disable_gc(&self) {
+        self.block_manager.del_aux()
+    }
+
     pub fn root_star_index(&self) -> RootIndexType {
         self.root.index_type(self.locking_strategy.latch_type())
     }
@@ -110,7 +120,7 @@ impl<const FAN_OUT: usize,
             min_key: Key,
             max_key: Key,
     ) -> Self {
-        let bm = BlockHandle::new();
+        let bm = BlockAllocManager::new();
         Self {
             root: RootIndex::new(root_index_type, &bm),
             block_manager: bm,

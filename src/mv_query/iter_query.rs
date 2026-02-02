@@ -89,18 +89,13 @@ impl<'a,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
-                    // let start_pos_si = versions_page.len() -
-                    //     versions_page.binary_search_by(|v| v.into_cmp().cmp(&si))
-                    //         .unwrap_or_else(|pos| pos);
-
                     match versions_page
                         .iter()
                         .zip(keys_page)
                         .enumerate()
-                        .rev()
-                        // .skip(start_pos_si)
-                        .find_map(|(pos, (v, range))|
-                            if range.contains(self.range.lower) && v.matched(si) {
+                        .skip_while(|(.., (v, ..))| **v < si)
+                        .find_map(|(pos, (.., range))|
+                            if range.contains(self.range.lower) {
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))
                             } else {
                                 None
@@ -117,18 +112,10 @@ impl<'a,
                     let records = leaf_page
                         .as_records();
 
-                    // let start_pos_si = records.len() -
-                    //     records.binary_search_by(|r|
-                    //         r.version.insert_version.cmp(&si)
-                    //     ).unwrap_or_else(|pos| pos);
-
                     self.buff.extend(records
                         .iter()
-                        .rev()
-                        // .skip(start_pos_si)
                         .filter(|r|
                             r.version().matches(si) && self.range.contains(r.key()))
-                        // .unique_by(|r| r.key())
                         .map(RecordPointResult::from));
 
                     self.path.pop();

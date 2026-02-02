@@ -26,10 +26,15 @@ impl<'a,
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
+        let snapshot
+            = crud.is_read();
+
+        self.on_enter_crud_dispatch(snapshot);
+
         let is_concurrent = self.locking_strategy
             .is_concurrent();
 
-        match crud {
+        let ret = match crud {
             CRUDOperation::Insert(key, payload) => {
                 let leaf_guard = if is_concurrent {
                     self.traversal_write_olc(key)
@@ -422,6 +427,10 @@ impl<'a,
                 CRUDOperationResult::InsertedRand(key, version)
             }
             _ => CRUDOperationResult::Error,
-        }
+        };
+
+        self.on_exit_crud_dispatch(snapshot);
+
+        ret
     }
 }

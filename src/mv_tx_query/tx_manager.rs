@@ -133,10 +133,10 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn is_read(&self) -> bool {
         match self {
-            TransactionHolder::Atomic(atomic) => atomic.crud.is_read(),
+            TransactionHolder::Atomic(atomic) => atomic.crud.is_read().is_some(),
             TransactionHolder::Multi(mul) => mul.crud
                 .iter()
-                .all(|crud| crud.is_read())
+                .all(|crud| crud.is_read().is_some())
         }
     }
 
@@ -270,9 +270,6 @@ impl<const FAN_OUT: usize,
         let tx
             = tx.into();
 
-        let bk
-            = self.enq_bookkeeping(&tx);
-
         let dispatcher
             = self.tx_dispatcher();
 
@@ -283,7 +280,7 @@ impl<const FAN_OUT: usize,
             = tx.snapshot();
 
         let r = tx.execute(dispatcher);
-        if bk && si.is_some() && deq_active_query.is_some() {
+        if si.is_some() && deq_active_query.is_some() {
             Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
         }
 
@@ -336,24 +333,22 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+    pub fn enq_bookkeeping(&self, tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         Self::enq_bookkeeping_from_tracker(self.db_tracker.as_ref().as_ref(), tx)
     }
 
     #[inline(always)]
     fn enq_bookkeeping_from_tracker(
         tracker: Option<&TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>,
-        tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool
+        tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
         if tx.is_read() {
             match (tracker, tx.snapshot()) {
                 (Some(tracker), Some(snapshot)) =>
-                    return tracker.on_tx_start(snapshot),
+                    tracker.on_tx_start(snapshot),
                 _ => {}
             }
         }
-
-        false
     }
 
     #[inline(always)]
@@ -372,15 +367,17 @@ impl<const FAN_OUT: usize,
                                                                                        -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let tx = tx.into();
-        let bk = self.enq_bookkeeping(&tx);
-        self.execute_tx_reader_internal(tx, bk)
+        self.enq_bookkeeping(&tx);
+        self.execute_tx_reader_internal(tx)
     }
 
     #[inline]
-    pub fn execute_tx_non_reader<Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx) {
+    pub fn execute_tx_non_reader<
+        Tx: Into<TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>>>(&self, tx: Tx)
+    {
         let tx = tx.into();
-        let bk = self.enq_bookkeeping(&tx);
-        self.execute_tx_non_reader_internal(tx, bk)
+        self.enq_bookkeeping(&tx);
+        self.execute_tx_non_reader_internal(tx)
     }
 
     #[inline]
@@ -401,22 +398,20 @@ impl<const FAN_OUT: usize,
             let si
                 = tx.snapshot();
 
-            let bk
-                = Self::enq_bookkeeping_from_tracker(m_db_tracker.as_ref(), &tx);
+            Self::enq_bookkeeping_from_tracker(m_db_tracker.as_ref(), &tx);
 
             let _
                 = tx.execute(dispatcher);
 
-            if bk {
-                if let (Some(tracker), Some(si)) = (m_db_tracker.as_ref(), si) {
-                    tracker.on_tx_completed(si)
-                }
+
+            if let (Some(tracker), Some(si)) = (m_db_tracker.as_ref(), si) {
+                tracker.on_tx_completed(si)
             }
         }));
     }
 
     #[inline(always)]
-    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>, bk: bool) {
+    fn execute_tx_non_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let dispatcher
             = self.tx_dispatcher();
 
@@ -428,15 +423,17 @@ impl<const FAN_OUT: usize,
                 = tx.snapshot();
 
             let _ = tx.execute(dispatcher);
-            if bk && si.is_some() && deq_active_query.is_some() {
+            if si.is_some() && deq_active_query.is_some() {
                 Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
             }
         });
     }
 
     #[inline(always)]
-    fn execute_tx_reader_internal(&self, tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>, bk: bool)
-                                  -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
+    fn execute_tx_reader_internal(
+        &self,
+        tx: TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>)
+        -> Receiver<TxExecutionResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>>
     {
         let dispatcher
             = self.tx_dispatcher();
@@ -452,7 +449,7 @@ impl<const FAN_OUT: usize,
                 = tx.snapshot();
 
             let _ = sender.send(tx.execute(dispatcher));
-            if bk && si.is_some() && deq_active_query.is_some() {
+            if si.is_some() && deq_active_query.is_some() {
                 Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
             }
         });

@@ -38,7 +38,7 @@ impl<const P_F: usize,
     }
 
     #[inline]
-    pub fn on_tx_start(&self, snap_shot: SnapShot) -> bool {
+    pub fn on_tx_start(&self, snap_shot: SnapShot) {
         self.live_tx.on_tx_start(snap_shot)
     }
 
@@ -76,13 +76,11 @@ impl<const P_F: usize,
     #[inline]
     pub fn free_block(&self) -> Option<BlockRef<P_F, P_N, Key, Payload>> {
         if let Some((dead_v, dead_block)) = self.dead_blocks.pop_min() {
-            if let Some(live_min_snapshot) = self.live_tx.peek_min() {
-                if dead_v.lt_self_any(live_min_snapshot) {
-                    return Some(dead_block)
-                }
+            match self.live_tx.peek_min() {
+                Some(live_min_snapshot) if dead_v.lt_self_any(live_min_snapshot) =>
+                    return Some(dead_block),
+                _ => self.register_died_page(dead_v, dead_block)
             }
-
-            self.register_died_page(dead_v, dead_block);
         }
 
         None
