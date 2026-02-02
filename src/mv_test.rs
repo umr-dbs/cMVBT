@@ -21,6 +21,7 @@ use rand::distr::{Alphanumeric, Distribution, Uniform};
 use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
+use crate::mv_block::block_handle::NODES_REQUEST;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 // use crate::mv_tx_query::tx_manager::TransactionManager;
@@ -439,11 +440,17 @@ pub(crate) fn main_load(parms: Vec<String>) {
     };
 
     let gc = parms[9].parse::<bool>().unwrap_or(false);
+    let update_in_place = if gc {
+        parms[10].parse::<bool>().unwrap_or(false)
+    } else { false };
+
     let index
         = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
 
+    let mut gc_str = "GC".to_string();
     if gc {
-        index.enable_gc();
+        index.enable_gc(update_in_place);
+        gc_str = format!("GC = {gc} (Update-in-Place = {})", update_in_place);
     }
 
     let oltp_threads = if concurrent {
@@ -460,7 +467,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
                 - Skew = {skew}\n\
                 - Range = {range}\n\
                 - Root* = {root_star_index}\n\
-                - GC = {gc}",
+                - GC = {gc_str}",
              num_cpus::get_physical(),
              num_cpus::get(),
              if concurrent { format!("Continuous\n- OLTP Threads = {scans_per_thread}") } else { format!("{scans_per_thread}") });
@@ -481,6 +488,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             v_index,\
             skew,\
             gc,\
+            update_in_place,\
             slice_per_thread,\
             rest_slice,\
             blocks_allocated,\
@@ -513,6 +521,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             MVTree({root_star_index}),\
             {skew},\
             {gc},\
+            {update_in_place},\
             {slice},\
             {rest_slice}").as_bytes()).unwrap();
 
@@ -608,6 +617,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             MVTree({root_star_index}),\
             {skew},\
             {gc},\
+            {update_in_place},\
             {num},\
             0,\
             {alloc_blocks},\
@@ -622,6 +632,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
     }
 
     oltp_file.flush().unwrap();
+    println!("{}", NODES_REQUEST.load(SeqCst));
 }
 pub(crate) fn main_load_cc_new(parms: Vec<String>) {
     let query_file_name = parms[2].to_string();

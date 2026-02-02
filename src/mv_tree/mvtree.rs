@@ -95,8 +95,9 @@ impl<const FAN_OUT: usize,
     Payload: Display + Clone + Default + Sync + 'static
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
-    pub fn enable_gc(&self) {
-        self.block_manager.pass_aux_tx_tracker(Some(Arc::new(TrackerHandleSt::new())))
+    pub fn enable_gc(&self, update_in_place: bool) {
+        self.block_manager.pass_aux_tx_tracker(Some(Arc::new(TrackerHandleSt::new())));
+        self.block_manager.set_update_in_place(update_in_place);
     }
 
     pub fn disable_gc(&self) {
@@ -110,6 +111,11 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub(crate) fn tracker(&self) -> Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>> {
         self.block_manager.tracker()
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_update_in_place(&self) -> bool {
+        self.block_manager.has_update_in_place()
     }
 
     #[inline]

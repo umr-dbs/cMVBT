@@ -83,7 +83,7 @@ impl<'a,
                     = leaf_page.len();
 
                 match self.tracker() {
-                    Some(db_tracker) => match db_tracker.newest_live_si() {
+                    Some(db_tracker) if self.has_update_in_place() => match db_tracker.newest_live_si() {
                         Some(newest_si) => match leaf_page
                             .as_records_mut()
                             .iter_mut()
@@ -114,6 +114,7 @@ impl<'a,
                     }
                     _ => { }
                 }
+
 
                 let version
                     = self.start_tx_commit();
@@ -247,7 +248,7 @@ impl<'a,
                 };
 
                 match self.tracker() {
-                    Some(db_tracker) => match db_tracker.newest_live_si() {
+                    Some(db_tracker) if self.has_update_in_place() => match db_tracker.newest_live_si() {
                         Some(newest_si) => match leaf_page
                             .as_records_mut()
                             .iter_mut()
