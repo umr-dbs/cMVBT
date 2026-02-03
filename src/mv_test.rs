@@ -447,10 +447,10 @@ pub(crate) fn main_load(parms: Vec<String>) {
     let index
         = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
 
-    let mut gc_str = "GC".to_string();
+    let mut gc_str = "Off".to_string();
     if gc {
         index.enable_gc(update_in_place);
-        gc_str = format!("GC = {gc} (Update-in-Place = {})", update_in_place);
+        gc_str = format!("On (UIP = {})", update_in_place);
     }
 
     let oltp_threads = if concurrent {

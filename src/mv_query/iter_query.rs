@@ -93,7 +93,7 @@ impl<'a,
                         .iter()
                         .enumerate()
                         .find_map(|(pos, v)|
-                            if *v <= si { None } else { Some(pos - 1) })
+                            if *v <= si { None } else { Some(pos) })
                         .unwrap_or(versions_page.len());
 
                     match versions_page
@@ -101,6 +101,7 @@ impl<'a,
                         .zip(keys_page.iter())
                         .enumerate()
                         .take(time_slice)
+                        .rev()
                         .find_map(|(pos, (.., range))|
                             if range.contains(self.range.lower) {
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))
