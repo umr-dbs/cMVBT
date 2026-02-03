@@ -89,11 +89,18 @@ impl<'a,
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
 
+                    let time_slice = versions_page
+                        .iter()
+                        .enumerate()
+                        .find_map(|(pos, v)|
+                            if *v <= si { None } else { Some(pos - 1) })
+                        .unwrap_or(versions_page.len());
+
                     match versions_page
                         .iter()
-                        .zip(keys_page)
+                        .zip(keys_page.iter())
                         .enumerate()
-                        .skip_while(|(.., (v, ..))| **v < si)
+                        .take(time_slice)
                         .find_map(|(pos, (.., range))|
                             if range.contains(self.range.lower) {
                                 Some((range.clone(), internal_page.get_pointer(pos).clone()))

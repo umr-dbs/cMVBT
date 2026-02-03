@@ -61,7 +61,7 @@ type DeadPages<
 // type DeadPages<const FAN_OUT: usize, const NUM_RECORDS: usize, Key>
 // = Arc<SafeCell<BPlusTree<250, 250, Version, BlockRef<FAN_OUT, NUM_RECORDS, Key>>>>;
 
-pub static NODES_REQUEST: AtomicUsize = AtomicUsize::new(0);
+// pub static NODES_REQUEST: AtomicUsize = AtomicUsize::new(0);
 pub struct BlockAllocManager<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -224,7 +224,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        NODES_REQUEST.fetch_add(1, Relaxed);
+        // NODES_REQUEST.fetch_add(1, Relaxed);
         match self.tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
                 self.reuse_count.fetch_add(1, Relaxed);

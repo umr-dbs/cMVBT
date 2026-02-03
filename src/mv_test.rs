@@ -21,7 +21,7 @@ use rand::distr::{Alphanumeric, Distribution, Uniform};
 use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
-use crate::mv_block::block_handle::NODES_REQUEST;
+// use crate::mv_block::block_handle::NODES_REQUEST;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 // use crate::mv_tx_query::tx_manager::TransactionManager;
@@ -632,7 +632,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
     }
 
     oltp_file.flush().unwrap();
-    println!("{}", NODES_REQUEST.load(SeqCst));
+    // println!("{}", NODES_REQUEST.load(SeqCst));
 }
 pub(crate) fn main_load_cc_new(parms: Vec<String>) {
     let query_file_name = parms[2].to_string();
