@@ -1,8 +1,11 @@
 use crate::mv_block::block::Block;
-use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_sorted_insert, Key, Payload, FAN_OUT, NUM_RECORDS};
+use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use std::{env, fs, mem};
+use crate::mv_crud_model::crud_api::CRUDDispatcher;
+use crate::mv_crud_model::crud_operation::CRUDOperation;
+use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 
 mod mv_block;
 mod mv_crud_model;
@@ -26,6 +29,7 @@ fn main() {
 
     if parms.len() > 1  {
         match parms[1].as_str() {
+            "" | "test" => test(),
             "generate" => main_generate(parms),
             "append" => main_append(parms),
             "load" => main_load(parms),
@@ -39,6 +43,31 @@ fn main() {
     }
 }
 
+fn test() {
+    let tree = MVTree::default();
+
+    for key in 0..200 {
+        let res
+            = tree.dispatch_crud(CRUDOperation::Insert(key, 0));
+    }
+
+    for v in 1..2000 {
+        let range
+            = tree.dispatch_crud(CRUDOperation::Range((0..Key::MAX).into(), v));
+
+        match range {
+            CRUDOperationResult::MatchedRecords(records) =>{
+                let len = records.len();
+                let str_re = records.iter().join("\n");
+
+                println!("Len= {}", len);
+            }
+            s => println!("ERROR = {s}")
+        }
+
+    }
+
+}
 /// Essential function.
 fn make_splash() {
     let datetime: DateTime<Local> = fs::metadata(env::current_exe().unwrap())
