@@ -195,30 +195,30 @@ impl<E: Default> OptCell<E> {
         self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
     }
 
-    #[inline(always)]
-    pub fn write_obsolete(&self) {
-        self.cell_version.store(OBSOLETE_FLAG_VERSION, Release)
-    }
+    // #[inline(always)]
+    // pub fn write_obsolete(&self) {
+    //     self.cell_version.store(OBSOLETE_FLAG_VERSION, Release)
+    // }
 
-    #[inline(always)]
-    pub fn write_obsolete_with_latch(&self, latch: LatchVersion) {
-        self.cell_version.store(OBSOLETE_FLAG_VERSION | latch, Release)
-    }
+    // #[inline(always)]
+    // pub fn write_obsolete_with_latch(&self, latch: LatchVersion) {
+    //     self.cell_version.store(OBSOLETE_FLAG_VERSION | latch, Release)
+    // }
 
-    #[inline(always)]
-    pub fn unwrite_obsolete_with_latch(&self, latch: LatchVersion) {
-        self.cell_version.store((1 + latch) & !OBSOLETE_FLAG_VERSION, Release)
-    }
+    // #[inline(always)]
+    // pub fn unwrite_obsolete_with_latch(&self, latch: LatchVersion) {
+    //     self.cell_version.store((1 + latch) & !OBSOLETE_FLAG_VERSION, Release)
+    // }
 
-    #[inline(always)]
-    pub fn is_obsolete(&self) -> bool {
-        self.load_version() & OBSOLETE_FLAG_VERSION != 0
-    }
+    // #[inline(always)]
+    // pub fn is_obsolete(&self) -> bool {
+    //     self.load_version() & OBSOLETE_FLAG_VERSION != 0
+    // }
 
-    #[inline(always)]
-    pub fn is_write(&self) -> bool {
-        self.load_version() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
-    }
+    // #[inline(always)]
+    // pub fn is_write(&self) -> bool {
+    //     self.load_version() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
+    // }
 }
 
 #[derive(Default)]
@@ -311,19 +311,23 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
     //     }
     // }
 
-    #[inline(always)]
-    pub fn downgrade(&mut self) {
-        match self {
-            OLCWriter(cell, latch) => unsafe {
-                let down = OLCReader(
-                    cell.clone(),
-                    (*latch & !WRITE_OBSOLETE_FLAG_VERSION) + 1
-                );
-                *self = down;
-            }
-            _ => {}
-        }
-    }
+    // #[inline(always)]
+    // pub fn downgrade(&mut self) {
+    //     match self {
+    //         OLCWriter(cell, latch)
+    //         => if let OLCCell(opt) = cell.0.as_ref()
+    //         {
+    //             opt.write_unlock(*latch);
+    //             let down = OLCReader(
+    //                 cell.clone(),
+    //                 (*latch & !WRITE_OBSOLETE_FLAG_VERSION) + 1
+    //             );
+    //
+    //             *self = down;
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
@@ -346,30 +350,30 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
         }
     }
 
-    #[inline(always)]
-    pub const fn is_write_lock(&self) -> bool {
-        match self {
-            OLCWriter(..) => true,
-            _ => false
-        }
-    }
+    // #[inline(always)]
+    // pub const fn is_write_lock(&self) -> bool {
+    //     match self {
+    //         OLCWriter(..) => true,
+    //         _ => false
+    //     }
+    // }
 
-    #[inline(always)]
-    pub fn is_valid(&self) -> bool {
-        match self {
-            OLCReader(opt, ..) |
-            OLCWriter(opt, ..) => {
-                if let OLCCell(opt) = opt.0.as_ref() {
-                    let loaded = opt.load_version();
-                    loaded & OBSOLETE_FLAG_VERSION == 0
-                }
-                else {
-                    false
-                }
-            }
-            _ => true
-        }
-    }
+    // #[inline(always)]
+    // pub fn is_valid(&self) -> bool {
+    //     match self {
+    //         OLCReader(opt, ..) |
+    //         OLCWriter(opt, ..) => {
+    //             if let OLCCell(opt) = opt.0.as_ref() {
+    //                 let loaded = opt.load_version();
+    //                 loaded & OBSOLETE_FLAG_VERSION == 0
+    //             }
+    //             else {
+    //                 false
+    //             }
+    //         }
+    //         _ => true
+    //     }
+    // }
 
     #[inline(always)]
     pub fn deref(&self) -> Option<&'_ E> {
@@ -427,13 +431,13 @@ impl<E: Default> SmartCell<E> {
         }
     }
 
-    #[inline(always)]
-    pub fn is_obsolete(&self) -> bool {
-        match self.0.deref() {
-            OLCCell(opt) => opt.is_obsolete(),
-            FreeCell(..) => false,
-        }
-    }
+    // #[inline(always)]
+    // pub fn is_obsolete(&self) -> bool {
+    //     match self.0.deref() {
+    //         OLCCell(opt) => opt.is_obsolete(),
+    //         FreeCell(..) => false,
+    //     }
+    // }
 }
 
 impl<E: Default> Drop for SmartGuard<E> {
