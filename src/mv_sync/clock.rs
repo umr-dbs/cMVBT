@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use std::sync::OnceLock;
 use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
@@ -162,20 +162,20 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
         }
     });
 
-    if !GLOBAL_DIRTY.load(Relaxed) {
-        GLOBAL_MIN.load(Relaxed)
+    if !GLOBAL_DIRTY.load(Acquire) {
+        GLOBAL_MIN.load(Acquire)
     }
     else {
         let agg_min_commit = committed()
             .iter()
-            .take(THREAD_ID.load(Relaxed))
+            .take(THREAD_ID.load(Acquire))
             .fold(clock_time,
-                  |acc, l_commit| acc.min(l_commit.load(Relaxed)));
+                  |acc, l_commit| acc.min(l_commit.load(Acquire)));
 
         let oo_min
-            = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
+            = GLOBAL_MIN.fetch_max(agg_min_commit, Acquire);
 
-        GLOBAL_DIRTY.store(false, Relaxed);
+        GLOBAL_DIRTY.store(false, Release);
         agg_min_commit.max(oo_min)
     }
 }
@@ -188,8 +188,8 @@ fn thread_local_commit_inactive(id: usize) {
 #[inline]
 fn thread_local_commit(id: usize, version: Version) {
     unsafe {
-        committed().get_unchecked(id).store(version, Relaxed);
-        GLOBAL_DIRTY.store(true, Relaxed);
+        committed().get_unchecked(id).store(version, Release);
+        GLOBAL_DIRTY.store(true, Release);
     }
 }
 

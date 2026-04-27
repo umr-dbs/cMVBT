@@ -375,6 +375,14 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
     //     }
     // }
 
+    pub fn inner_cell(&self) -> SmartCell<E> {
+        match self {
+            OLCReader(cell, ..) => cell.clone(),
+            OLCWriter(cell, ..) => cell.clone(),
+            _ => unreachable!()
+        }
+    }
+
     #[inline(always)]
     pub fn deref(&self) -> Option<&'_ E> {
         match self {

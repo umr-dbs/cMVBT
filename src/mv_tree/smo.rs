@@ -1115,12 +1115,16 @@ impl<const FAN_OUT: usize,
                     new_root_latch = new_root_block.borrow_read();
                 }
 
+                let old_v = _master_guard.version();
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height + 1));
 
                 self.end_tx_commit(version);
 
                 root_guard = new_root_latch;
+
+                self.block_manager.register_dead(
+                    old_v, root_guard.inner_cell());
 
                 (height + 1, new_root_block)
             }
@@ -1139,6 +1143,7 @@ impl<const FAN_OUT: usize,
                     new_root_latch = new_root_block.borrow_read();
                 }
 
+                let old_v = _master_guard.version();
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height));
 
@@ -1146,10 +1151,12 @@ impl<const FAN_OUT: usize,
 
                 root_guard = new_root_latch;
 
+                self.block_manager.register_dead(
+                    old_v, root_guard.inner_cell());
+
                 (height, new_root_block)
             }
         };
-
         (root_block, root_guard)
     }
 

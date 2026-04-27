@@ -572,7 +572,10 @@ pub(crate) fn main_load(parms: Vec<String>) {
         oltp.drain(0..10_000).for_each(|i| {
             let _ = index.dispatch_crud(i);
         });
+        index.block_manager.alloc_count.store(0, Ordering::SeqCst);
+        index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 
+        // TODO: End experimental setting
         let oltp_threads = scans_per_thread;
         let slice = oltp.len() / oltp_threads;
 

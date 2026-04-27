@@ -2,7 +2,7 @@ use std::collections::LinkedList;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
-
+use CCBPlusTree::record_model::Version;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
@@ -123,6 +123,33 @@ impl<
         }
     }
 
+    #[inline(always)]
+    pub fn version(&self) -> Version {
+        match self {
+            RootIndexGuard::BTreeGuard(tree) => unsafe {
+                (*tree.data_ptr()).current_root().version
+            }
+            RootIndexGuard::BTreeGuardMut(tree) =>
+                tree.current_root().version,
+            RootIndexGuard::SkipListGuard(sk) => unsafe {
+                (*sk.data_ptr()).current_root().version
+            }
+            RootIndexGuard::SkipListGuardMut(sk) =>
+                sk.current_root().version,
+            RootIndexGuard::LinkedListGuard(ll) => unsafe {
+                (*ll.data_ptr()).back().unwrap().version
+            }
+            RootIndexGuard::LinkedListGuardMut(ll) =>
+                ll.back().unwrap().version,
+            RootIndexGuard::FrugalGuard(fg) => unsafe {
+                (*fg.data_ptr()).current_root().1
+            }
+            RootIndexGuard::FrugalGuardMut(fg) => {
+                fg.current_root().1
+            }
+        }
+    }
+    
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
