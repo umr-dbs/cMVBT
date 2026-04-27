@@ -13,6 +13,7 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, mem, thread};
 use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::thread::{spawn, yield_now, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
@@ -41,6 +42,59 @@ pub static mut MERGES_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut MERGE_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+
+pub static mut RESTARTS_COUNTER: [AtomicUsize; 100] = [
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+    AtomicUsize::new(0), AtomicUsize::new(0),
+];
 
 fn olap_tests(index: Arc<MVTree>,
               num_olaps: usize,
@@ -91,6 +145,8 @@ fn olap_tests(index: Arc<MVTree>,
         .write_all(
             b"target_snapshot,\
             current_snapshot,\
+            target_root_number,\
+            current_roots_count,\
             sleep_time,\
             range_start,\
             range_end,\
@@ -142,6 +198,8 @@ fn olap_tests(index: Arc<MVTree>,
                     rand::random_range(version_handle::START_VERSION..=current_si)
                 };
 
+                let (current_root_position, roots_count)
+                    = index.retrieve_root_number_for(si);
                 // println!("Min = {key_min}, max = {key_max}");
                 let time_start
                     = SystemTime::now();
@@ -160,7 +218,8 @@ fn olap_tests(index: Arc<MVTree>,
                 let _ = count_olaps.fetch_add(1, Relaxed);
 
                 results.push(
-                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent));
+                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent,
+                    current_root_position, roots_count));
 
                 if let Some(signal) = signal.as_ref() {
                     match signal.try_recv() {
@@ -190,11 +249,15 @@ fn olap_tests(index: Arc<MVTree>,
                        key_min,
                        key_max,
                        count_results,
-                       time_spent)|
+                       time_spent,
+                       current_root_psotion,
+                       c_roots_count)|
             {
                 olap_file.write_all(format!("\
                             {target_si},\
                             {current_si},\
+                            {current_root_psotion},\
+                            {c_roots_count},\
                             {sleep_time},\
                             {key_min},\
                             {key_max},\
@@ -505,6 +568,11 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let mut oltp = load_query_into_memory(
             query_file_name_clone.as_str());
 
+        // TODO: Explicit for Experiment
+        oltp.drain(0..10_000).for_each(|i| {
+            let _ = index.dispatch_crud(i);
+        });
+
         let oltp_threads = scans_per_thread;
         let slice = oltp.len() / oltp_threads;
 
@@ -518,7 +586,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             true,\
             {oltp_threads},\
             {num_olaps},\
-            MVTree({root_star_index}),\
+            cMVBT({root_star_index}),\
             {skew},\
             {gc},\
             {update_in_place},\
@@ -614,7 +682,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             false,\
             1,\
             {num_olaps},\
-            MVTree({root_star_index}),\
+            cMVBT({root_star_index}),\
             {skew},\
             {gc},\
             {update_in_place},\
@@ -688,11 +756,14 @@ pub(crate) fn main_generate(parms: Vec<String>) {
     let block_updates: usize = parms[6].parse().unwrap();
     let block_deletes: usize = parms[7].parse().unwrap();
 
+    let skew = parms[8].parse::<f64>().unwrap();
+
     println!("Generating init_pop = {init_population}\n\
                 total_blocks = {total_blocks}\n\
                 block_inserts = {block_inserts}\n\
                 block_updates = {block_updates}\n\
-                block_deletes = {block_deletes}");
+                block_deletes = {block_deletes}\n\
+                skew = {skew}\n");
     generate_query(
         query_file_name,
         init_population,
@@ -700,6 +771,7 @@ pub(crate) fn main_generate(parms: Vec<String>) {
         block_inserts,
         block_updates,
         block_deletes,
+        skew
     );
     println!("Finished generate.")
 }
@@ -722,6 +794,7 @@ pub(crate) fn main_append(parms: Vec<String>) {
         block_inserts,
         block_updates,
         block_deletes,
+        0f64
     );
     println!("Finished generate.")
 }
@@ -733,7 +806,8 @@ fn generate_query(
     total_blocks: usize,
     block_inserts: usize,
     block_updates: usize,
-    block_deletes: usize)
+    block_deletes: usize,
+    skew: f64)
 {
     let mv_tree
         = Arc::new(MVTree::default());
@@ -806,22 +880,45 @@ fn generate_query(
         crud
     };
 
+    let zipf = Zipf::new(Key::MAX as f64, skew);
+    let payload = Payload::default();
+
     let gen_block = || {
         let mut crud = block.clone();
         crud.shuffle(&mut rand::rng());
-        crud
+
+        if skew == 0_f64 {
+            crud
+        }
+        else {
+            let key = zipf.as_ref().unwrap().sample(&mut rand::rng()) as Key;
+            crud.iter_mut().for_each(|c| {
+                match c {
+                    CRUDOperation::UpdateRand =>
+                        *c = CRUDOperation::Update(key, payload),
+                    CRUDOperation::DeleteRand =>
+                        *c = CRUDOperation::Delete(key),
+                    CRUDOperation::InsertRand =>
+                        *c = CRUDOperation::Insert(key, payload),
+                    _ => panic!("Unknown CRUD Operation for blocks"),
+                }
+            });
+            crud
+        }
     };
 
     for _ in 0..total_blocks {
         for op in gen_block() {
-            match mv_tree.dispatch_crud(op) {
+            match mv_tree.dispatch_crud(op.clone()) {
                 CRUDOperationResult::InsertedRand(key, _) => io_handle(
                     CRUDOperation::Insert(key, 0)),
                 CRUDOperationResult::UpdatedRand(key, _) => io_handle(
                     CRUDOperation::Update(key, 0)),
                 CRUDOperationResult::DeletedRand(key, _) => io_handle(
                     CRUDOperation::Delete::<_, Payload>(key)),
-                _ => panic!("Error on rand query; generate_query()")
+                CRUDOperationResult::Error =>
+                    panic!("Error on rand query; generate_query(): CRUD({op}) ---> Result(Error)"),
+                _ => io_handle(op),
             }
         }
     }

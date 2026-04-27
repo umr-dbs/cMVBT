@@ -1,10 +1,10 @@
 [package]
-name = "MVTree"
-version = "0.0.101"
+name = "cMVBT"
+version = "0.0.102"
 edition = "2021"
 authors = ["Amir Tonta <amir.tonta@mathematik.uni-marburg.de>"]
-description = "MV-Tree Research Implementation"
-repository = "https://github.com/umr-dbs/MVTree"
+description = "cMVBT Research Implementation"
+repository = "https://github.com/umr-dbs/cMBVT"
 
 [profile.dev]
 overflow-checks = false
@@ -21,7 +21,7 @@ rustflags = ["-C", "target-cpu=native"]
 hardware-lock-elision = []
 
 [lib]
-name = "mvtree"
+name = "cmvbt"
 path = "src/lib.rs"
 crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -1,8 +1,11 @@
 use crate::mv_block::block::Block;
-use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS};
+use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS, RESTARTS_COUNTER};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use std::{env, fs, mem};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::atomic::Ordering::SeqCst;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -41,6 +44,27 @@ fn main() {
     else {
         println!("*********** Use a Command ***********")
     }
+
+    fs::write("restarts.csv", "\n").unwrap();
+
+    let mut f = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("restarts.csv")
+        .unwrap();
+
+    f.write_all( unsafe { RESTARTS_COUNTER.as_ref() }
+        .iter()
+        .map(|a| a.load(SeqCst))
+        .join(",")
+        .as_bytes())
+        .unwrap();
+
+    println!("Restarts: {}", unsafe { RESTARTS_COUNTER.as_ref() }
+        .iter()
+        .enumerate()
+        .map(|(i, count)| format!("{i}: {}", count.load(SeqCst)))
+        .join("\n"))
 }
 
 fn test() {
@@ -102,10 +126,10 @@ fn make_splash() {
     println!(" |               # E-Mail: amir.tonta@mathematik.uni-marburg.de          |");
     println!(" |               # Written by: Amir Tonta                                |");
     println!(" |               # First released: 02-01-2024                            |");
-    println!(" |               # Repository: https://github.com/umr-dbs/MVTree         |");
+    println!(" |               # Repository: https://github.com/umr-dbs/cMVBT          |");
     println!(" |               -----------------------------------------------------   |");
     println!(" |                                                                       |");
-    println!(" |               ...MVTree Application Launching...                      |");
+    println!(" |               ...cMVBT Application Launching...                       |");
     println!(" +-------------+                                           +-------------+");
     println!("                \\_______                           _______/");
     println!("                        \\_________________________/");

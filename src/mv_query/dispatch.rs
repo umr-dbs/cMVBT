@@ -93,6 +93,7 @@ impl<'a,
                             if record.version.insert_version > newest_si => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
+                                leaf_page.commit_delta(1, -1);
 
                                 return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
@@ -106,6 +107,7 @@ impl<'a,
                             Some(record) => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
+                                leaf_page.commit_delta(1, -1);
 
                                 return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
@@ -258,6 +260,7 @@ impl<'a,
                             if record.version.insert_version > newest_si => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
+                                leaf_page.commit_delta(1, -1);
 
                                 return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
@@ -271,6 +274,7 @@ impl<'a,
                             Some(record) => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
+                                leaf_page.commit_delta(1, -1);
 
                                 return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
@@ -289,7 +293,7 @@ impl<'a,
 
                 // two steps soft commit: Mark new record visible
                 leaf_page.commit_delta(1, 0);
-                match leaf_page.delete(key, version) {
+                match leaf_page.delete_after_update(key, version) {
                     Ok(Some(..)) => {
                         // second step soft commit: Correct counters
                         leaf_page.commit_delta(-1, 1);

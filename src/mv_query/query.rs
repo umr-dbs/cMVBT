@@ -9,6 +9,8 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
+use crate::mv_root::index_root::RootIndex;
+use crate::mv_root::root::Root;
 use crate::mv_tree::mvtree::{MVTreeSt};
 use crate::mv_tree::smo::BlockUnsafeDegree;
 use crate::mv_utils::interval::Interval;
@@ -19,6 +21,23 @@ impl<const FAN_OUT: usize,
     Payload: Display + Clone + Default + Sync + 'static
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
+    #[inline(always)]
+    pub fn retrieve_root_number_for(&self, lookup_version: Version) -> (usize, usize) {
+        if let RootIndex::FrugalList(ref fg) = self.root {
+            let roots = unsafe { &*fg.data_ptr() };
+            let root_count = roots.len();
+            
+            (roots.iter()
+                .enumerate()
+                .find_map(|(pos, r)|
+                    (r.insert_version <= lookup_version).then(|| pos))
+                .unwrap(), root_count)
+        }
+        else {
+            panic!("Cannot retrieve root index for {}", self.root_star_index());
+        }
+    }
+
     #[inline(always)]
     pub fn retrieve_root_for(&self, lookup_version: Version)
                                     -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>

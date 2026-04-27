@@ -1,12 +1,12 @@
 use std::fmt::Display;
 use std::hash::Hash;
-
+use std::sync::atomic::Ordering::Relaxed;
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::{Attempts, BlockRef};
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_test;
-use crate::mv_test::{LOG_REORG, VERBOSE};
+use crate::mv_test::{LOG_REORG, RESTARTS_COUNTER, VERBOSE};
 use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_tree::smo::BlockUnsafeDegree;
@@ -28,7 +28,12 @@ impl<const FAN_OUT: usize,
 
                     sched_yield(attempt);
                 }
-                Ok(guard) => break guard,
+                Ok(guard) => unsafe {
+                    RESTARTS_COUNTER
+                        .get(attempt as usize)
+                        .inspect(|a| { a.fetch_add(1, Relaxed); });
+                    break guard
+                },
             }
         }
     }
@@ -165,11 +170,11 @@ impl<const FAN_OUT: usize,
                         }
                     }
                     match next_curr_guard.deref().unwrap().unsafe_degree() {
-                        BlockUnsafeDegree::Overflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                        BlockUnsafeDegree::Overflow // next_curr_guard.upgrade_write_lock() &&
+                        if curr_guard.upgrade_write_lock()
                             => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
-                        BlockUnsafeDegree::ActiveUnderflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                        BlockUnsafeDegree::ActiveUnderflow // next_curr_guard.upgrade_write_lock() &&
+                        if  curr_guard.upgrade_write_lock()
                         => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
                                 Ok(guard) => curr_guard = guard,
                                 Err(..) => {

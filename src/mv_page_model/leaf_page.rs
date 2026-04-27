@@ -177,10 +177,10 @@ impl<const NUM_RECORDS: usize,
     }
 
     #[inline(always)]
-    pub fn commit_delta(&self, active_delta: i32, dead_delta: u32) {
+    pub fn commit_delta(&self, active_delta: i32, dead_delta: i32) {
         let len= self.len.load(Relaxed);
         let active = active_len(len) as i32 + active_delta;
-        let dead = dead_len(len) + dead_delta;
+        let dead = dead_len(len) + dead_delta as u32;
 
         // fence(Release);
         self.len.store(from_active_dead(active as Active, dead as Dead), Release)

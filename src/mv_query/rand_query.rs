@@ -1,5 +1,8 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
+use itertools::Itertools;
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::Attempts;
 use crate::mv_page_model::internal_page::{Fence, TimeMatcher};
@@ -76,9 +79,11 @@ impl<const FAN_OUT: usize,
                             index -= 1;
                         }
                     }
-
-                    debug_assert!(index < _dead_n as usize + live_n as usize);
-                    debug_assert!(!internal_page.get_version(index).is_obsolete(),
+                    if index >= 127 {
+                        return self.traversal_write_internal_rand(attempts);
+                    }
+                    assert!(index < _dead_n as usize + live_n as usize);
+                    assert!(!internal_page.get_version(index).is_obsolete(),
                             "Accessed obsolete version!");
 
                     curr_fence = internal_page.get_key(index).clone();
