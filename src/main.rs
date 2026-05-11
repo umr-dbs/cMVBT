@@ -45,26 +45,26 @@ fn main() {
         println!("*********** Use a Command ***********")
     }
 
-    fs::write("restarts.csv", "\n").unwrap();
-
-    let mut f = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open("restarts.csv")
-        .unwrap();
-
-    f.write_all( unsafe { RESTARTS_COUNTER.as_ref() }
-        .iter()
-        .map(|a| a.load(SeqCst))
-        .join(",")
-        .as_bytes())
-        .unwrap();
-
-    println!("Restarts: {}", unsafe { RESTARTS_COUNTER.as_ref() }
-        .iter()
-        .enumerate()
-        .map(|(i, count)| format!("{i}: {}", count.load(SeqCst)))
-        .join("\n"))
+    // fs::write("restarts.csv", "\n").unwrap();
+    //
+    // let mut f = OpenOptions::new()
+    //     .append(true)
+    //     .create(true)
+    //     .open("restarts.csv")
+    //     .unwrap();
+    //
+    // f.write_all( unsafe { RESTARTS_COUNTER.as_ref() }
+    //     .iter()
+    //     .map(|a| a.load(SeqCst))
+    //     .join(",")
+    //     .as_bytes())
+    //     .unwrap();
+    //
+    // println!("Restarts: {}", unsafe { RESTARTS_COUNTER.as_ref() }
+    //     .iter()
+    //     .enumerate()
+    //     .map(|(i, count)| format!("{i}: {}", count.load(SeqCst)))
+    //     .join("\n"))
 }
 
 fn test() {

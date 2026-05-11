@@ -4,7 +4,7 @@ use crate::mv_tree::mvtree::MVTreeSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
 use itertools::{Either, Itertools};
-use rand::Rng;
+use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;

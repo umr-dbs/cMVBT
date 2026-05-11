@@ -1107,13 +1107,13 @@ impl<const FAN_OUT: usize,
                 let mut new_root_latch
                     = new_root_block.borrow_read();
 
-                let mut latch_attempts = 0;
-                while !new_root_latch.upgrade_write_lock() {
-                    latch_attempts += 1;
-                    sched_yield(latch_attempts);
-
-                    new_root_latch = new_root_block.borrow_read();
-                }
+                // let mut latch_attempts = 0;
+                // while !new_root_latch.upgrade_write_lock() {
+                //     latch_attempts += 1;
+                //     sched_yield(latch_attempts);
+                //
+                //     new_root_latch = new_root_block.borrow_read();
+                // }
 
                 let old_v = _master_guard.version();
                 self.root.append_root(
@@ -1121,10 +1121,10 @@ impl<const FAN_OUT: usize,
 
                 self.end_tx_commit(version);
 
-                root_guard = new_root_latch;
-
                 self.block_manager.register_dead(
                     old_v, root_guard.inner_cell());
+
+                root_guard = new_root_latch;
 
                 (height + 1, new_root_block)
             }
@@ -1135,13 +1135,13 @@ impl<const FAN_OUT: usize,
                 let mut new_root_latch
                     = new_root_block.borrow_read();
 
-                let mut latch_attempts = 0;
-                while !new_root_latch.upgrade_write_lock() {
-                    latch_attempts += 1;
-                    sched_yield(latch_attempts);
-
-                    new_root_latch = new_root_block.borrow_read();
-                }
+                // let mut latch_attempts = 0;
+                // while !new_root_latch.upgrade_write_lock() {
+                //     latch_attempts += 1;
+                //     sched_yield(latch_attempts);
+                //
+                //     new_root_latch = new_root_block.borrow_read();
+                // }
 
                 let old_v = _master_guard.version();
                 self.root.append_root(
@@ -1149,10 +1149,10 @@ impl<const FAN_OUT: usize,
 
                 self.end_tx_commit(version);
 
-                root_guard = new_root_latch;
-
                 self.block_manager.register_dead(
                     old_v, root_guard.inner_cell());
+
+                root_guard = new_root_latch;
 
                 (height, new_root_block)
             }
