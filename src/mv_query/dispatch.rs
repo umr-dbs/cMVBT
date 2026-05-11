@@ -95,6 +95,7 @@ impl<'a,
                                 *record.payload_mut() = payload;
                                 leaf_page.commit_delta(1, -1);
 
+                                self.on_exit_crud_dispatch(snapshot);
                                 return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
                             _ => { }
@@ -212,7 +213,7 @@ impl<'a,
                 key,
                 version),
             CRUDOperation::RangeIter(key, version) =>
-                CRUDOperationResult::MatchedRecordIter(RangeQueryIter::new(
+                return CRUDOperationResult::MatchedRecordIter(RangeQueryIter::new(
                     self,
                     version,
                     key)),

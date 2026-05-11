@@ -30,6 +30,18 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
+> Drop for RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
+    fn drop(&mut self) {
+        self.mv_tree()
+            .on_exit_crud_dispatch(self.snapshot().into())
+    }
+}
+
+impl<'a,
+    const FAN_OUT: usize,
+    const NUM_RECORDS: usize,
+    Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
+    Payload: Display + Clone + Default + Sync + 'static
 > RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn new(tree: &'a MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
