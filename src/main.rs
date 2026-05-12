@@ -111,7 +111,7 @@ fn make_splash() {
         datetime.format("%d-%m-%Y %T")
     );
     println!(
-        " |               # Current version: {}                               |",
+        " |               # Current version: {}                              |",
         env!("CARGO_PKG_VERSION")
     );
     println!(" |               -------------------------                               |");

@@ -26,15 +26,10 @@ impl<'a,
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let snapshot
-            = crud.is_read();
-
-        self.on_enter_crud_dispatch(snapshot);
-
         let is_concurrent = self.locking_strategy
             .is_concurrent();
 
-        let ret = match crud {
+        match crud {
             CRUDOperation::Insert(key, payload) => {
                 let leaf_guard = if is_concurrent {
                     self.traversal_write_olc(key)
@@ -95,7 +90,6 @@ impl<'a,
                                 *record.payload_mut() = payload;
                                 leaf_page.commit_delta(1, -1);
 
-                                self.on_exit_crud_dispatch(snapshot);
                                 return CRUDOperationResult::Updated(self.current_version_for_reader())
                             },
                             _ => { }
@@ -117,7 +111,6 @@ impl<'a,
                     }
                     _ => { }
                 }
-
 
                 let version
                     = self.start_tx_commit();
@@ -198,22 +191,33 @@ impl<'a,
                     Err(()) => CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
                 }
             }
-            CRUDOperation::Range(range, version) if RANGE_DISPATCH_LAZY => match self.dispatch_crud(
+            CRUDOperation::Range(range, version)
+            if RANGE_DISPATCH_LAZY => match self.dispatch_crud(
                 CRUDOperation::RangeIter(range, version)) {
                 CRUDOperationResult::MatchedRecordIter(iter) =>
                     CRUDOperationResult::MatchedRecords(iter.collect()),
                 other => other
             },
-            CRUDOperation::Range(range, version) => Self::key_range_read_from_root(
-                self.retrieve_root_for(version),
-                range,
-                version),
-            CRUDOperation::Point(key, version) => Self::key_point_read_from_root(
-                self.retrieve_root_for(version),
-                key,
-                version),
+            CRUDOperation::Range(range, version) => {
+                self.on_acquire_reader_snapshot(version);
+                let res = Self::key_range_read_from_root(
+                    self.retrieve_root_for(version),
+                    range,
+                    version);
+                self.on_release_reader_snapshot(version);
+                res
+            },
+            CRUDOperation::Point(key, version) => {
+                self.on_acquire_reader_snapshot(version);
+                let res = Self::key_point_read_from_root(
+                    self.retrieve_root_for(version),
+                    key,
+                    version);
+                self.on_release_reader_snapshot(version);
+                res
+            },
             CRUDOperation::RangeIter(key, version) =>
-                return CRUDOperationResult::MatchedRecordIter(RangeQueryIter::new(
+                CRUDOperationResult::MatchedRecordIter(RangeQueryIter::new(
                     self,
                     version,
                     key)),
@@ -433,10 +437,6 @@ impl<'a,
                 CRUDOperationResult::InsertedRand(key, version)
             }
             _ => CRUDOperationResult::Error,
-        };
-
-        self.on_exit_crud_dispatch(snapshot);
-
-        ret
+        }
     }
 }

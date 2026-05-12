@@ -23,6 +23,7 @@ pub struct RangeQueryIter<
     pub(crate) range: Interval<Key>,
     path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
     buff: VecDeque<RecordPointResult<Key, Payload>>,
+    is_completed: bool,
 }
 
 impl<'a,
@@ -31,9 +32,11 @@ impl<'a,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
 > Drop for RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
-    fn drop(&mut self) {
-        self.mv_tree()
-            .on_exit_crud_dispatch(self.snapshot().into())
+    fn drop(&mut self) { // ensure snapshot is released even if user didn't consume all data
+        if !self.is_completed {
+            self.mv_tree()
+                .on_release_reader_snapshot(self.snapshot().into())
+        }
     }
 }
 
@@ -45,12 +48,15 @@ impl<'a,
 > RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
     pub fn new(tree: &'a MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
+        tree.on_acquire_reader_snapshot(version);
+
         Self {
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
             path: vec![(Interval::new(tree.min_key, tree.max_key),
                         tree.snapshot_current().mv_tree().retrieve_root_for(version))],
             buff: VecDeque::new(),
+            is_completed: false,
         }
     }
 
@@ -91,6 +97,10 @@ impl<'a,
 
         loop {
             if self.path.is_empty() || self.range.lower > self.range.upper {
+                self.mv_tree()
+                    .on_release_reader_snapshot(self.snapshot());
+
+                self.is_completed = true;
                 return None
             }
             let (curr_fence, curr_block)

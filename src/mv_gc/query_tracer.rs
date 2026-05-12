@@ -113,22 +113,22 @@ impl<'a,
 > MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    pub(crate) fn on_enter_crud_dispatch(&self, snapshot: Option<SnapShot>) {
-        if let Some(snapshot) = snapshot {
-            println!("[{:?}] - Enter", thread::current().id());
-            self.tracker()
-                .inspect(|tracker|
-                    tracker.on_tx_start(snapshot));
-        }
+    pub(crate) fn on_acquire_reader_snapshot(&self, snapshot: SnapShot) {
+        // if let Some(snapshot) = snapshot {
+        // println!("[{:?}] - Enter", thread::current().id());
+        self.tracker()
+            .inspect(|tracker|
+                tracker.on_tx_start(snapshot));
+        // }
     }
 
     #[inline]
-    pub(crate) fn on_exit_crud_dispatch(&self, snapshot: Option<SnapShot>) {
-        if let Some(snapshot) = snapshot {
-            println!("[{:?}] - Exit", thread::current().id());
-            self.tracker()
-                .inspect(|tracker|
-                    tracker.on_tx_completed(snapshot));
-        }
+    pub(crate) fn on_release_reader_snapshot(&self, snapshot: SnapShot) {
+        // if let Some(snapshot) = snapshot {
+        // println!("[{:?}] - Exit", thread::current().id());
+        self.tracker()
+            .inspect(|tracker|
+                tracker.on_tx_completed(snapshot));
+        // }
     }
 }
