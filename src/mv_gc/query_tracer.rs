@@ -82,25 +82,25 @@ impl TransactionTrace {
     pub(crate) fn on_tx_start(&self, snapshot: SnapShot) {
         let reader_query: ReaderQuery = snapshot.into();
         let res = self.insert(reader_query.clone());
-        println!("[{:?}] - Inserted ReaderQuery: (v: {}, tid: {})",
-                 thread::current().id(),
-                 res.0, res.1);
+        // println!("[{:?}] - Inserted ReaderQuery: (v: {}, tid: {})",
+        //          thread::current().id(),
+        //          res.0, res.1);
     }
 
     #[inline(always)]
     pub(crate) fn on_tx_completed(&self, snap_shot: SnapShot) {
         let reader_query = snap_shot.into();
         if let None = self.remove(&reader_query) {
-            println!("[{:?}] - Failed Reader Snapshot Removal of: (v: {}, tid: {}) was not found",
-                     thread::current().id(),
-                     reader_query.0,
-                     reader_query.1);
+            // println!("[{:?}] - Failed Reader Snapshot Removal of: (v: {}, tid: {}) was not found",
+            //          thread::current().id(),
+            //          reader_query.0,
+            //          reader_query.1);
         }
         else {
-            println!("[{:?}] - Successful Reader Snapshot Removal of: (v: {}, tid: {}).",
-                     thread::current().id(),
-                     reader_query.0,
-                     reader_query.1);
+            // println!("[{:?}] - Successful Reader Snapshot Removal of: (v: {}, tid: {}).",
+            //          thread::current().id(),
+            //          reader_query.0,
+            //          reader_query.1);
         }
     }
 }
