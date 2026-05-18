@@ -19,6 +19,11 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
+    pub(crate) fn current_version(&self) -> Version {
+        self.global_clock.current_version()
+    }
+
+    #[inline(always)]
     pub(crate) fn start_tx_commit(&self) -> Version {
         self.global_clock.start_commit()
     }

@@ -73,7 +73,7 @@ impl<const P_F: usize,
         self.live_tx.peek_max()
     }
 
-    #[inline]// TODO: Just for checks
+    #[inline]
     pub fn free_block(&self) -> Option<BlockRef<P_F, P_N, Key, Payload>> {
         // self.dead_blocks.pop_min().map(|(_v, block)| block)
         if let Some((dead_v, dead_block)) = self.dead_blocks.pop_min() {

@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
-
+use std::sync::atomic::Ordering::{Acquire, Relaxed};
 use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
@@ -86,11 +86,14 @@ impl<'a,
                         {
                             Some(record)
                             if record.version.insert_version > newest_si => {
-                                record.version_mut().undelete();
                                 *record.payload_mut() = payload;
-                                leaf_page.commit_delta(1, -1);
+                                if record.version.is_deleted() {
+                                    record.version_mut().undelete();
 
-                                return CRUDOperationResult::Updated(self.current_version_for_reader())
+                                    leaf_page.commit_delta(1, -1);
+                                }
+
+                                return CRUDOperationResult::Updated(self.current_version())
                             },
                             _ => { }
                         }
@@ -100,11 +103,14 @@ impl<'a,
                             .rfind(|r| r.key() == key)
                         {
                             Some(record) => {
-                                record.version_mut().undelete();
                                 *record.payload_mut() = payload;
-                                leaf_page.commit_delta(1, -1);
+                                if record.version.is_deleted() {
+                                    record.version_mut().undelete();
 
-                                return CRUDOperationResult::Updated(self.current_version_for_reader())
+                                    leaf_page.commit_delta(1, -1);
+                                }
+
+                                return CRUDOperationResult::Updated(self.current_version())
                             },
                             _ => { }
                         }

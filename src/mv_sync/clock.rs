@@ -200,6 +200,11 @@ impl GlobalClock {
         GlobalClock(AtomicVersion::new(version_handle::START_VERSION))
     }
 
+    #[inline(always)]
+    pub(crate) fn current_version(&self) -> Version {
+        self.0.load(Acquire)
+    }
+
     // pushes completed work to visible, for readers
     #[inline(always)]
     pub(crate) fn end_commit(&self, version: Version) {
