@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed};
 use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyDoesNotExist};
+use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyAlreadyExists, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_query::rand_query::RAND_ATTEMPTS_MAX;
 use crate::mv_query::iter_query::RangeQueryIter;
@@ -43,6 +43,15 @@ impl<'a,
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
+
+                if leaf_page.as_records()
+                    .iter()
+                    .rfind(|r| r.key == key)
+                    .map(|r| !r.version.is_deleted())
+                    .unwrap_or(false)
+                {
+                    return CRUDOperationResult::ZeroAffected(KeyAlreadyExists);
+                }
 
                 let current_len
                     = leaf_page.len();
@@ -161,7 +170,7 @@ impl<'a,
 
                 if VERBOSE {
                     println!("traverse olc end");
-                    println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.deref().unwrap().active_dead_count());
+                    println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.active_dead_count());
                 }
                 let leaf_deref_mut = leaf_guard
                     .deref_mut()
