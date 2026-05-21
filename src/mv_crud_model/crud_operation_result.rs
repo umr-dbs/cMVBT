@@ -40,6 +40,7 @@ pub enum CRUDOperationResult<
 pub enum CRUDOperationInnerReason {
     KeyAlreadyDeleted,
     KeyDoesNotExist,
+    KeyAlreadyExists,
 }
 
 impl<'a,
@@ -95,6 +96,8 @@ impl<'a,
                 write!(f, "ZeroAffected(KeyAlreadyDeleted)"),
             CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyDoesNotExist) =>
                 write!(f, "ZeroAffected(KeyDoesNotExist)"),
+            CRUDOperationResult::ZeroAffected(CRUDOperationInnerReason::KeyAlreadyExists) => 
+                write!(f, "ZeroAffected(KeyAlreadyExists)"),
             CRUDOperationResult::InsertedRand(key, version) =>
                 write!(f, "InsertedRand(key: {key}, version: {version})"),
             CRUDOperationResult::UpdatedRand(key, version) =>

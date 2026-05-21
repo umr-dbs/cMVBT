@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::Deref;
 use itertools::Itertools;
 use crate::mv_block::block::BlockGuard;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
@@ -24,7 +25,7 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub fn retrieve_root_number_for(&self, lookup_version: Version) -> (usize, usize) {
         if let RootIndex::FrugalList(ref fg) = self.root {
-            let roots = unsafe { &*fg.data_ptr() };
+            let roots = fg;
             let root_count = roots.len();
             
             (roots.iter()
@@ -57,7 +58,6 @@ impl<const FAN_OUT: usize,
         while let PageType::IndexRef(internal_page) = curr
             .borrow_read()
             .deref()
-            .unwrap()
             .as_page_ref()
         {
             let (keys_page, versions_page) = internal_page
@@ -96,7 +96,7 @@ impl<const FAN_OUT: usize,
             let curr_read
                 = curr.borrow_read();
 
-            match curr_read.deref().unwrap().as_page_ref() {
+            match curr_read.deref().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
@@ -140,7 +140,6 @@ impl<const FAN_OUT: usize,
             Ok(leaf) => match leaf
                 .borrow_read()
                 .deref()
-                .unwrap()
                 .as_records()
                 .iter()
                 .rfind(|r| r.key() == key && r.version().matches(lookup_version))
@@ -171,7 +170,6 @@ impl<const FAN_OUT: usize,
 
                 let records = leaf_guard
                     .deref()
-                    .unwrap()
                     .as_records();
 
                 let start_pos_si = records.len() -
@@ -198,10 +196,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn retrieve_root_write(&self) ->
-        (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
-    {
+    fn retrieve_root_write(&self) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
         let height
             = self.root.height();
 
@@ -215,10 +210,12 @@ impl<const FAN_OUT: usize,
             = root_block.borrow_read();
 
         match master_guard.unsafe_degree_root() {
-            BlockUnsafeDegree::Overflow => self.split_root(master_guard, root_guard, height),
-            BlockUnsafeDegree::ActiveUnderflow => self.merge_root(master_guard, root_guard, height)
+            BlockUnsafeDegree::Overflow =>
+                self.split_root(master_guard, root_guard, height),
+            BlockUnsafeDegree::ActiveUnderflow =>
+                self.merge_root(master_guard, root_guard, height)
                 .unwrap(),
-            _ => (root_block, root_guard),
+            _ => root_guard,
         }
     }
 
@@ -226,11 +223,10 @@ impl<const FAN_OUT: usize,
     pub(crate) fn traversal_write(&self, key: Key)
                                   -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
-        let (mut _curr_block,
-            mut curr_guard) = self.retrieve_root_write();
+        let (mut curr_guard) = self.retrieve_root_write();
 
         loop {
-            match curr_guard.deref().unwrap().as_page_ref() {
+            match curr_guard.deref().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let keys_page = internal_page
                         .keys();
@@ -250,16 +246,13 @@ impl<const FAN_OUT: usize,
                     let next_curr_guard
                         = next_curr_block.borrow_free();
 
-                    match next_curr_guard.deref().unwrap().unsafe_degree() {
+                    match next_curr_guard.deref().unsafe_degree() {
                         BlockUnsafeDegree::Overflow =>
                             curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow =>
                             curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
                                 .unwrap(),
-                        BlockUnsafeDegree::Ok => {
-                            curr_guard = next_curr_guard;
-                            _curr_block = next_curr_block;
-                        }
+                        BlockUnsafeDegree::Ok => curr_guard = next_curr_guard
                     }
                 }
                 _ => return curr_guard

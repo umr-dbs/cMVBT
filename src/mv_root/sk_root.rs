@@ -6,6 +6,7 @@ use crate::mv_root::root::Root;
 use crate::mv_root::tree_root::ValueRootInner;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
+#[derive(Default)]
 pub struct RootSkipList<
     const FANOUT: usize,
     const NUM_RECORDS: usize,

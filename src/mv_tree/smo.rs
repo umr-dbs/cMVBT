@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::Deref;
 use itertools::Itertools;
 use crate::mv_block::block::{Block, BlockGuard};
 use crate::mv_block::block_handle::BlockAllocManager;
@@ -212,7 +213,7 @@ impl<const FAN_OUT: usize,
         let current_len
             = internal_page.sum_len();
 
-        match self.split(simba.deref().unwrap(), &fence) {
+        match self.split(simba.deref(), &fence) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,
@@ -273,7 +274,7 @@ impl<const FAN_OUT: usize,
         let mufasa_deref_mut
             = mufasa.deref_mut().unwrap();
 
-        match self.merge(mufasa_deref_mut, simba.deref().unwrap(), index_simba) {
+        match self.merge(mufasa_deref_mut, simba.deref(), index_simba) {
             MergeResult::Merged(
                 index_sibling,
                 fence_sibling,
@@ -344,7 +345,7 @@ impl<const FAN_OUT: usize,
                                  right_interval,
                                  mufasa_deref_mut.keys().get_unchecked(index_simba),
                                  mufasa_deref_mut.keys().get_unchecked(index_sibling),
-                                 simba.deref().unwrap().node_data.as_ref()
+                                 simba.deref().node_data.as_ref()
                         );
                     }
                 }
@@ -484,7 +485,6 @@ impl<const FAN_OUT: usize,
 
                     let (c_keys, c_versions, c_pointers) = candidate_guard
                         .deref()
-                        .unwrap()
                         .as_internal_page_ref()
                         .keys_versions_pointers();
 
@@ -520,7 +520,6 @@ impl<const FAN_OUT: usize,
                             .filter(|r| !r.version().is_deleted())
                             .merge_by(candidate_guard
                                           .deref()
-                                          .unwrap()
                                           .as_records()
                                           .iter()
                                           .filter(|r| !r.version().is_deleted()),
@@ -538,7 +537,6 @@ impl<const FAN_OUT: usize,
                 true => unsafe {
                     let mut joined = candidate_guard
                         .deref()
-                        .unwrap()
                         .as_records()
                         .iter()
                         .filter(|r| !r.version().is_deleted())
@@ -597,7 +595,6 @@ impl<const FAN_OUT: usize,
                 false => unsafe {
                     let candidate_internal_page = candidate_guard
                         .deref()
-                        .unwrap()
                         .as_internal_page_ref();
 
                     let (c_keys, c_versions, c_children)
@@ -857,15 +854,13 @@ impl<const FAN_OUT: usize,
         root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
     ) -> Result<
-        (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
+        (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
     {
         if VERBOSE {
             println!("merge root");
         }
         let child_ptr = root_guard
             .deref()
-            .unwrap()
             .as_internal_page_ref()
             .last_child();
 
@@ -880,205 +875,33 @@ impl<const FAN_OUT: usize,
             println!("Old root height = {}, new height = {}", height, height - 1);
         }
 
-        let (block, guard)
+        let guard
             = self.split_root(master_guard, child_guard, height - 1);
 
         if VERBOSE {
             let guard_deref
-                = guard.deref_mut().unwrap();
+                = guard.deref_mut_unsafe();
 
             let (active, dead)
                 = guard_deref.active_dead_count();
 
             println!("active dead count: ({} / {})", active, dead);
         }
-        // if let PageType::IndexMut(internal_page) = guard_deref.as_page_mut() {
-        //     let (mut min, mut max) =
-        //         (internal_page.get_key_mut(0),
-        //          internal_page.get_key_mut(0));
-        //
-        //     internal_page.keys_mut().iter_mut().for_each(|fence| unsafe {
-        //         if min.lower > fence.lower {
-        //             min = &mut *(fence as *mut _ );
-        //         }
-        //         if max.upper < fence.upper {
-        //             max = &mut *(fence as *mut _);
-        //         }
-        //     });
-        //
-        //     if VERBOSE {
-        //         if min.lower != self.min_key || max.upper != self.max_key {
-        //             println!("Fence correction, min: {min} - max: {max}");
-        //         }
-        //     }
-        //     min.lower = self.min_key;
-        //     max.upper = self.max_key;
-        //     fence(Release); // guard drop commits this change automatically
-        // }
 
-        Ok((block, guard))
+        Ok(guard)
     }
-
-
-    // pub(crate) fn split_root_new_unapproved<'a>(
-    //     &self,
-    //     _master_guard: RootItemGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    //     mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    //     height: Height,
-    // ) -> (
-    //     BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    //     BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
-    // {
-    //     let (_height, root_block) = match self.split(
-    //         root_guard.deref_mut().unwrap(),
-    //         &Interval::new(self.min_key, self.max_key))
-    //     {
-    //         BlockSplit::ByKey(left_fence,
-    //                           left,
-    //                           right_fence,
-    //                           right
-    //         ) => {
-    //             if VERBOSE {
-    //                 println!("Split Root: ByKey. \
-    //                 left fence: {}, right fence: {}", left_fence, right_fence);
-    //             }
-    //
-    //             let new_root_block = self
-    //                 .block_manager
-    //                 .new_empty_index_block(self.locking_strategy.latch_type());
-    //
-    //             let mut new_root_latch
-    //                 = new_root_block.borrow_read();
-    //
-    //             let mut latch_attempts = 0;
-    //             while !new_root_latch.upgrade_write_lock() {
-    //                 latch_attempts += 1;
-    //                 sched_yield(latch_attempts);
-    //
-    //                 new_root_latch = new_root_block.borrow_read();
-    //             }
-    //
-    //             let mut commit_handle
-    //                 = self.begin_commit();
-    //
-    //             let commit_version = commit_handle
-    //                 .read_handle_version();
-    //
-    //             let root_internal_page = new_root_block
-    //                 .unsafe_borrow_mut()
-    //                 .as_mut()
-    //                 .as_internal_page();
-    //
-    //             root_internal_page
-    //                 .push_uncommitted(left_fence, commit_version, left, 0);
-    //
-    //             root_internal_page
-    //                 .push_uncommitted(right_fence, commit_version, right, 1);
-    //
-    //             root_internal_page.commit_delta(2, 0);
-    //
-    //             let mut commit_attempts
-    //                 = 0;
-    //
-    //             let root_version = loop {
-    //                 match self.try_end_commit(commit_handle) {
-    //                     Ok(commit) if commit_attempts > 0 => unsafe {
-    //                         let versions
-    //                             = root_internal_page.versions_byKey_uncommitted_mut();
-    //
-    //                         *versions.get_unchecked_mut(0) = commit;
-    //                         *versions.get_unchecked_mut(1) = commit;
-    //
-    //                         break commit;
-    //                     },
-    //                     Ok(commit) => break commit,
-    //                     Err(opt) => {
-    //                         commit_attempts += 1;
-    //                         sched_yield(commit_attempts);
-    //                         commit_handle = opt
-    //                     }
-    //                 }
-    //             };
-    //
-    //             self.root.append_root(
-    //                 Root::new(new_root_block.clone(), root_version, height + 1));
-    //
-    //             root_guard = new_root_latch;
-    //             (height + 1, new_root_block)
-    //         }
-    //         BlockSplit::ByVersion(new_root_block) => {
-    //             if VERBOSE {
-    //                 println!("Split Root: ByVersion");
-    //                 match new_root_block.unsafe_borrow().try_as_internal_page_ref() {
-    //                     Ok(internal_page) => {
-    //                         println!("Split Root ByVersion: Keys:\n\t{}",
-    //                                  internal_page.keys().iter().join(","));
-    //                     }
-    //                     _ => {}
-    //                 }
-    //             }
-    //
-    //
-    //             if VERBOSE  {
-    //                 print!("VS: ");
-    //                 // println!("Old = {}, New = {}",
-    //                 //          master_guard.deref().unwrap().prev.as_ref().unwrap().unsafe_borrow().block.unsafe_borrow().len(),
-    //                 //          root_guard.deref().unwrap().node_data.get_mut().len());
-    //             }
-    //
-    //             let mut new_root_latch
-    //                 = new_root_block.borrow_read();
-    //
-    //             let mut latch_attempts = 0;
-    //             while !new_root_latch.upgrade_write_lock() {
-    //                 latch_attempts += 1;
-    //                 sched_yield(latch_attempts);
-    //
-    //                 new_root_latch = new_root_block.borrow_read();
-    //             }
-    //
-    //             let mut commit_attempts
-    //                 = 0;
-    //
-    //             let mut commit_handle
-    //                 = self.begin_commit();
-    //
-    //             let root_version = loop {
-    //                 match self.try_end_commit(commit_handle) {
-    //                     Ok(commit) =>
-    //                         break commit,
-    //                     Err(opt) => {
-    //                         commit_attempts += 1;
-    //                         sched_yield(commit_attempts);
-    //                         commit_handle = opt
-    //                     }
-    //                 }
-    //             };
-    //
-    //             self.root.append_root(
-    //                 Root::new(new_root_block.clone(), root_version, height));
-    //
-    //             root_guard = new_root_latch;
-    //             (height, new_root_block)
-    //         }
-    //     };
-    //
-    //     (root_block, root_guard)
-    // }
 
     pub(crate) fn split_root(
         &self,
         _master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        mut root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
-    ) -> (
-        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)
+    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let root_guard_deref_mut
-            = root_guard.deref_mut().unwrap();
+            = root_guard.deref_mut_unsafe();
 
-        let (_height, root_block) = match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
+        match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,
@@ -1104,16 +927,8 @@ impl<const FAN_OUT: usize,
 
                 root_internal_page.commit_delta(2, 0);
 
-                let mut new_root_latch
+                let new_root_latch
                     = new_root_block.borrow_read();
-
-                // let mut latch_attempts = 0;
-                // while !new_root_latch.upgrade_write_lock() {
-                //     latch_attempts += 1;
-                //     sched_yield(latch_attempts);
-                //
-                //     new_root_latch = new_root_block.borrow_read();
-                // }
 
                 let old_v = _master_guard.version();
                 self.root.append_root(
@@ -1124,24 +939,14 @@ impl<const FAN_OUT: usize,
                 self.block_manager.register_dead(
                     old_v, root_guard.inner_cell());
 
-                root_guard = new_root_latch;
-
-                (height + 1, new_root_block)
+                new_root_latch
             }
             BlockSplit::ByVersion(new_root_block) => {
                 let version
                     = self.start_tx_commit();
 
-                let mut new_root_latch
+                let new_root_latch
                     = new_root_block.borrow_read();
-
-                // let mut latch_attempts = 0;
-                // while !new_root_latch.upgrade_write_lock() {
-                //     latch_attempts += 1;
-                //     sched_yield(latch_attempts);
-                //
-                //     new_root_latch = new_root_block.borrow_read();
-                // }
 
                 let old_v = _master_guard.version();
                 self.root.append_root(
@@ -1152,12 +957,9 @@ impl<const FAN_OUT: usize,
                 self.block_manager.register_dead(
                     old_v, root_guard.inner_cell());
 
-                root_guard = new_root_latch;
-
-                (height, new_root_block)
+                new_root_latch
             }
-        };
-        (root_block, root_guard)
+        }
     }
 
     // #[inline]

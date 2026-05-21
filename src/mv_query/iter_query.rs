@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::Deref;
 use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::TimeMatcher;
@@ -106,7 +107,7 @@ impl<'a,
             let (curr_fence, curr_block)
                 = self.path.last().cloned().unwrap();
 
-            match curr_block.borrow_read().deref().unwrap().as_ref().as_page_ref() {
+            match curr_block.borrow_read().as_ref().as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();

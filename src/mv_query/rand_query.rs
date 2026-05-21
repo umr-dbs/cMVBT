@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::sync::atomic::fence;
 use std::sync::atomic::Ordering::SeqCst;
 use itertools::Itertools;
@@ -42,8 +43,7 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal_rand(&self, attempts: Attempts)
     -> Result<(Fence<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), Attempts>
     {
-        let (mut _curr_block,
-            mut curr_guard,
+        let (mut curr_guard,
             attempts) = self.retrieve_root_write_olc(attempts);
 
         let mut curr_fence
@@ -55,7 +55,7 @@ impl<const FAN_OUT: usize,
                 = curr_guard.deref();
 
             let curr_page_ref
-                = curr_guard_result.unwrap();
+                = curr_guard_result;
 
             let (live_n, _dead_n)
                 = curr_page_ref.active_dead_count();
@@ -68,7 +68,7 @@ impl<const FAN_OUT: usize,
                 traversal_loops += 1;
             }
 
-            match curr_guard_result.unwrap().as_page_ref() {
+            match curr_guard_result.as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     for (k, version) in internal_page.versions().iter().enumerate() {
                         if version.is_active() {
@@ -96,7 +96,7 @@ impl<const FAN_OUT: usize,
 
                     if LOG_REORG {
                         let r
-                            = next_curr_guard.deref().unwrap().unsafe_degree();
+                            = next_curr_guard.deref().unsafe_degree();
 
                         match r {
                             BlockUnsafeDegree::Overflow => unsafe {
@@ -108,7 +108,7 @@ impl<const FAN_OUT: usize,
                             _ => {}
                         }
                     }
-                    match next_curr_guard.deref().unwrap().unsafe_degree() {
+                    match next_curr_guard.deref().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
                         => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
@@ -123,10 +123,7 @@ impl<const FAN_OUT: usize,
                                 return Err(attempts + 1)
                             }
                         },
-                        BlockUnsafeDegree::Ok => {
-                            curr_guard = next_curr_guard;
-                            _curr_block = next_curr_block;
-                        }
+                        BlockUnsafeDegree::Ok => curr_guard = next_curr_guard,
                         _ => return Err(attempts + 1)
                     }
                 }

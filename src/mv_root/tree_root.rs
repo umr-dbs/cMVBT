@@ -85,6 +85,7 @@ impl<
     }
 }
 
+#[derive(Default)]
 pub struct RootTree<
     const FANOUT: usize,
     const NUM_RECORDS: usize,

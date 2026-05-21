@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use std::sync::Arc;
 use std::{fs, mem, thread};
 use std::collections::{HashMap, HashSet};
@@ -43,58 +43,58 @@ pub static mut SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut MERGE_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 pub static mut SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 
-pub static mut RESTARTS_COUNTER: [AtomicUsize; 100] = [
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-    AtomicUsize::new(0), AtomicUsize::new(0),
-];
+// pub static mut RESTARTS_COUNTER: [AtomicUsize; 100] = [
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+//     AtomicUsize::new(0), AtomicUsize::new(0),
+// ];
 
 fn olap_tests(index: Arc<MVTree>,
               num_olaps: usize,
@@ -483,6 +483,163 @@ pub(crate) fn main_sorted_insert(parms: Vec<String>) {
 
     println!("Generated {querys} / {n} keys in sorted order in {query_file_name}!")
 }
+
+pub fn main_load_ycsb(parms: Vec<String>) {
+    println!("###### Command: {} ######", parms.iter().skip(1).join(" "));
+
+    let query_file_name = parms[2].to_string();
+    let concurrent = true;
+    let num_olaps: usize = parms[4].parse().unwrap();
+
+    let scans_per_thread = parms[5].parse().unwrap();
+
+    let skew: f64 = parms[6].parse().unwrap();
+    let range = parms[7].parse().unwrap_or(Key::MAX);
+    let root_star_index = match parms[8].as_str() {
+        "sk" => RootIndexType::SkipList(LatchType::Optimistic),
+        "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
+        "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
+        "bt" => RootIndexType::BTree(LatchType::Optimistic),
+        _ => RootIndexType::default()
+    };
+
+    let gc = parms[9].parse::<bool>().unwrap_or(false);
+    let update_in_place = if gc {
+        parms[10].parse::<bool>().unwrap_or(false)
+    } else { false };
+
+    let index
+        = Arc::new(MVTreeSt::<FAN_OUT, NUM_RECORDS, Key, Payload>::olc_optimistic_clock(root_star_index));
+
+    let mut gc_str = "Off".to_string();
+    if gc {
+        index.enable_gc(update_in_place);
+        gc_str = format!("On (UIP = {})", update_in_place);
+    }
+
+    let oltp_threads = if concurrent {
+        scans_per_thread
+    }
+    else {
+        1
+    };
+    println!("- QueryFile = {query_file_name}\n\
+                - Concurrent = {concurrent}\n\
+                - OLTP Threads = {oltp_threads}\n\
+                - OLAP Threads = {num_olaps} (Cores = {}, Threads = {})\n\
+                - Scans/Thread = {}\n\
+                - Skew = {skew}\n\
+                - Range = {range}\n\
+                - Root* = {root_star_index}\n\
+                - GC = {gc_str}",
+             num_cpus::get_physical(),
+             num_cpus::get(),
+             if concurrent { format!("Continuous\n- OLTP Threads = {scans_per_thread}") } else { format!("{scans_per_thread}") });
+
+    let oltp_there = fs::exists("oltp.csv").unwrap();
+    let mut oltp_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open("oltp.csv")
+        .unwrap();
+
+    if !oltp_there {
+        oltp_file.write_all(b"\
+            is_concurrent,\
+            oltp_threads,\
+            olap_threads,\
+            v_index,\
+            skew,\
+            gc,\
+            update_in_place,\
+            slice_per_thread,\
+            rest_slice,\
+            blocks_allocated,\
+            blocks_reused,\
+            total_num_scan_tx,\
+            total_num_oltp_tx,\
+            total_oltp_time,\
+            total_olap_time\n"
+        ).unwrap();
+    }
+    if concurrent {
+        (0..15_000_000).for_each(|i| {
+            let _ = index.dispatch_crud(
+                CRUDOperation::Insert(rand::random_range(0..Key::MAX), Payload::default()));
+        });
+        index.block_manager.alloc_count.store(0, Ordering::SeqCst);
+        index.block_manager.reuse_count.store(0, Ordering::SeqCst);
+
+        // TODO: End experimental setting
+        let counter_inserts
+            = Arc::new(AtomicU64::new(0));
+
+        oltp_file.write_all(format!("\
+            true,\
+            {oltp_threads},\
+            {num_olaps},\
+            cMVBT({root_star_index}),\
+            {skew},\
+            {gc},\
+            {update_in_place},\
+            dynamic,\
+            0").as_bytes()).unwrap();
+
+        let start_time_oltp = Instant::now();
+        let oltp_joins = (0..oltp_threads)
+            .into_iter()
+            .map(|_| {
+                let index = index.clone();
+                let counter_inserts = counter_inserts.clone();
+                spawn(move || {
+                    let mut count_crud = 0;
+                    while counter_inserts.fetch_add(1, Relaxed) < 10_000_000 {
+                        let _ = index.dispatch_crud(
+                            CRUDOperation::Insert(
+                                rand::random_range(0..Key::MAX), Payload::default()));
+
+                        count_crud += 1;
+                    }
+
+                    count_crud
+                })
+            }).collect_vec();
+
+        let oltp_executed = oltp_joins
+            .into_iter()
+            .map(|j| j.join().unwrap())
+            .sum::<usize>();
+
+        let oltp_total_time = start_time_oltp.elapsed().as_nanos();
+
+        let (num_scans_executed, olap_total_time) = (0,0);
+
+        let reuse_blocks
+            = index.block_manager.reuse_count.load(SeqCst);
+        let alloc_blocks
+            = index.block_manager.alloc_count.load(SeqCst);
+
+        let oltp_executed = counter_inserts.load(SeqCst) as _;
+        oltp_file.write_all(format!(",\
+        {alloc_blocks},\
+        {reuse_blocks},\
+        {num_scans_executed},\
+        {oltp_executed},\
+        {oltp_total_time},\
+        {olap_total_time}\n").as_bytes()).unwrap();
+
+        println!("- Executed {} OLTPs from {query_file_name}\n\
+        - Executed = {} OLAPs", format_insertions(oltp_executed),
+                 format_insertions(num_scans_executed));
+
+        println!("###### End Command: {} ######", parms.iter().skip(1).join(" "));
+    }
+
+    oltp_file.flush().unwrap();
+    // println!("{}", NODES_REQUEST.load(SeqCst));
+}
+
 pub(crate) fn main_load(parms: Vec<String>) {
     println!("###### Command: {} ######", parms.iter().skip(1).join(" "));
 
@@ -569,7 +726,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             query_file_name_clone.as_str());
 
         // TODO: Explicit for Experiment
-        oltp.drain(0..10_000).for_each(|i| {
+        oltp.drain(0..1_000_000).for_each(|i| {
             let _ = index.dispatch_crud(i);
         });
         index.block_manager.alloc_count.store(0, Ordering::SeqCst);

@@ -281,6 +281,17 @@ impl<E: Default + 'static> Clone for SmartGuard<E> {
     }
 }
 
+impl<'a, E: Default + 'static> Deref for SmartGuard<E> {
+    type Target = E;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            LockFree(ptr) => unsafe { ptr.as_ref().unwrap() },
+            OLCReader(cell, ..) => cell.0.as_ref(),
+            OLCWriter(cell, ..) => cell.0.as_ref(),
+        }
+    }
+}
+
 impl<'a, E: Default + 'static> SmartGuard<E> {
     // #[inline(always)]
     // pub(crate) fn mark_obsolete(&self) {
@@ -383,15 +394,14 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
         }
     }
 
-    #[inline(always)]
-    pub fn deref(&self) -> Option<&'_ E> {
-        match self {
-            LockFree(ptr) => unsafe { ptr.as_ref() },
-            OLCReader(cell, ..) => Some(cell.0.as_ref()),
-            OLCWriter(cell, ..) => Some(cell.0.as_ref()),
-            _ => None
-        }
-    }
+    // #[inline(always)]
+    // pub fn deref(&self) -> &'_ E {
+    //     match self {
+    //         LockFree(ptr) => unsafe { ptr.as_ref().unwrap() },
+    //         OLCReader(cell, ..) => cell.0.as_ref(),
+    //         OLCWriter(cell, ..) => cell.0.as_ref(),
+    //     }
+    // }
 
     #[inline(always)]
     pub fn deref_mut(&self) -> Option<&mut E> {
@@ -399,6 +409,26 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
             LockFree(ptr) => unsafe { ptr.as_mut() },
             OLCWriter(cell, ..) => Some(cell.unsafe_borrow_mut()),
             _ => None
+        }
+    }
+
+    #[inline(always)]
+    pub fn deref_mut_unsafe(&self) -> &mut E {
+        match self {
+            LockFree(ptr) => unsafe { ptr.as_mut().unwrap() },
+            OLCWriter(cell, ..) | 
+            OLCReader(cell, ..) => cell.unsafe_borrow_mut(),
+        }
+    }
+}
+
+impl<E: Default> Deref for SmartCell<E> {
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        match self.0.as_ref() {
+            FreeCell(f) => f.as_ref(),
+            OLCCell(o) => o.cell.as_ref(),
         }
     }
 }

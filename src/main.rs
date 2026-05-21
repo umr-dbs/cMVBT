@@ -1,5 +1,5 @@
 use crate::mv_block::block::Block;
-use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS, RESTARTS_COUNTER};
+use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_load_ycsb, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS, };
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use std::{env, fs, mem};
@@ -24,6 +24,11 @@ mod mv_tx_query;
 mod mv_sync;
 mod mv_utils;
 
+// use jemallocator::Jemalloc;
+//
+// #[global_allocator]
+// static GLOBAL: Jemalloc = Jemalloc;
+
 fn main() {
     startup();
 
@@ -36,6 +41,7 @@ fn main() {
             "generate" => main_generate(parms),
             "append" => main_append(parms),
             "load" => main_load(parms),
+            "load2" => main_load_ycsb(parms),
             // "load_cc_new" => main_load_cc_new(parms),
             // "sorted_insert" => main_sorted_insert(parms),
             s => println!("Unknown Command '{s}'")
