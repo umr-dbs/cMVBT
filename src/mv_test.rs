@@ -175,15 +175,15 @@ fn olap_tests(index: Arc<MVTree>,
             let mut results = vec![];
             let mut tx_c = 0;
             while tx_c < tx_per_thread {
-                let mut key_max = 1000;
-                let mut key_min = Key::MIN;
-                if let Either::Left(range) = range {
-                    key_min = 0;
-                    key_max = range;
-                } else if let Either::Right(ref range) = range {
-                    key_max = range.load(Acquire);
-                    key_min = key_max.checked_sub(1000).unwrap_or(0);
-                }
+                let mut key_min = rand::random_range(0..Key::MAX);
+                // let mut key_max = key_min + 1000;
+                // if let Either::Left(range) = range {
+                //     key_min = 0;
+                //     key_max = range;
+                // } else if let Either::Right(ref range) = range {
+                //     key_max = range.load(Acquire);
+                //     key_min = key_max.checked_sub(1000).unwrap_or(0);
+                // }
 
                 let mut current_si = index.current_version_for_reader();
 
@@ -205,7 +205,7 @@ fn olap_tests(index: Arc<MVTree>,
                     = SystemTime::now();
 
                 let crud =
-                    index.dispatch_crud(CRUDOperation::Range((key_min, key_max).into(), si));
+                    index.dispatch_crud(CRUDOperation::Point(key_min, si));
 
                 let time_spent
                     = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
@@ -218,7 +218,7 @@ fn olap_tests(index: Arc<MVTree>,
                 let _ = count_olaps.fetch_add(1, Relaxed);
 
                 results.push(
-                    (si, current_si, 0u128, key_min, key_max, count_results, time_spent,
+                    (si, current_si, 0u128, key_min, key_min, count_results, time_spent,
                     current_root_position, roots_count));
 
                 if let Some(signal) = signal.as_ref() {
@@ -726,9 +726,9 @@ pub(crate) fn main_load(parms: Vec<String>) {
             query_file_name_clone.as_str());
 
         // TODO: Explicit for Experiment
-        oltp.drain(0..1_000_000).for_each(|i| {
-            let _ = index.dispatch_crud(i);
-        });
+        // oltp.drain(0..1_000_000).for_each(|i| {
+        //     let _ = index.dispatch_crud(i);
+        // });
         index.block_manager.alloc_count.store(0, Ordering::SeqCst);
         index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 
@@ -830,7 +830,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             scans_per_thread,
             skew,
             Either::Left(range),
-            false,
+            true,
             None);
 
         let reuse_blocks
@@ -1198,8 +1198,8 @@ fn load_query(query_file: &str, index: Arc<MVTree>,
 
 
 
-pub const FAN_OUT: usize = 127;
-pub const NUM_RECORDS: usize = 127;
+pub const FAN_OUT: usize = 125;
+pub const NUM_RECORDS: usize = 125;
 
 pub type MVTree = MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 

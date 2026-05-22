@@ -26,12 +26,16 @@ impl<const FAN_OUT: usize,
     pub fn retrieve_root_number_for(&self, lookup_version: Version) -> (usize, usize) {
         if let RootIndex::FrugalList(ref fg) = self.root {
             let roots = fg;
-            let root_count = roots.len();
-            
-            (roots.iter()
+            let roots_all
+                = roots.iter().collect_vec();
+
+            let root_count = roots_all.len();
+
+            (roots_all.iter()
                 .enumerate()
+                 .rev()
                 .find_map(|(pos, r)|
-                    (r.insert_version <= lookup_version).then(|| pos))
+                    (r.insert_version <= lookup_version).then(|| pos+1))
                 .unwrap(), root_count)
         }
         else {
