@@ -9,10 +9,8 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_root::index_root::RootIndexGuard;
 use crate::mv_root::root::Root;
-use crate::mv_sync::latch_protocol::LatchProtocol;
-use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_test::VERBOSE;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_utils::interval::Interval;
 
 #[repr(u8)]
@@ -192,7 +190,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Sync + 'static + Display,
     Payload: Display + Clone + Default + Sync + 'static
-> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+> MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub(crate) fn on_overflow_node<'a>(
         &self,
@@ -201,7 +199,7 @@ impl<const FAN_OUT: usize,
         child_index: usize) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_deref_mut
-            = mufasa.deref_mut().unwrap();
+            = mufasa.deref_mut();
 
         let internal_page
             = mufasa_deref_mut.as_internal_page();
@@ -272,7 +270,7 @@ impl<const FAN_OUT: usize,
             println!("on_underflow_node");
         }
         let mufasa_deref_mut
-            = mufasa.deref_mut().unwrap();
+            = mufasa.deref_mut();
 
         match self.merge(mufasa_deref_mut, simba.deref(), index_simba) {
             MergeResult::Merged(
@@ -478,7 +476,7 @@ impl<const FAN_OUT: usize,
             let combined_block = match is_simba_leaf {
                 false => {
                     let combined_block = self.block_manager
-                        .new_empty_index_block(self.locking_strategy.latch_type());
+                        .new_empty_index_block();
 
                     let (keys, versions, pointers)
                         = simba.as_internal_page_ref().keys_versions_pointers();
@@ -509,7 +507,7 @@ impl<const FAN_OUT: usize,
                 }
                 true => {
                     let combined_block = self.block_manager
-                        .new_empty_leaf(self.locking_strategy.latch_type());
+                        .new_empty_leaf();
 
                     combined_block
                         .unsafe_borrow_mut()
@@ -568,10 +566,10 @@ impl<const FAN_OUT: usize,
                         r.version().insert_version);
 
                     let combined_block_0 = self.block_manager
-                        .new_empty_leaf(self.locking_strategy.latch_type());
+                        .new_empty_leaf();
 
                     let combined_block_1 = self.block_manager
-                        .new_empty_leaf(self.locking_strategy.latch_type());
+                        .new_empty_leaf();
 
                     combined_block_0
                         .unsafe_borrow_mut()
@@ -634,10 +632,10 @@ impl<const FAN_OUT: usize,
                     second.sort_by_key(|((.., v), ..)| **v);
 
                     let combined_block_0 = self.block_manager
-                        .new_empty_index_block(self.locking_strategy.latch_type());
+                        .new_empty_index_block();
 
                     let combined_block_1 = self.block_manager
-                        .new_empty_index_block(self.locking_strategy.latch_type());
+                        .new_empty_index_block();
 
                     combined_block_0
                         .unsafe_borrow_mut()
@@ -684,9 +682,9 @@ impl<const FAN_OUT: usize,
                     }
                     let (left, right) =
                         (self.block_manager
-                             .new_empty_leaf(self.locking_strategy.latch_type()),
+                             .new_empty_leaf(),
                          self.block_manager
-                             .new_empty_leaf(self.locking_strategy.latch_type()));
+                             .new_empty_leaf());
 
                     let mut sorted_block = block
                         .as_records()
@@ -725,9 +723,9 @@ impl<const FAN_OUT: usize,
                     }
                     let (left, right) =
                         (self.block_manager
-                             .new_empty_index_block(self.locking_strategy.latch_type()),
+                             .new_empty_index_block(),
                          self.block_manager
-                             .new_empty_index_block(self.locking_strategy.latch_type()));
+                             .new_empty_index_block());
 
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
@@ -775,7 +773,7 @@ impl<const FAN_OUT: usize,
                         println!("Version Split: Leaf");
                     }
                     let new_leaf = self.block_manager
-                        .new_empty_leaf(self.locking_strategy.latch_type());
+                        .new_empty_leaf();
 
                     let active_records = block
                         .as_records()
@@ -808,7 +806,7 @@ impl<const FAN_OUT: usize,
                         println!("Version Split: Internal");
                     }
                     let new_internal_page = self.block_manager
-                        .new_empty_index_block(self.locking_strategy.latch_type());
+                        .new_empty_index_block();
 
                     let (key_intervals, versions, pointers) = block
                         .keys_versions_pointers();
@@ -853,8 +851,7 @@ impl<const FAN_OUT: usize,
         master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
-    ) -> Result<
-        (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), ()>
+    ) -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         if VERBOSE {
             println!("merge root");
@@ -880,7 +877,7 @@ impl<const FAN_OUT: usize,
 
         if VERBOSE {
             let guard_deref
-                = guard.deref_mut_unsafe();
+                = guard.deref_mut();
 
             let (active, dead)
                 = guard_deref.active_dead_count();
@@ -891,6 +888,7 @@ impl<const FAN_OUT: usize,
         Ok(guard)
     }
 
+    #[inline]
     pub(crate) fn split_root(
         &self,
         _master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -899,7 +897,7 @@ impl<const FAN_OUT: usize,
     ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let root_guard_deref_mut
-            = root_guard.deref_mut_unsafe();
+            = root_guard.deref_mut();
 
         match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
             BlockSplit::ByKey(left_fence,
@@ -909,7 +907,7 @@ impl<const FAN_OUT: usize,
             ) => {
                 let new_root_block = self
                     .block_manager
-                    .new_empty_index_block(self.locking_strategy.latch_type());
+                    .new_empty_index_block();
 
                 let root_internal_page = new_root_block
                     .unsafe_borrow_mut()
@@ -961,81 +959,4 @@ impl<const FAN_OUT: usize,
             }
         }
     }
-
-    // #[inline]
-    // pub(crate) fn apply_for_root(
-    //     &self,
-    //     curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key>,
-    //     attempts: Attempts,
-    //     height: Height,
-    // ) -> SmartGuard<'static, Block<{ FAN_OUT }, { NUM_RECORDS }, Key>>
-    // {
-    //     self.apply_for_ref(
-    //         curr,
-    //         height,
-    //         INIT_TREE_HEIGHT,
-    //         attempts,
-    //         Level::MAX)
-    // }
-
-    // #[inline]
-    // pub(crate) fn is_lock(&self, attempts: Attempts, height: Height) -> bool {
-    //     match self.locking_strategy() {
-    //         LockingStrategy::MonoWriter => false,
-    //         LockingStrategy::OLC => false,
-    //     }
-    // }
-    //
-    // #[inline]
-    // pub(crate) fn apply_for_ref(
-    //     &self,
-    //     curr: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>
-    // ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
-    // {
-    //     match self.locking_strategy() {
-    //         LockingStrategy::MonoWriter => curr.borrow_free(),
-    //         LockingStrategy::OLC => curr.borrow_read(),
-    //     }
-    // }
-    //
-    // #[inline(always)]
-    // pub fn new_with(locking_strategy: LockingStrategy,
-    //                 inc_key: fn(Key) -> Key,
-    //                 dec_key: fn(Key) -> Key,
-    //                 min_key: Key,
-    //                 max_key: Key,
-    // ) -> Self {
-    //     Self::make(locking_strategy, ClockType::SYNC, inc_key, dec_key, min_key, max_key)
-    // }
-    //
-    // #[inline(always)]
-    // pub fn new(inc_key: fn(Key) -> Key,
-    //            dec_key: fn(Key) -> Key,
-    //            min_key: Key,
-    //            max_key: Key) -> Self {
-    //     Self::make(LockingStrategy::default(), ClockType::FREE, inc_key, dec_key, min_key, max_key)
-    // }
-    //
-    #[inline(always)]
-    pub const fn locking_strategy(&self) -> &LatchProtocol {
-        &self.locking_strategy
-    }
-    //
-    // pub fn make_empty_copy(&self) -> Self {
-    //     Self {
-    //         root: UnCell::new(Self::make_root_item(
-    //             self.locking_strategy(),
-    //             &self.block_manager,
-    //             VersionManager::START_VERSION,
-    //             INIT_TREE_HEIGHT,
-    //             None)),
-    //         locking_strategy: self.locking_strategy.clone(),
-    //         block_manager: self.block_manager.clone(),
-    //         version_manager: self.version_manager.clone(),
-    //         inc_key: self.inc_key,
-    //         dec_key: self.dec_key,
-    //         min_key: self.min_key,
-    //         max_key: self.max_key,
-    //     }
-    // }
 }

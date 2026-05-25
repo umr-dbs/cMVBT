@@ -12,7 +12,7 @@ use crate::mv_page_model::node::Node;
 use crate::mv_page_model::{BlockRef, ObjectCount};
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
-use crate::mv_sync::smart_cell::{LatchType, SmartCell, SmartFlavor};
+use crate::mv_sync::smart_cell::SmartCell;
 use crate::mv_gc::tracker_handle::TrackerHandle;
 
 const ENABLE_SMALL_BLOCK: bool = false;
@@ -39,7 +39,7 @@ where
         mem::align_of::<Block<0, 0, Key, Payload>>() + // alignment for mv_block
         mem::size_of::<ObjectCount>() + // len indicator
         mem::size_of::<usize>() * 2 + // arc extras in data area
-        mem::size_of::<SmartFlavor<()>>() + // align of SmartFlavor = size of empty data
+        // mem::size_of::<SmartFlavor<()>>() + // align of SmartFlavor = size of empty data
         mem::size_of::<SmartCell<()>>() // align of SmartCell = size of usize
 }
 
@@ -223,7 +223,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    fn alloc_block(&self, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
         // NODES_REQUEST.fetch_add(1, Relaxed);
         match self.tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
@@ -250,7 +250,7 @@ impl<const FAN_OUT: usize,
                 Block {
                     // block_id: self.next_block_id(),
                     node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-                }.into_cell(latch_type)
+                }.into_cell()
             }
         }
     }
@@ -362,13 +362,13 @@ impl<const FAN_OUT: usize,
     // }
 
     #[inline]
-    pub(crate) fn new_empty_leaf(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        self.alloc_block(latch_type, true)
+    pub(crate) fn new_empty_leaf(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        self.alloc_block(true)
     }
 
     /// Crafts a new aligned Index-Block.
     #[inline]
-    pub(crate) fn new_empty_index_block(&self, latch_type: LatchType) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        self.alloc_block(latch_type, false)
+    pub(crate) fn new_empty_index_block(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        self.alloc_block(false)
     }
 }

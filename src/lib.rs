@@ -3,7 +3,7 @@ use std::{mem, ptr};
 use std::ops::Deref;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction::AtomicTransaction;
 use mv_tx_query::tx_manager::TransactionManager;
 use crate::mv_root::index_root::RootIndexType;
@@ -29,7 +29,7 @@ const EX_N: usize = 127;
 type EX_KEY = u64;
 type EX_VALUE = u64;
 
-type MVBTreeApi = MVTreeSt<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE>;
+type MVBTreeApi = MVBTSt<EX_FAN_OUT, EX_N, EX_KEY, EX_VALUE>;
 
 pub const MONO: u8 = 0;
 pub const OLC: u8 = 2;
@@ -52,8 +52,8 @@ impl Deref for MVBTreeWithGCApiExport {
 #[no_mangle]
 pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
     let index = match (protocol, clock) {
-        (OLC, OPT_CLOCK) => MVBTreeApi::olc_optimistic_clock(RootIndexType::default()),
-        (OLC, EXCL_CLOCK) => MVBTreeApi::olc_optimistic_clock(RootIndexType::default()),
+        (OLC, OPT_CLOCK) => MVBTreeApi::make_standard(RootIndexType::default()),
+        (OLC, EXCL_CLOCK) => MVBTreeApi::make_standard(RootIndexType::default()),
         _ => MVBTreeApi::default()
     };
     

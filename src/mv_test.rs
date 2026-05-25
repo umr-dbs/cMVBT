@@ -1,11 +1,9 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_sync::latch_protocol::CRUDProtocol;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
 use itertools::{Either, Itertools};
 use rand::{Rng, RngExt};
-use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -29,7 +27,6 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_page_model::node::PageType;
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
-use crate::mv_sync::smart_cell::LatchType;
 use crate::mv_sync::version_handle;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
@@ -96,7 +93,7 @@ pub static mut SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 //     AtomicUsize::new(0), AtomicUsize::new(0),
 // ];
 
-fn olap_tests(index: Arc<MVTree>,
+fn olap_tests(index: Arc<MVBT>,
               num_olaps: usize,
               tx_per_thread: usize,
               skew: f32,
@@ -120,10 +117,10 @@ fn olap_tests(index: Arc<MVTree>,
 
     let v_index = format!("mv_{}",
                           match index.root_star_index() {
-                              RootIndexType::FrugalList(_) => "fg",
-                              RootIndexType::SkipList(_) => "sk",
-                              RootIndexType::BTree(_) => "bt",
-                              RootIndexType::LinkedList(_) => "ll"
+                              RootIndexType::FrugalList => "fg",
+                              RootIndexType::SkipList => "sk",
+                              RootIndexType::BTree => "bt",
+                              RootIndexType::LinkedList => "ll"
                           });
 
     let lazy = if RANGE_DISPATCH_LAZY {
@@ -199,7 +196,8 @@ fn olap_tests(index: Arc<MVTree>,
                 };
 
                 let (current_root_position, roots_count)
-                    = index.retrieve_root_number_for(si);
+                = (0,0);
+                    // = index.retrieve_root_number_for(si);
                 // println!("Min = {key_min}, max = {key_max}");
                 let time_start
                     = SystemTime::now();
@@ -278,7 +276,7 @@ pub(crate) fn main_insert_rate_limiter(parms: Vec<String>) {
     let num_workers = parms[4].parse::<usize>().unwrap_or(10);
     let fps = parms[5].parse::<usize>().unwrap_or(100);
     let crud = CRUDOperation::InsertRand;
-    let index = Arc::new(MVTree::default());
+    let index = Arc::new(MVBT::default());
     let olap_workers = parms[6].parse::<usize>().unwrap_or(10);
     let olaps_per_worker = parms[7].parse::<usize>().unwrap_or(10);
     let olap_skew_workers = parms[8].parse::<f32>().unwrap_or(0f32);
@@ -344,16 +342,16 @@ pub(crate) fn main_test(parms: Vec<String>) {
     let skew = parms[5].parse::<f32>().unwrap();
     let key_range = parms[6].parse().unwrap_or(Key::MAX);
     let root_star_index = match parms[7].as_str() {
-        "sk" => RootIndexType::SkipList(LatchType::Optimistic),
-        "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
-        "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
-        "bt" => RootIndexType::BTree(LatchType::Optimistic),
+        "sk" => RootIndexType::SkipList,
+        "ll" => RootIndexType::LinkedList,
+        "fg" => RootIndexType::FrugalList,
+        "bt" => RootIndexType::BTree,
         _ => RootIndexType::default()
     };
     println!("RootStar = {}", root_star_index);
 
     let tree
-        = Arc::new(MVTree::olc_optimistic_clock(root_star_index));
+        = Arc::new(MVBT::make_standard(root_star_index));
     let mut check = HashMap::new();
     let mut errors = 0;
 
@@ -496,10 +494,10 @@ pub fn main_load_ycsb(parms: Vec<String>) {
     let skew: f64 = parms[6].parse().unwrap();
     let range = parms[7].parse().unwrap_or(Key::MAX);
     let root_star_index = match parms[8].as_str() {
-        "sk" => RootIndexType::SkipList(LatchType::Optimistic),
-        "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
-        "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
-        "bt" => RootIndexType::BTree(LatchType::Optimistic),
+        "sk" => RootIndexType::SkipList,
+        "ll" => RootIndexType::LinkedList,
+        "fg" => RootIndexType::FrugalList,
+        "bt" => RootIndexType::BTree,
         _ => RootIndexType::default()
     };
 
@@ -509,7 +507,7 @@ pub fn main_load_ycsb(parms: Vec<String>) {
     } else { false };
 
     let index
-        = Arc::new(MVTreeSt::<FAN_OUT, NUM_RECORDS, Key, Payload>::olc_optimistic_clock(root_star_index));
+        = Arc::new(MVBTSt::<FAN_OUT, NUM_RECORDS, Key, Payload>::make_standard(root_star_index));
 
     let mut gc_str = "Off".to_string();
     if gc {
@@ -652,10 +650,10 @@ pub(crate) fn main_load(parms: Vec<String>) {
     let skew = parms[6].parse().unwrap();
     let range = parms[7].parse().unwrap_or(Key::MAX);
     let root_star_index = match parms[8].as_str() {
-        "sk" => RootIndexType::SkipList(LatchType::Optimistic),
-        "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
-        "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
-        "bt" => RootIndexType::BTree(LatchType::Optimistic),
+        "sk" => RootIndexType::SkipList,
+        "ll" => RootIndexType::LinkedList,
+        "fg" => RootIndexType::FrugalList,
+        "bt" => RootIndexType::BTree,
         _ => RootIndexType::default()
     };
 
@@ -665,7 +663,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
     } else { false };
 
     let index
-        = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
+        = Arc::new(MVBTSt::make_standard(root_star_index));
 
     let mut gc_str = "Off".to_string();
     if gc {
@@ -869,14 +867,14 @@ pub(crate) fn main_load_cc_new(parms: Vec<String>) {
     let workers_per_thread = parms[4].parse().unwrap();
     let skew = parms[5].parse().unwrap();
     let root_star_index = match parms[6].as_str() {
-        "sk" => RootIndexType::SkipList(LatchType::Optimistic),
-        "ll" => RootIndexType::LinkedList(LatchType::Optimistic),
-        "fg" => RootIndexType::FrugalList(LatchType::Optimistic),
-        "bt" => RootIndexType::BTree(LatchType::Optimistic),
+        "sk" => RootIndexType::SkipList,
+        "ll" => RootIndexType::LinkedList,
+        "fg" => RootIndexType::FrugalList,
+        "bt" => RootIndexType::BTree,
         _ => RootIndexType::default()
     };
     let index
-        = Arc::new(MVTreeSt::olc_optimistic_clock(root_star_index));
+        = Arc::new(MVBTSt::make_standard(root_star_index));
 
     println!("root_start_index = {}", root_star_index);
 
@@ -970,7 +968,7 @@ fn generate_query(
     skew: f64)
 {
     let mv_tree
-        = Arc::new(MVTree::default());
+        = Arc::new(MVBT::default());
 
     let mut map
         = HashSet::with_capacity(init_population);
@@ -1132,7 +1130,7 @@ fn load_query_into_memory(query_file: &str) -> Vec<CRUDOperation<Key, Payload>> 
 
     loaded
 }
-fn load_query(query_file: &str, index: Arc<MVTree>,
+fn load_query(query_file: &str, index: Arc<MVBT>,
               report_signal: Option<Arc<AtomicU64>>) -> usize
 {
     let mut query_file = BufReader::new(OpenOptions::new()
@@ -1201,7 +1199,7 @@ fn load_query(query_file: &str, index: Arc<MVTree>,
 pub const FAN_OUT: usize = 125;
 pub const NUM_RECORDS: usize = 125;
 
-pub type MVTree = MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
+pub type MVBT = MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub type Key = u64;
 // pub type Payload = PayloadIndirection;

@@ -8,8 +8,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_channel::Receiver;
 use threadpool::ThreadPool;
 use crate::mv_gc::tracker_handle::{TrackerHandleSt, TrackerHandle};
-use crate::mv_sync::latch_protocol::LatchProtocol;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
 use crate::mv_tx_query::tx_api::TransactionDispatcher;
 use crate::mv_sync::safe_cell::SafeCell;
@@ -157,10 +156,10 @@ impl<const FAN_OUT: usize,
 }
 
 type Dispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
-= AtomicPtr<MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+= AtomicPtr<MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
 type TxDispatcher<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
-= &'static MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
+= &'static MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 const POOL_DISABLED: usize = 0;
 pub struct TransactionManager<
@@ -203,21 +202,17 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn index(&self) -> &MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn index(&self) -> &MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_ref().unwrap()
         }
     }
 
     #[inline(always)]
-    pub fn index_mut(&self) -> &mut MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn index_mut(&self) -> &mut MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         unsafe {
             self.index.load(Relaxed).as_mut().unwrap()
         }
-    }
-
-    pub fn locking_protocol(&self) -> &LatchProtocol {
-        &self.index().locking_strategy
     }
 
     pub fn disable_gc(&self) {
@@ -299,11 +294,11 @@ impl<const FAN_OUT: usize,
         self.pool.take();
     }
 
-    pub fn new_unmanaged(index: MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
+    pub fn new_unmanaged(index: MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         Self::new(POOL_DISABLED, index, gc)
     }
     
-    pub fn new(threads: usize, index: MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
+    pub fn new(threads: usize, index: MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         let manager = Self {
             db_tracker: if gc {
                 SafeCell::new(Some(Arc::new(TrackerHandleSt::new())))

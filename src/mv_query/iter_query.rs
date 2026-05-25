@@ -8,7 +8,7 @@ use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_tx_query::tx_api::IsolatedSnapShot;
 use crate::mv_utils::interval::Interval;
@@ -48,7 +48,7 @@ impl<'a,
     Payload: Display + Clone + Default + Sync + 'static
 > RangeQueryIter<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub fn new(tree: &'a MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
+    pub fn new(tree: &'a MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>, version: Version, range: Interval<Key>) -> Self {
         tree.on_acquire_reader_snapshot(version);
 
         Self {
@@ -72,7 +72,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub const fn mv_tree(&self) -> &MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub const fn mv_tree(&self) -> &MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.si().mv_tree()
     }
 }

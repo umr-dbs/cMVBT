@@ -1,5 +1,5 @@
 use crate::mv_block::block::Block;
-use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_load_ycsb, main_sorted_insert, Key, MVTree, Payload, FAN_OUT, NUM_RECORDS, };
+use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_load_ycsb, main_sorted_insert, Key, MVBT, Payload, FAN_OUT, NUM_RECORDS, };
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use std::{env, fs, mem};
@@ -74,7 +74,7 @@ fn main() {
 }
 
 fn test() {
-    let tree = MVTree::default();
+    let tree = MVBT::default();
 
     for key in 0..200 {
         let res

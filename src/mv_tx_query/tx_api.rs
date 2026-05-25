@@ -4,7 +4,7 @@ use std::mem;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction::{AtomicTransaction, Transaction};
 use crate::mv_tx_model::transaction_result::{AtomicTransactionResult, SnapShot, TransactionResult};
 
@@ -35,7 +35,7 @@ pub struct IsolatedSnapShot<
     Payload: Display + Clone + Default + Sync + 'static
 >(
     pub SnapShot,
-    pub &'a MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+    pub &'a MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 );
 
 impl<'a,
@@ -51,7 +51,7 @@ impl<'a,
     }
 
     #[inline(always)]
-    pub const fn mv_tree(&self) -> &MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub const fn mv_tree(&self) -> &MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload> {
         self.1
     }
 }
@@ -87,7 +87,7 @@ impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+> MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
     pub const fn snapshot_for(&self, snap_shot: SnapShot) -> IsolatedSnapShot<'static, FAN_OUT, NUM_RECORDS, Key, Payload> {

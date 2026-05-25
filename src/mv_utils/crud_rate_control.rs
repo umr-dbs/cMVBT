@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_test::{Key, MVTree, Payload};
+use crate::mv_test::{Key, MVBT, Payload};
 use crate::mv_utils::crud_rate_control::ThreadControl::{Crud, Fps};
 
 pub enum ThreadControl {
@@ -49,12 +49,12 @@ impl Display for ThreadWorkerInfo {
 
 impl ThreadWorker {
     pub fn new(
-        index: Arc<MVTree>,
+        index: Arc<MVBT>,
         p_fps: usize,
         p_crud: CRUDOperation<Key, Payload>,
         log: bool,
         info_pipe: Sender<ThreadWorkerInfo>
-    )-> ThreadWorker
+    ) -> ThreadWorker
     {
         let (controller, thread_sink)
             = unbounded();

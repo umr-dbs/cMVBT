@@ -162,20 +162,20 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
         }
     });
 
-    if !GLOBAL_DIRTY.load(Acquire) {
-        GLOBAL_MIN.load(Acquire)
+    if !GLOBAL_DIRTY.load(Relaxed) {
+        GLOBAL_MIN.load(Relaxed)
     }
     else {
         let agg_min_commit = committed()
             .iter()
             .take(THREAD_ID.load(Acquire))
             .fold(clock_time,
-                  |acc, l_commit| acc.min(l_commit.load(Acquire)));
+                  |acc, l_commit| acc.min(l_commit.load(Relaxed)));
 
         let oo_min
-            = GLOBAL_MIN.fetch_max(agg_min_commit, Acquire);
+            = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
 
-        GLOBAL_DIRTY.store(false, Release);
+        GLOBAL_DIRTY.store(false, Relaxed);
         agg_min_commit.max(oo_min)
     }
 }
@@ -202,7 +202,7 @@ impl GlobalClock {
 
     #[inline(always)]
     pub(crate) fn current_version(&self) -> Version {
-        self.0.load(Acquire)
+        self.0.load(Relaxed)
     }
 
     // pushes completed work to visible, for readers

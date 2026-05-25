@@ -1,11 +1,9 @@
-use std::cmp::Ordering;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
-use std::thread;
 use crossbeam_skiplist::SkipSet;
 use crate::mv_sync::clock::{__tid, Tid};
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
 #[derive(Ord, Eq, PartialEq, PartialOrd, Clone)]
@@ -110,7 +108,7 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+> MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
     pub(crate) fn on_acquire_reader_snapshot(&self, snapshot: SnapShot) {

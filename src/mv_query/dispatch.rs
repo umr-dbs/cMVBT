@@ -12,7 +12,7 @@ use crate::mv_query::iter_query::RangeQueryIter;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
 use crate::mv_test::VERBOSE;
-use crate::mv_tree::mvtree::MVTreeSt;
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_sync::smart_cell::sched_yield;
 
 pub const RANGE_DISPATCH_LAZY: bool = true;
@@ -22,24 +22,17 @@ impl<'a,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display + Sync + 'static,
     Payload: Display + Clone + Default + Sync + 'static
-> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVTreeSt<FAN_OUT, NUM_RECORDS, Key, Payload>
+> CRUDDispatcher<'a, FAN_OUT, NUM_RECORDS, Key, Payload> for MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
-        let is_concurrent = self.locking_strategy
-            .is_concurrent();
-
         match crud {
             CRUDOperation::Insert(key, payload) => {
-                let leaf_guard = if is_concurrent {
-                    self.traversal_write_olc(key)
-                } else {
-                    self.traversal_write(key)
-                };
+                let leaf_guard =
+                    self.traversal_write_olc(key);
 
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
@@ -70,15 +63,11 @@ impl<'a,
                 CRUDOperationResult::Inserted(version)
             }
             CRUDOperation::Update(key, payload) => {
-                let leaf_guard = if is_concurrent {
-                    self.traversal_write_olc(key)
-                } else {
-                    self.traversal_write(key)
-                };
+                let leaf_guard =
+                    self.traversal_write_olc(key);
 
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
@@ -159,22 +148,16 @@ impl<'a,
                 if VERBOSE {
                     println!("dispatch delete key={key}");
                 }
-                let leaf_guard = if is_concurrent {
-                    if VERBOSE {
-                        println!("traverse olc start");
-                    }
-                    self.traversal_write_olc(key)
-                } else {
-                    self.traversal_write(key)
-                };
+
+                let leaf_guard =
+                    self.traversal_write_olc(key);
 
                 if VERBOSE {
                     println!("traverse olc end");
                     println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.active_dead_count());
                 }
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
@@ -192,6 +175,7 @@ impl<'a,
                 if VERBOSE {
                     println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
                 }
+
                 match leaf_page.delete(key, version) {
                     Ok(Some(..)) => {
                         leaf_page.commit_delta(-1, 1);
@@ -241,8 +225,7 @@ impl<'a,
                     self.traversal_write_rand_query();
 
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
@@ -336,8 +319,7 @@ impl<'a,
                     = self.traversal_write_rand_query();
 
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();
@@ -382,13 +364,11 @@ impl<'a,
                 }
             }
             CRUDOperation::InsertRand => {
-                // return CRUDOperationResult::Error;
                 let (fence, leaf_guard) =
                     self.traversal_write_rand_query();
 
                 let leaf_deref_mut = leaf_guard
-                    .deref_mut()
-                    .unwrap();
+                    .deref_mut();
 
                 let leaf_page
                     = leaf_deref_mut.as_leaf_page();

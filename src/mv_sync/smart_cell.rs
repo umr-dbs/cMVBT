@@ -3,14 +3,13 @@ use std::{hint, ptr};
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use CCBPlusTree::locking::locking_strategy::LockingStrategy;
 use crate::mv_page_model::Attempts;
 use crate::mv_record_model::AtomicVersion;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
-use crate::mv_sync::smart_cell::SmartFlavor::{FreeCell, OLCCell};
-use crate::mv_sync::smart_cell::SmartGuard::{LockFree, OLCReader, OLCWriter};
+use crate::mv_sync::smart_cell::SmartGuard::{Reader, Writer};
 
 pub const OBSOLETE_FLAG_VERSION: LatchVersion = 0x8_000000000000000;
 const WRITE_FLAG_VERSION: LatchVersion = 0x4_000000000000000;
@@ -62,30 +61,6 @@ impl AtomicElisionExt for AtomicVersion {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Default)]
-pub enum LatchType {
-    #[default] Optimistic,
-    None,
-}
-
-impl Display for LatchType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LatchType::Optimistic => write!(f, "Optimistic"),
-            LatchType::None => write!(f, "None"),
-        }
-    }
-}
-
-impl LatchType {
-    pub const fn into_cc_locking_strategy(self) -> LockingStrategy {
-        match self {
-            LatchType::Optimistic => LockingStrategy::OLC,
-            LatchType::None => LockingStrategy::MonoWriter
-        }
-    }
-}
 // pub static mut COUNTERS: (AtomicUsize, AtomicUsize) =
 //     (AtomicUsize::new(0), AtomicUsize::new(0));
 
@@ -125,7 +100,7 @@ pub struct OptCell<E: Default> {
 
 impl<E: Default + Display> Display for OptCell<E> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "OptCell {{\ncell: {}\n\t\tcell_version: {}\n\t}}", self.cell.get_mut(), self.load_version())
+        write!(f, "OptCell {{\ncell: {}\n\t\tcell_version: {}\n\t}}", self.cell.get_mut(), self.cell_version.load(Relaxed))
     }
 }
 
@@ -144,19 +119,6 @@ impl<E: Default> OptCell<E> {
             cell: SafeCell::new(data),
             cell_version: AtomicVersion::new(Self::CELL_START_VERSION),
         }
-    }
-
-    #[inline(always)]
-    pub fn load_version(&self) -> LatchVersion {
-        self.cell_version.load(Acquire)
-    }
-
-    #[inline(always)]
-    pub fn read_lock(&self) -> (IsRead, LatchVersion) {
-        let read_version
-            = self.load_version();
-
-        (read_version & WRITE_OBSOLETE_FLAG_VERSION == 0, read_version)
     }
 
     #[cfg(not(all(feature = "hardware-lock-elision", any(
@@ -187,42 +149,10 @@ impl<E: Default> OptCell<E> {
             Err(..) => None
         }
     }
-
-    #[inline(always)]
-    pub fn write_unlock(&self, write_version: LatchVersion) {
-        debug_assert!(write_version & WRITE_PIN_FLAG_VERSION == WRITE_FLAG_VERSION);
-
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
-    }
-
-    // #[inline(always)]
-    // pub fn write_obsolete(&self) {
-    //     self.cell_version.store(OBSOLETE_FLAG_VERSION, Release)
-    // }
-
-    // #[inline(always)]
-    // pub fn write_obsolete_with_latch(&self, latch: LatchVersion) {
-    //     self.cell_version.store(OBSOLETE_FLAG_VERSION | latch, Release)
-    // }
-
-    // #[inline(always)]
-    // pub fn unwrite_obsolete_with_latch(&self, latch: LatchVersion) {
-    //     self.cell_version.store((1 + latch) & !OBSOLETE_FLAG_VERSION, Release)
-    // }
-
-    // #[inline(always)]
-    // pub fn is_obsolete(&self) -> bool {
-    //     self.load_version() & OBSOLETE_FLAG_VERSION != 0
-    // }
-
-    // #[inline(always)]
-    // pub fn is_write(&self) -> bool {
-    //     self.load_version() & WRITE_FLAG_VERSION == WRITE_FLAG_VERSION
-    // }
 }
 
 #[derive(Default)]
-pub struct SmartCell<E: Default>(pub Arc<SmartFlavor<E>>);
+pub struct SmartCell<E: Default>(pub Arc<OptCell<E>>);
 
 impl<E: Default> Clone for SmartCell<E> {
     #[inline(always)]
@@ -231,51 +161,15 @@ impl<E: Default> Clone for SmartCell<E> {
     }
 }
 
-pub enum SmartFlavor<E: Default> {
-    FreeCell(SafeCell<E>),
-    OLCCell(OptCell<E>),
-}
-
-impl<E: Default> Default for SmartFlavor<E> {
-    fn default() -> Self {
-        FreeCell(SafeCell::new(
-            E::default()))
-    }
-}
-
-impl<E: Default + 'static> Deref for SmartFlavor<E> {
-    type Target = E;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        match self {
-            OLCCell(opt) => opt.cell.as_ref(),
-            FreeCell(ptr) => ptr.get_mut(),
-        }
-    }
-}
-
-impl<E: Default + 'static> DerefMut for SmartFlavor<E> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            OLCCell(opt) => opt.cell.get_mut(),
-            FreeCell(ptr) => ptr.get_mut(),
-        }
-    }
-}
-
 pub enum SmartGuard<E: Default> {
-    LockFree(*mut E),
-    OLCReader(SmartCell<E>, LatchVersion),
-    OLCWriter(SmartCell<E>, LatchVersion),
+    Reader(SmartCell<E>, LatchVersion),
+    Writer(SmartCell<E>, LatchVersion),
 }
 
 impl<E: Default + 'static> Clone for SmartGuard<E> {
     fn clone(&self) -> Self {
         match self {
-            OLCReader(cell, latch) => OLCReader(cell.clone(), *latch),
-            LockFree(ptr) => LockFree(*ptr),
+            Reader(cell, latch) => Reader(cell.clone(), *latch),
             _ => unreachable!()
         }
     }
@@ -285,139 +179,42 @@ impl<'a, E: Default + 'static> Deref for SmartGuard<E> {
     type Target = E;
     fn deref(&self) -> &Self::Target {
         match self {
-            LockFree(ptr) => unsafe { ptr.as_ref().unwrap() },
-            OLCReader(cell, ..) => cell.0.as_ref(),
-            OLCWriter(cell, ..) => cell.0.as_ref(),
+            Reader(cell, ..) => cell.0.cell.as_ref(),
+            Writer(cell, ..) => cell.0.cell.as_ref(),
         }
     }
 }
 
 impl<'a, E: Default + 'static> SmartGuard<E> {
-    // #[inline(always)]
-    // pub(crate) fn mark_obsolete(&self) {
-    //     match self {
-    //         OLCWriter(cell, ..) => match cell.0.as_ref() {
-    //             OLCCell(opt) => opt.write_obsolete(),
-    //             _ => {}
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // #[inline(always)]
-    // pub fn unmark_obsolete(&mut self) {
-    //     if let OLCWriter(cell, latch) = self {
-    //         if let OLCCell(opt) = cell.0.as_ref() {
-    //             opt.unwrite_obsolete_with_latch(*latch);
-    //         }
-    //     }
-    // }
-
-    // #[inline(always)]
-    // pub fn mark_obsolete(&mut self) {
-    //     if let OLCWriter(cell, latch) = self {
-    //         if let OLCCell(opt) = cell.0.as_ref() {
-    //             opt.write_obsolete_with_latch(*latch);
-    //         }
-    //     }
-    // }
-
-    // #[inline(always)]
-    // pub fn downgrade(&mut self) {
-    //     match self {
-    //         OLCWriter(cell, latch)
-    //         => if let OLCCell(opt) = cell.0.as_ref()
-    //         {
-    //             opt.write_unlock(*latch);
-    //             let down = OLCReader(
-    //                 cell.clone(),
-    //                 (*latch & !WRITE_OBSOLETE_FLAG_VERSION) + 1
-    //             );
-    //
-    //             *self = down;
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
-            OLCReader(ref cell, read_latch) => unsafe {
-                match cell.0.as_ref() {
-                    OLCCell(opt) => if let Some(write_latch)
-                        = opt.write_lock(*read_latch & !WRITE_OBSOLETE_FLAG_VERSION)
-                    {
-                        let writer = OLCWriter(transmute_copy(cell), write_latch);
-                        ptr::write(self, writer);
-                        return true;
-                    },
-                    _ => {}
+            Reader(ref cell, read_latch) => unsafe {
+                if let Some(write_latch)
+                    = cell.0.write_lock(*read_latch & !WRITE_OBSOLETE_FLAG_VERSION)
+                {
+                    let writer = Writer(transmute_copy(cell), write_latch);
+                    ptr::write(self, writer);
+                    return true;
                 }
-
                 false
             }
             _ => true
         }
     }
 
-    // #[inline(always)]
-    // pub const fn is_write_lock(&self) -> bool {
-    //     match self {
-    //         OLCWriter(..) => true,
-    //         _ => false
-    //     }
-    // }
-
-    // #[inline(always)]
-    // pub fn is_valid(&self) -> bool {
-    //     match self {
-    //         OLCReader(opt, ..) |
-    //         OLCWriter(opt, ..) => {
-    //             if let OLCCell(opt) = opt.0.as_ref() {
-    //                 let loaded = opt.load_version();
-    //                 loaded & OBSOLETE_FLAG_VERSION == 0
-    //             }
-    //             else {
-    //                 false
-    //             }
-    //         }
-    //         _ => true
-    //     }
-    // }
-
     pub fn inner_cell(&self) -> SmartCell<E> {
         match self {
-            OLCReader(cell, ..) => cell.clone(),
-            OLCWriter(cell, ..) => cell.clone(),
-            _ => unreachable!()
-        }
-    }
-
-    // #[inline(always)]
-    // pub fn deref(&self) -> &'_ E {
-    //     match self {
-    //         LockFree(ptr) => unsafe { ptr.as_ref().unwrap() },
-    //         OLCReader(cell, ..) => cell.0.as_ref(),
-    //         OLCWriter(cell, ..) => cell.0.as_ref(),
-    //     }
-    // }
-
-    #[inline(always)]
-    pub fn deref_mut(&self) -> Option<&mut E> {
-        match self {
-            LockFree(ptr) => unsafe { ptr.as_mut() },
-            OLCWriter(cell, ..) => Some(cell.unsafe_borrow_mut()),
-            _ => None
+            Reader(cell, ..) => cell.clone(),
+            Writer(cell, ..) => cell.clone(),
         }
     }
 
     #[inline(always)]
-    pub fn deref_mut_unsafe(&self) -> &mut E {
+    pub fn deref_mut(&self) -> &mut E {
         match self {
-            LockFree(ptr) => unsafe { ptr.as_mut().unwrap() },
-            OLCWriter(cell, ..) | 
-            OLCReader(cell, ..) => cell.unsafe_borrow_mut(),
+            Writer(cell, ..) |
+            Reader(cell, ..) => cell.unsafe_borrow_mut(),
         }
     }
 }
@@ -426,70 +223,38 @@ impl<E: Default> Deref for SmartCell<E> {
     type Target = E;
 
     fn deref(&self) -> &Self::Target {
-        match self.0.as_ref() {
-            FreeCell(f) => f.as_ref(),
-            OLCCell(o) => o.cell.as_ref(),
-        }
+        self.0.cell.as_ref()
     }
 }
 
 impl<E: Default> SmartCell<E> {
     #[inline(always)]
     pub fn unsafe_borrow(&self) -> &E {
-        match self.0.as_ref() {
-            OLCCell(opt) => opt.cell.as_ref(),
-            FreeCell(ptr) => ptr.as_ref(),
-        }
+        self.deref()
     }
 
     #[inline(always)]
     pub fn unsafe_borrow_mut(&self) -> &mut E {
-        match self.0.as_ref() {
-            OLCCell(opt) => opt.cell.get_mut(),
-            FreeCell(ptr) => ptr.get_mut(),
-        }
+        self.0.cell.get_mut()
     }
 
-    #[inline(always)]
-    pub fn borrow_free(&self) -> SmartGuard<E> {
-        match self.0.deref() {
-            FreeCell(ptr) => LockFree(ptr.get_mut()),
-            _ => unreachable!()
-        }
-    }
 
     #[inline(always)]
     pub fn borrow_read(&self) -> SmartGuard<E> {
-        match self.0.deref() {
-            OLCCell(opt) => OLCReader(
-                self.clone(),
-                opt.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION
-            ),
-            FreeCell(ptr) => LockFree(ptr.get_mut()),
-        }
+        Reader(self.clone(),
+               self.0.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION)
     }
-
-    // #[inline(always)]
-    // pub fn is_obsolete(&self) -> bool {
-    //     match self.0.deref() {
-    //         OLCCell(opt) => opt.is_obsolete(),
-    //         FreeCell(..) => false,
-    //     }
-    // }
 }
 
 impl<E: Default> Drop for SmartGuard<E> {
     fn drop(&mut self) {
         match self {
-            OLCWriter(cell, write_version) =>
-               if let OLCCell(opt) = cell.0.as_ref() {
-                    opt.write_unlock(*write_version)
-                }
+            Writer(cell, write_version) =>
+                cell.0.cell_version.store((*write_version + 1) ^ WRITE_FLAG_VERSION, Release),
             _ => {}
         }
     }
 }
 
 unsafe impl<E: Default> Sync for SmartGuard<E> {}
-
 unsafe impl<E: Default> Send for SmartGuard<E> {}
