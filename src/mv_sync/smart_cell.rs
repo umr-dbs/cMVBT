@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use std::{hint, ptr};
+use std::{hint, mem, ptr};
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -161,21 +161,21 @@ impl<E: Default> Clone for SmartCell<E> {
     }
 }
 
-pub enum SmartGuard<E: Default> {
-    Reader(SmartCell<E>, LatchVersion),
+pub enum SmartGuard<'a, E: Default> {
+    Reader(&'a SmartCell<E>, LatchVersion),
     Writer(SmartCell<E>, LatchVersion),
 }
 
-impl<E: Default + 'static> Clone for SmartGuard<E> {
+impl<'a, E: Default + 'static> Clone for SmartGuard<'a, E> {
     fn clone(&self) -> Self {
         match self {
-            Reader(cell, latch) => Reader(cell.clone(), *latch),
+            Reader(cell, latch) => Reader(*cell, *latch),
             _ => unreachable!()
         }
     }
 }
 
-impl<'a, E: Default + 'static> Deref for SmartGuard<E> {
+impl<'a, E: Default + 'static> Deref for SmartGuard<'a, E> {
     type Target = E;
     fn deref(&self) -> &Self::Target {
         match self {
@@ -185,15 +185,15 @@ impl<'a, E: Default + 'static> Deref for SmartGuard<E> {
     }
 }
 
-impl<'a, E: Default + 'static> SmartGuard<E> {
+impl<'a, E: Default + 'static> SmartGuard<'a, E> {
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
-            Reader(ref cell, read_latch) => unsafe {
+            Reader(cell, read_latch) => unsafe {
                 if let Some(write_latch)
                     = cell.0.write_lock(*read_latch & !WRITE_OBSOLETE_FLAG_VERSION)
                 {
-                    let writer = Writer(transmute_copy(cell), write_latch);
+                    let writer = Writer(cell.clone(), write_latch);
                     ptr::write(self, writer);
                     return true;
                 }
@@ -203,17 +203,17 @@ impl<'a, E: Default + 'static> SmartGuard<E> {
         }
     }
 
-    pub fn inner_cell(&self) -> SmartCell<E> {
+    pub fn inner_cell(self) -> SmartCell<E> {
         match self {
             Reader(cell, ..) => cell.clone(),
-            Writer(cell, ..) => cell.clone(),
+            Writer(ref cell, ..) => cell.clone(),
         }
     }
 
     #[inline(always)]
     pub fn deref_mut(&self) -> &mut E {
         match self {
-            Writer(cell, ..) |
+            Writer(cell, ..) => cell.unsafe_borrow_mut(),
             Reader(cell, ..) => cell.unsafe_borrow_mut(),
         }
     }
@@ -240,13 +240,16 @@ impl<E: Default> SmartCell<E> {
 
 
     #[inline(always)]
-    pub fn borrow_read(&self) -> SmartGuard<E> {
-        Reader(self.clone(),
-               self.0.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION)
+    pub fn borrow_read(&self) -> SmartGuard<'static, E> {
+        unsafe {
+            mem::transmute(
+                Reader(self, self.0.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION)
+            )
+        }
     }
 }
 
-impl<E: Default> Drop for SmartGuard<E> {
+impl<'a, E: Default> Drop for SmartGuard<'a, E> {
     fn drop(&mut self) {
         match self {
             Writer(cell, write_version) =>
@@ -256,5 +259,5 @@ impl<E: Default> Drop for SmartGuard<E> {
     }
 }
 
-unsafe impl<E: Default> Sync for SmartGuard<E> {}
-unsafe impl<E: Default> Send for SmartGuard<E> {}
+unsafe impl<'a, E: Default> Sync for SmartGuard<'a, E> {}
+unsafe impl<'a, E: Default> Send for SmartGuard<'a, E> {}

@@ -24,10 +24,10 @@ mod mv_tx_query;
 mod mv_sync;
 mod mv_utils;
 
-// use jemallocator::Jemalloc;
-//
-// #[global_allocator]
-// static GLOBAL: Jemalloc = Jemalloc;
+use jemallocator::Jemalloc;
+
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() {
     startup();

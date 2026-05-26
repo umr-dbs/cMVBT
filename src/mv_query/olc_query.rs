@@ -48,7 +48,7 @@ impl<const FAN_OUT: usize,
         Attempts)
     {
         loop {
-            match self.retrieve_root_write_internal_olc(attempts) {
+            match self.retrieve_root_write_internal_olc() {
                 Ok(guard) =>
                     break (guard, attempts),
                 _ => {
@@ -63,14 +63,11 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn retrieve_root_write_internal_olc(&self, mut attempts: Attempts) -> Result<
+    fn retrieve_root_write_internal_olc(&self) -> Result<
         BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
-        let root 
-            = self.root.clone();
-
-        let height
-            = root.height();
+        let root
+            = &self.root;
 
         let mut master_guard
             = root.borrow_read();
@@ -98,10 +95,10 @@ impl<const FAN_OUT: usize,
         match root_guard.deref().unsafe_degree_root() {
             BlockUnsafeDegree::Overflow
             if master_guard.upgrade_write_lock()
-            => Ok(self.split_root(master_guard, root_guard, height)),
+            => Ok(self.split_root(master_guard, root_guard, root.height())),
             BlockUnsafeDegree::ActiveUnderflow
             if master_guard.upgrade_write_lock() =>
-                self.merge_root(master_guard, root_guard, height),
+                self.merge_root(master_guard, root_guard, root.height()),
             BlockUnsafeDegree::Ok
             => Ok(root_guard),
             _ => Err(()),

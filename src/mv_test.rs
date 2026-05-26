@@ -724,9 +724,9 @@ pub(crate) fn main_load(parms: Vec<String>) {
             query_file_name_clone.as_str());
 
         // TODO: Explicit for Experiment
-        // oltp.drain(0..1_000_000).for_each(|i| {
-        //     let _ = index.dispatch_crud(i);
-        // });
+        oltp.drain(0..1_000_000).for_each(|i| {
+            let _ = index.dispatch_crud(i);
+        });
         index.block_manager.alloc_count.store(0, Ordering::SeqCst);
         index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 

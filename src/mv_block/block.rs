@@ -128,16 +128,18 @@ impl<const FAN_OUT: usize,
 }
 
 pub type BlockGuard<
+    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key,
     Payload
-> = SmartGuard<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
+> = SmartGuard<'a, Block<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
-impl<const FAN_OUT: usize,
+impl<'a,
+    const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
-> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
 
 }

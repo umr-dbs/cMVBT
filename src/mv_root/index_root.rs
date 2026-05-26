@@ -6,6 +6,7 @@ use std::sync::Arc;
 use CCBPlusTree::record_model::Version;
 use itertools::Itertools;
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
+use crate::mv_block::block::Block;
 use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::frugal_root::{AtomicFrugalList, FrugalRootList};
@@ -76,29 +77,30 @@ type FrugalRootValue<
 > = ValueRootInner<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub enum RootIndexGuard<
+    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Display + Default + Clone + Sync + 'static>
 {
-    FrugalGuard(SmartGuard<AtomicFrugalList<ValueRootInner<FAN_OUT, NUM_RECORDS, Key, Payload>>>),
+    FrugalGuard(SmartGuard<'a, AtomicFrugalList<ValueRootInner<FAN_OUT, NUM_RECORDS, Key, Payload>>>),
     // FrugalGuardMut(ArcMutexGuard<RawMutex, AtomicFrugalList<FrugalRootValue<FAN_OUT, NUM_RECORDS, Key, Payload>>>),
 
-    BTreeGuard(SmartGuard<RootTree<FAN_OUT, NUM_RECORDS, Key, Payload>>),
+    BTreeGuard(SmartGuard<'a, RootTree<FAN_OUT, NUM_RECORDS, Key, Payload>>),
     // BTreeGuardMut(SmartGuard<RootTree<FAN_OUT, NUM_RECORDS, Key, Payload>>),
 
-    SkipListGuard(SmartGuard<RootSkipList<FAN_OUT, NUM_RECORDS, Key, Payload>>),
+    SkipListGuard(SmartGuard<'a, RootSkipList<FAN_OUT, NUM_RECORDS, Key, Payload>>),
     // SkipListGuardMut(SmartGuard<RootSkipList<FAN_OUT, NUM_RECORDS, Key, Payload>>),
 
-    LinkedListGuard(SmartGuard<VanillaRootSt<FAN_OUT, NUM_RECORDS, Key, Payload>>),
+    LinkedListGuard(SmartGuard<'a, VanillaRootSt<FAN_OUT, NUM_RECORDS, Key, Payload>>),
     // LinkedListGuardMut(SmartGuard<LinkedList<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>>)
 }
 
-impl<
+impl<'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Display + Default + Ord + Copy + Hash + Sync + 'static,
-    Payload: Display + Default + Clone + Sync + 'static> RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+    Payload: Display + Default + Clone + Sync + 'static> RootIndexGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
     pub fn block(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {

@@ -171,6 +171,7 @@ impl<const FAN_OUT: usize,
 > { }
 
 pub(crate) enum MergeResult<
+    'a,
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,
@@ -179,10 +180,10 @@ pub(crate) enum MergeResult<
     Merged(usize,
            Interval<Key>,
            BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-           BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>),
+           BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     KeySplit(usize,
              BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload>,
-             BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>),
+             BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>),
     Error,
 }
 
@@ -194,9 +195,9 @@ impl<const FAN_OUT: usize,
 {
     pub(crate) fn on_overflow_node<'a>(
         &self,
-        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        child_index: usize) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        simba: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        child_index: usize) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_deref_mut
             = mufasa.deref_mut();
@@ -259,12 +260,12 @@ impl<const FAN_OUT: usize,
         mufasa
     }
 
-    pub(crate) fn on_underflow_node(
+    pub(crate) fn on_underflow_node<'a>(
         &self,
-        mufasa: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        simba: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mufasa: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        simba: BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>,
         index_simba: usize)
-        -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
+        -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         if VERBOSE {
             println!("on_underflow_node");
@@ -320,9 +321,7 @@ impl<const FAN_OUT: usize,
                      mufasa_internal_page.get_pointer(index_simba).clone()),
                     (mufasa_internal_page.get_version(index_sibling),
                      mufasa_internal_page.get_pointer(index_sibling).clone())
-                ]);
-
-                Ok(mufasa)
+                ])
             }
             MergeResult::KeySplit(
                 index_sibling,
@@ -382,20 +381,20 @@ impl<const FAN_OUT: usize,
                      mufasa_internal_page.get_pointer(index_simba).clone()),
                     (mufasa_internal_page.get_version(index_sibling),
                      mufasa_internal_page.get_pointer(index_sibling).clone())
-                ]);
-
-                Ok(mufasa)
+                ])
             }
-            _ => Err(()),
+            _ => return Err(()),
         }
+
+        Ok(mufasa)
     }
 
-    pub(crate) fn merge(
+    pub(crate) fn merge<'a>(
         &self,
-        mufasa: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        mufasa: &'a Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
         simba: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
         simba_index: usize,
-    ) -> MergeResult<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> MergeResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let mufasa_internal_page
             = mufasa.as_internal_page_ref();
@@ -846,22 +845,20 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub(crate) fn merge_root(
+    pub(crate) fn merge_root<'a>(
         &self,
-        master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        master_guard: RootIndexGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
-    ) -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
+    ) -> Result<BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
         if VERBOSE {
             println!("merge root");
         }
-        let child_ptr = root_guard
-            .deref()
-            .as_internal_page_ref()
-            .last_child();
 
-        let mut child_guard = child_ptr
+        let mut child_guard = root_guard
+            .as_internal_page_ref()
+            .last_child()
             .borrow_read();
 
         if !child_guard.upgrade_write_lock() {
@@ -889,12 +886,12 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub(crate) fn split_root(
+    pub(crate) fn split_root<'a>(
         &self,
-        _master_guard: RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
-        root_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+        _master_guard: RootIndexGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
+        root_guard: BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
         height: Height,
-    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let root_guard_deref_mut
             = root_guard.deref_mut();
