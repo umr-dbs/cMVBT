@@ -106,8 +106,8 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn traversal_write_internal_olc(&self, key: Key, attempts: Attempts)
-    -> Result<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Attempts>
+    fn traversal_write_internal_olc(&'_ self, key: Key, attempts: Attempts)
+    -> Result<BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>, Attempts>
     {
         let (mut curr_guard,
             attempts) = self.retrieve_root_write_olc(attempts);
@@ -118,10 +118,8 @@ impl<const FAN_OUT: usize,
                 println!("traversal_write_internal_olc: Loop: {i}, attempts {attempts}, key: {key}");
                 i += 1;
             }
-            let curr_guard_result
-                = curr_guard.deref();
 
-            match curr_guard_result.as_page_ref() {
+            match curr_guard.as_page_ref() {
                 PageType::IndexRef(internal_page) => unsafe {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
@@ -144,9 +142,9 @@ impl<const FAN_OUT: usize,
                     let index
                         = index.unwrap();
 
-                    let next_curr_guard
-                        = internal_page
-                        .get_pointer(index).borrow_read();
+                    let next_curr_guard = internal_page
+                        .get_pointer(index)
+                        .borrow_read();
 
                     if LOG_REORG {
                         let r

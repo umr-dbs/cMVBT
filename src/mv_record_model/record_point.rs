@@ -31,6 +31,14 @@ impl<Key: Ord + Copy + Hash + Default, Payload: Clone + Default> RecordPointResu
             payload: r.payload.clone()
         }
     }
+
+    #[inline]
+    pub const fn new(key: Key, payload: Payload) -> Self {
+        Self {
+            key,
+            payload
+        }
+    }
 }
 
 // impl<Key: Ord + Copy + Hash + Default> Drop for RecordPointResult<Key> {

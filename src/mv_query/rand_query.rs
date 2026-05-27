@@ -79,19 +79,18 @@ impl<const FAN_OUT: usize,
                             index -= 1;
                         }
                     }
-                    if index >= 127 {
-                        return self.traversal_write_internal_rand(attempts);
-                    }
+                    // if index >= 127 {
+                    //     return self.traversal_write_internal_rand(attempts);
+                    // }
                     assert!(index < _dead_n as usize + live_n as usize);
                     assert!(!internal_page.get_version(index).is_obsolete(),
                             "Accessed obsolete version!");
 
                     curr_fence = internal_page.get_key(index).clone();
                     let next_curr_block = internal_page
-                        .get_pointer(index)
-                        .clone();
+                        .get_pointer(index);
 
-                    let mut next_curr_guard
+                    let next_curr_guard
                         = next_curr_block.borrow_read();
 
                     if LOG_REORG {
@@ -110,10 +109,10 @@ impl<const FAN_OUT: usize,
                     }
                     match next_curr_guard.deref().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                        if curr_guard.upgrade_write_lock()
                         => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow
-                        if next_curr_guard.upgrade_write_lock() && curr_guard.upgrade_write_lock()
+                        if curr_guard.upgrade_write_lock()
                         => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
                             Ok(guard) => curr_guard = guard,
                             Err(..) => {

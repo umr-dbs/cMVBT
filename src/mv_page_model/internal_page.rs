@@ -343,12 +343,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn active_dead_count(&self) -> (Active, Dead) {
-        from_len(self.len.load(Acquire))
+        from_len(self.len.load(Relaxed))
     }
 
     #[inline(always)]
     pub fn active_len(&self) -> usize {
-        let len = self.len.load(Acquire);
+        let len = self.len.load(Relaxed);
         // fence(Acquire);
 
         active_len(len) as _
@@ -356,7 +356,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn dead_len(&self) -> usize {
-        let len = self.len.load(Acquire);
+        let len = self.len.load(Relaxed);
         // fence(Acquire);
 
         dead_len(len) as _
@@ -364,7 +364,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn sum_len(&self) -> usize {
-        let len = self.len.load(Acquire) as _;
+        let len = self.len.load(Relaxed) as _;
         // fence(Acquire);
 
         from_len_sum(len)

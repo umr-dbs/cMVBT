@@ -11,7 +11,14 @@ overflow-checks = false
 
 [profile.release]
 debug = "line-tables-only"
-overflow-checks = false
+#overflow-checks = false
+#opt-level = 3            # maximum LLVM optimizations
+#lto = "fat"              # full link-time optimization (cross-crate)
+#codegen-units = 1        # better optimization, slower compile
+#panic = "abort"          # removes unwinding overhead
+#strip = true             # smaller binary (optional)
+#debug = 0                # no debug info
+#incremental = false      # better optimization consistency
 #debug = true
 #panic = "unwind"
 
@@ -28,7 +35,7 @@ crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-CCBPlusTree = { git = "ssh://git@github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.121" }
+CCBPlusTree = { git = "https://github.com/umr-dbs/CC-BPlusTree.git", version = "0.0.121" }
 crossbeam-channel = "0.5.15"
 crossbeam-skiplist = "0.1.3"
 threadpool = "1.8.1"

@@ -171,24 +171,27 @@ fn olap_tests(index: Arc<MVBT>,
         olaps.push(spawn(move || {
             let mut results = vec![];
             let mut tx_c = 0;
+            let offset = if let Either::Left(range) = range {
+                range
+            }
+            else {
+                0
+            };
             while tx_c < tx_per_thread {
-                let mut key_min = rand::random_range(0..Key::MAX);
-                // let mut key_max = key_min + 1000;
-                // if let Either::Left(range) = range {
-                //     key_min = 0;
-                //     key_max = range;
-                // } else if let Either::Right(ref range) = range {
-                //     key_max = range.load(Acquire);
-                //     key_min = key_max.checked_sub(1000).unwrap_or(0);
-                // }
-
-                let mut current_si = index.current_version_for_reader();
-
-                while current_si == version_handle::START_VERSION {
-                    yield_now();
-                    current_si = index.current_version_for_reader();
+                let mut key_min = rand::random_range(0..Key::MAX - offset);
+                let mut key_max = key_min + 1000;
+                if let Either::Left(range) = range {
+                    key_max = key_min + range;
+                } else if let Either::Right(ref range) = range {
+                    key_max = range.load(Acquire);
+                    key_min = key_max.checked_sub(1000).unwrap_or(0);
                 }
 
+                let current_si = index.current_version_for_reader();
+                // while current_si == version_handle::START_VERSION {
+                //     yield_now();
+                //     current_si = index.current_version_for_reader();
+                // }
                 let si = if fixed_si {
                     current_si
                 } else {
@@ -203,7 +206,7 @@ fn olap_tests(index: Arc<MVBT>,
                     = SystemTime::now();
 
                 let crud =
-                    index.dispatch_crud(CRUDOperation::Point(key_min, si));
+                    index.dispatch_crud(CRUDOperation::Range((key_min..key_max).into(), si));
 
                 let time_spent
                     = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
@@ -566,8 +569,8 @@ pub fn main_load_ycsb(parms: Vec<String>) {
             let _ = index.dispatch_crud(
                 CRUDOperation::Insert(rand::random_range(0..Key::MAX), Payload::default()));
         });
-        index.block_manager.alloc_count.store(0, Ordering::SeqCst);
-        index.block_manager.reuse_count.store(0, Ordering::SeqCst);
+        // index.block_manager.alloc_count.store(0, Ordering::SeqCst);
+        // index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 
         // TODO: End experimental setting
         let counter_inserts
@@ -613,10 +616,15 @@ pub fn main_load_ycsb(parms: Vec<String>) {
 
         let (num_scans_executed, olap_total_time) = (0,0);
 
+        // let reuse_blocks
+        //     = index.block_manager.reuse_count.load(SeqCst);
+        // let alloc_blocks
+        //     = index.block_manager.alloc_count.load(SeqCst);
+
         let reuse_blocks
-            = index.block_manager.reuse_count.load(SeqCst);
+            = 0;
         let alloc_blocks
-            = index.block_manager.alloc_count.load(SeqCst);
+            = 0;
 
         let oltp_executed = counter_inserts.load(SeqCst) as _;
         oltp_file.write_all(format!(",\
@@ -661,6 +669,8 @@ pub(crate) fn main_load(parms: Vec<String>) {
     let update_in_place = if gc {
         parms[10].parse::<bool>().unwrap_or(false)
     } else { false };
+
+    let init_keys = parms[11].parse::<usize>().unwrap_or(100_000);
 
     let index
         = Arc::new(MVBTSt::make_standard(root_star_index));
@@ -724,11 +734,11 @@ pub(crate) fn main_load(parms: Vec<String>) {
             query_file_name_clone.as_str());
 
         // TODO: Explicit for Experiment
-        oltp.drain(0..1_000_000).for_each(|i| {
+        oltp.drain(0..init_keys).for_each(|i| {
             let _ = index.dispatch_crud(i);
         });
-        index.block_manager.alloc_count.store(0, Ordering::SeqCst);
-        index.block_manager.reuse_count.store(0, Ordering::SeqCst);
+        // index.block_manager.alloc_count.store(0, Ordering::SeqCst);
+        // index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 
         // TODO: End experimental setting
         let oltp_threads = scans_per_thread;
@@ -788,10 +798,15 @@ pub(crate) fn main_load(parms: Vec<String>) {
         drop(olap_signal);
         let (num_scans_executed, olap_total_time) = olaps.join().unwrap();
 
+        // let reuse_blocks
+        //     = index.block_manager.reuse_count.load(SeqCst);
+        // let alloc_blocks
+        //     = index.block_manager.alloc_count.load(SeqCst);
+
         let reuse_blocks
-            = index.block_manager.reuse_count.load(SeqCst);
+            = 0;
         let alloc_blocks
-            = index.block_manager.alloc_count.load(SeqCst);
+            = 0;
 
         oltp_file.write_all(format!(",\
         {alloc_blocks},\
@@ -807,8 +822,13 @@ pub(crate) fn main_load(parms: Vec<String>) {
 
         println!("###### End Command: {} ######", parms.iter().skip(1).join(" "));
     } else {
-        let oltp_tx_buff = load_query_into_memory(
+        let mut oltp_tx_buff = load_query_into_memory(
             query_file_name.as_str());
+
+        // TODO: Explicit for Experiment
+        oltp_tx_buff.drain(0..init_keys).for_each(|i| {
+            let _ = index.dispatch_crud(i);
+        });
 
         let num = oltp_tx_buff.len();
         let start_oltp_time = Instant::now();
@@ -831,10 +851,15 @@ pub(crate) fn main_load(parms: Vec<String>) {
             true,
             None);
 
+        // let reuse_blocks
+        //     = index.block_manager.reuse_count.load(SeqCst);
+        // let alloc_blocks
+        //     = index.block_manager.alloc_count.load(SeqCst);
+
         let reuse_blocks
-            = index.block_manager.reuse_count.load(SeqCst);
+            = 0;
         let alloc_blocks
-            = index.block_manager.alloc_count.load(SeqCst);
+            = 0;
 
         oltp_file.write_all(format!("\
             false,\
@@ -996,6 +1021,7 @@ fn generate_query(
         load_query(query_file_name, mv_tree.clone(), None);
     }
 
+    println!("Finished generating {} init keys", init_population);
     let mut query_file = BufWriter::new(OpenOptions::new()
         .create(true)
         .append(true)
@@ -1026,7 +1052,10 @@ fn generate_query(
         query_file.write_all(buff.as_slice()).unwrap()
     };
 
-    init_pop_order.into_iter().for_each(|op| io_handle(op));
+    init_pop_order.into_iter().for_each(|op| {
+        // println!("Executing {}", op);
+        io_handle(op)
+    });
 
     let block = {
         let mut crud

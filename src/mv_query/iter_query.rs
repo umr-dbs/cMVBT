@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
 use itertools::Itertools;
+use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
@@ -22,7 +23,7 @@ pub struct RangeQueryIter<
 > {
     pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) range: Interval<Key>,
-    path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+    path: Vec<(Interval<Key>, BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
     buff: VecDeque<RecordPointResult<Key, Payload>>,
     is_completed: bool,
 }
@@ -55,7 +56,7 @@ impl<'a,
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
             path: vec![(Interval::new(tree.min_key, tree.max_key),
-                        tree.snapshot_current().mv_tree().retrieve_root_for(version))],
+                        tree.snapshot_current().mv_tree().retrieve_root_for(version).borrow_read())],
             buff: VecDeque::new(),
             is_completed: false,
         }
@@ -104,10 +105,12 @@ impl<'a,
                 self.is_completed = true;
                 return None
             }
-            let (curr_fence, curr_block)
-                = self.path.last().cloned().unwrap();
 
-            match curr_block.borrow_read().as_ref().as_page_ref() {
+            let (curr_fence, curr_block) = unsafe {
+                &*self.path.as_ptr().add(self.path.len() - 1)
+            };
+
+            match curr_block.as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
@@ -124,7 +127,8 @@ impl<'a,
                                 None
                             })
                     {
-                        Some(next) => self.path.push(next),
+                        Some((next_keys, next_block)) =>
+                            self.path.push((next_keys, next_block.borrow_read())),
                         _ => {
                             self.path.pop();
                             self.range.lower = inc(curr_fence.upper);

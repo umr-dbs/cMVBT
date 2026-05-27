@@ -145,7 +145,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        let len = self.len.load(Acquire) as _;
+        let len = self.len.load(Relaxed) as _;
         // fence(Acquire);
 
         from_len_sum(len)
@@ -163,7 +163,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn active_dead_count(&self) -> (Active, Dead) {
-        from_len(self.len.load(Acquire))
+        from_len(self.len.load(Relaxed))
     }
 
     #[inline]
@@ -180,7 +180,7 @@ impl<const NUM_RECORDS: usize,
     pub fn commit_delta(&self, active_delta: i32, dead_delta: i32) {
         let len= self.len.load(Relaxed);
         let active = active_len(len) as i32 + active_delta;
-        let dead = dead_len(len) + dead_delta as u32;
+        let dead = (dead_len(len) as i32 + dead_delta) as u32;
 
         // fence(Release);
         self.len.store(from_active_dead(active as Active, dead as Dead), Release)

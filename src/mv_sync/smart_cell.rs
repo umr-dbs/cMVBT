@@ -210,6 +210,18 @@ impl<'a, E: Default + 'static> SmartGuard<'a, E> {
         }
     }
 
+    // pub fn inner_cell(mut self) -> SmartCell<E> { // requires manual unlatch on reuse
+    //     match self {
+    //         Reader(cell, ..) => cell.clone(),
+    //         Writer(ref cell, latch) => unsafe {
+    //             let cell = transmute_copy(cell);
+    //             ptr::write(&mut self, Reader(mem::transmute(&cell),
+    //                                          latch & !WRITE_OBSOLETE_FLAG_VERSION));
+    //             cell
+    //         }
+    //     }
+    // }
+
     #[inline(always)]
     pub fn deref_mut(&self) -> &mut E {
         match self {

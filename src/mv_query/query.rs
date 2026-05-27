@@ -65,16 +65,14 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    fn traverse_read_key(
-        mut curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    fn traverse_read_key<'a>(
+        curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
-        -> Result<BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
+        -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
-        while let PageType::IndexRef(internal_page) = curr
-            // .borrow_read()
-            .deref()
-            .as_page_ref()
+        let mut curr = curr.borrow_read();
+        while let PageType::IndexRef(internal_page) = curr.as_page_ref()
         {
             let (keys_page, versions_page) = internal_page
                 .keys_versions();
@@ -85,11 +83,11 @@ impl<const FAN_OUT: usize,
                 .enumerate()
                 .rfind(|(_, (v, range))|
                     v.matched(lookup_version) && range.contains(key))
-                .map(|(pos, _)| internal_page.get_pointer(pos).clone())
-                .ok_or(())?
+                .map(|(pos, _)| internal_page.get_pointer(pos).borrow_read())
+                .unwrap()
         }
 
-        Ok(curr)
+        curr
     }
 
     fn traverse_read_key_range(
@@ -109,10 +107,7 @@ impl<const FAN_OUT: usize,
         while !blocks.is_empty() {
             curr = blocks.pop_front().unwrap();
 
-            // let curr_read
-            //     = curr.borrow_read();
-
-            match curr.deref().as_page_ref() {
+            match curr.as_page_ref() {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
                         .keys_versions();
@@ -142,36 +137,31 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline]
-    pub(crate) fn key_point_read_from_root(
+    pub(crate) fn key_point_read_from_root<'a>(
         root: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
-        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+        -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
-        match Self::traverse_read_key(
-            root,
-            key,
-            lookup_version)
+        match Self::traverse_read_key(root, key, lookup_version)
+            .as_records()
+            .iter()
+            .rev()
+            .skip_while(|r| r.version.insert_version > lookup_version)
+            .find(|r|
+                r.key() == key && r.version().matches(lookup_version))
         {
-            Ok(leaf) => match leaf
-                // .borrow_read()
-                .deref()
-                .as_records()
-                .iter()
-                .rfind(|r| r.key() == key && r.version().matches(lookup_version))
-            {
-                None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
-                Some(result) => CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
-            },
-            Err(..) => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0))
+            None => CRUDOperationResult::MatchedRecords(Vec::with_capacity(0)),
+            Some(result) =>
+                CRUDOperationResult::MatchedRecords(vec![RecordPointResult::from(result)])
         }
     }
 
-    pub(crate) fn key_range_read_from_root(
+    pub(crate) fn key_range_read_from_root<'a>(
         root: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         lookup_range: Interval<Key>,
         lookup_version: Version)
-        -> CRUDOperationResult<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
+        -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let blocks = Self::traverse_read_key_range(
             root,
@@ -181,9 +171,6 @@ impl<const FAN_OUT: usize,
         CRUDOperationResult::MatchedRecords(blocks
             .into_iter()
             .map(|leaf| {
-                // let leaf_guard =  leaf
-                //     .borrow_read();
-
                 let records = leaf
                     .deref()
                     .as_records();
