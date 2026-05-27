@@ -6,7 +6,7 @@ use std::ops::{Range, RangeInclusive};
 pub type U64interval = Interval<u64>;
 // pub type VersionInterval = Interval<Version>;
 
-#[derive(Eq, PartialEq, Hash, Default, Clone)]
+#[derive(Eq, PartialEq, Hash, Default, Clone, Copy)]
 pub struct Interval<E: Ord + Copy + Hash + Display> {
     pub lower: E,
     pub upper: E,

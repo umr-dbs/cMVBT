@@ -6,10 +6,10 @@ use itertools::{Either, Itertools};
 use rand::{Rng, RngExt};
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
 use std::sync::Arc;
-use std::{fs, mem, thread};
+use std::{fs, hint, mem, thread};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -27,6 +27,7 @@ use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
 use crate::mv_page_model::node::PageType;
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
+use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_sync::version_handle;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
@@ -171,27 +172,12 @@ fn olap_tests(index: Arc<MVBT>,
         olaps.push(spawn(move || {
             let mut results = vec![];
             let mut tx_c = 0;
-            let offset = if let Either::Left(range) = range {
-                range
-            }
-            else {
-                0
-            };
+            // let range = range.left().unwrap_or(0);
             while tx_c < tx_per_thread {
-                let mut key_min = rand::random_range(0..Key::MAX - offset);
-                let mut key_max = key_min + 1000;
-                if let Either::Left(range) = range {
-                    key_max = key_min + range;
-                } else if let Either::Right(ref range) = range {
-                    key_max = range.load(Acquire);
-                    key_min = key_max.checked_sub(1000).unwrap_or(0);
-                }
+                let key_min = 0;
+                let key_max = Key::MAX;
 
                 let current_si = index.current_version_for_reader();
-                // while current_si == version_handle::START_VERSION {
-                //     yield_now();
-                //     current_si = index.current_version_for_reader();
-                // }
                 let si = if fixed_si {
                     current_si
                 } else {
@@ -202,11 +188,14 @@ fn olap_tests(index: Arc<MVBT>,
                 = (0,0);
                     // = index.retrieve_root_number_for(si);
                 // println!("Min = {key_min}, max = {key_max}");
+
+                let op = CRUDOperation::Range((key_min..key_max).into(), si);
+                // let op = CRUDOperation::Point(key_min, si);
                 let time_start
                     = SystemTime::now();
 
                 let crud =
-                    index.dispatch_crud(CRUDOperation::Range((key_min..key_max).into(), si));
+                    index.dispatch_crud(op);
 
                 let time_spent
                     = SystemTime::now().duration_since(time_start).unwrap().as_nanos();
@@ -848,7 +837,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
             scans_per_thread,
             skew,
             Either::Left(range),
-            true,
+            false,
             None);
 
         // let reuse_blocks

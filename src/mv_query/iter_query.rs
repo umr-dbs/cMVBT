@@ -23,7 +23,7 @@ pub struct RangeQueryIter<
 > {
     pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) range: Interval<Key>,
-    path: Vec<(Interval<Key>, BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+    path: Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
     buff: VecDeque<RecordPointResult<Key, Payload>>,
     is_completed: bool,
 }
@@ -106,9 +106,8 @@ impl<'a,
                 return None
             }
 
-            let (curr_fence, curr_block) = unsafe {
-                &*self.path.as_ptr().add(self.path.len() - 1)
-            };
+            let (curr_fence, curr_block)
+                = self.path.last().unwrap().clone();
 
             match curr_block.as_page_ref() {
                 PageType::IndexRef(internal_page) => {
@@ -122,7 +121,7 @@ impl<'a,
                         .rev()
                         .find_map(|(pos, (v, range))|
                             if range.contains(self.range.lower) && v.matched(si){
-                                Some((range.clone(), internal_page.get_pointer(pos).clone()))
+                                Some((*range, internal_page.get_pointer(pos)))
                             } else {
                                 None
                             })
