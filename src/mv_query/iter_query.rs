@@ -23,7 +23,7 @@ pub struct RangeQueryIter<
 > {
     pub(crate) isolated_snapshot: IsolatedSnapShot<'a, FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) range: Interval<Key>,
-    path: Vec<(Interval<Key>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>)>,
+    path: Vec<(Interval<Key>, BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
     buff: VecDeque<RecordPointResult<Key, Payload>>,
     is_completed: bool,
 }
@@ -56,7 +56,7 @@ impl<'a,
             isolated_snapshot: IsolatedSnapShot(version, tree),
             range,
             path: vec![(Interval::new(tree.min_key, tree.max_key),
-                        tree.snapshot_current().mv_tree().retrieve_root_for(version).borrow_read())],
+                        tree.snapshot_current().mv_tree().retrieve_root_for(version))],
             buff: VecDeque::new(),
             is_completed: false,
         }
@@ -121,13 +121,13 @@ impl<'a,
                         .rev()
                         .find_map(|(pos, (v, range))|
                             if range.contains(self.range.lower) && v.matched(si){
-                                Some((*range, internal_page.get_pointer(pos)))
+                                Some((*range, internal_page.get_pointer(pos).clone()))
                             } else {
                                 None
                             })
                     {
                         Some((next_keys, next_block)) =>
-                            self.path.push((next_keys, next_block.borrow_read())),
+                            self.path.push((next_keys, next_block)),
                         _ => {
                             self.path.pop();
                             self.range.lower = inc(curr_fence.upper);
