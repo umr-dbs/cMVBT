@@ -167,7 +167,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub const fn overflow_keys_count() -> usize {
-        Self::max_keys() - 3
+        Self::max_keys() - 1
     }
 
     /// Main Constructor requiring supplied BlockSettings.
