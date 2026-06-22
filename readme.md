@@ -1,7 +1,7 @@
 # cMVBT (VLDB 2027 Vol. 20)
->## Prototype Build Date: 28.05.2026
+>## Prototype Build Date: 22.06.2026
 
->## Version: 0.0.108
+>## Version: 0.0.109
 ---------------------------------------
 
 # Reproduce Paper Results:
@@ -44,7 +44,7 @@ Note that the BTreeVersionChains at https://github.com/umr-dbs/BTree-MVCC-Versio
     ./cMVBT load 60.dat true 14 28 0 max fg false false 10000; sleep 2;
     ./cMVBT load 60.dat true 16 32 0 max fg false false 10000
 
->### OLTP without versioning experiment (Figure 15): (Data-Generation as above, vary the number of inserts/updates/deletes)
+>### OLTP without versioning experiment: (Data-Generation as above, vary the number of inserts/updates/deletes)
 > 
     ./cMVBT load 10.dat true 0 32 0 max fg false false 10000; sleep 2;
     ./cMVBT load 20.dat true 0 32 0 max fg false false 10000; sleep 2;

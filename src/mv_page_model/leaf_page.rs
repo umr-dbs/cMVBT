@@ -99,7 +99,7 @@ impl<const NUM_RECORDS: usize,
         let (active, dead)
             = leaf_page.active_dead_count();
 
-        new_page.len.store(from_active_dead(active, dead), Release);
+        new_page.len.store(from_active_dead(active, dead), Relaxed);
 
         new_page
     }
@@ -183,7 +183,7 @@ impl<const NUM_RECORDS: usize,
         let dead = (dead_len(len) as i32 + dead_delta) as u32;
 
         // fence(Release);
-        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Relaxed)
     }
 
     #[inline]
@@ -198,7 +198,7 @@ impl<const NUM_RECORDS: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.len();
-        self.len.store(0, Release);
+        self.len.store(0, Relaxed);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -229,7 +229,7 @@ impl<const NUM_RECORDS: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as LenP + n_records_len as LenP, 0), Release)
+            from_active_dead(len as LenP + n_records_len as LenP, 0), Relaxed)
     }
 
     #[inline(always)]
@@ -249,7 +249,7 @@ impl<const NUM_RECORDS: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as LenP + records.len() as LenP, 0), Release)
+            from_active_dead(len as LenP + records.len() as LenP, 0), Relaxed)
     }
 
     // #[inline(always)]

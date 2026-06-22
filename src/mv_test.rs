@@ -36,10 +36,10 @@ use crate::mv_utils::interval::Interval;
 pub const VERBOSE: bool = false;
 pub const LOG_REORG: bool = false;
 const SYSTEM_STR: &str = "MVTree";
-pub static mut MERGES_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
-pub static mut SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
-pub static mut MERGE_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
-pub static mut SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static MERGES_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static SPLITS_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static MERGE_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
+pub static SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 
 // pub static mut RESTARTS_COUNTER: [AtomicUsize; 100] = [
 //     AtomicUsize::new(0), AtomicUsize::new(0),

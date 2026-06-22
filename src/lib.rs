@@ -49,7 +49,7 @@ impl Deref for MVBTreeWithGCApiExport {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
     let index = match (protocol, clock) {
         (OLC, OPT_CLOCK) => MVBTreeApi::make_standard(RootIndexType::default()),
@@ -61,7 +61,7 @@ pub extern "C" fn init_tree_gc(protocol: u8, clock: u8, gc: u8) -> *mut c_void {
         TransactionManager::new_unmanaged(index, gc == GC_ENABLED)))) as _
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn destroy_tree_gc_api(
     api: *mut c_void)
 {
@@ -72,7 +72,7 @@ pub extern "C" fn destroy_tree_gc_api(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tree_gc_api_find(
     api: *mut c_void,
     key: *const u8,
@@ -83,7 +83,7 @@ pub extern "C" fn tree_gc_api_find(
     api.find(key, sz, value_out)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tree_gc_api_insert(
     api: *mut c_void,
     key: *const u8,
@@ -95,7 +95,7 @@ pub extern "C" fn tree_gc_api_insert(
     api.insert(key, key_sz, value, value_sz)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tree_gc_api_update(
     api: *mut c_void,
     key: *const u8,
@@ -107,7 +107,7 @@ pub extern "C" fn tree_gc_api_update(
     api.update(key, key_sz, value, value_sz)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tree_gc_api_remove(
     api: *mut c_void,
     key: *const u8,
@@ -117,7 +117,7 @@ pub extern "C" fn tree_gc_api_remove(
     api.remove(key, key_sz)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn tree_gc_api_scan(
     api: *mut c_void,
     key: *const u8,

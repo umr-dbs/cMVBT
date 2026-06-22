@@ -171,7 +171,7 @@ impl<const FAN_OUT: usize,
             = from.active_dead_count();
 
         new_page.len.store(
-            from_active_dead(active, dead), Release);
+            from_active_dead(active, dead), Relaxed);
 
         new_page
     }
@@ -229,7 +229,7 @@ impl<const FAN_OUT: usize,
         let dead = dead_len(len) + dead_delta;
 
         // fence(Release);
-        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Relaxed)
     }
 
     // #[inline]
@@ -246,7 +246,7 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.sum_len();
-        self.len.store(0, Release);
+        self.len.store(0, Relaxed);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -302,7 +302,7 @@ impl<const FAN_OUT: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as LenP + add as LenP, 0), Release);
+            from_active_dead(len as LenP + add as LenP, 0), Relaxed);
     }
 
     #[inline]
@@ -338,7 +338,7 @@ impl<const FAN_OUT: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as LenP + add as LenP, 0), Release)
+            from_active_dead(len as LenP + add as LenP, 0), Relaxed)
     }
 
     #[inline(always)]
