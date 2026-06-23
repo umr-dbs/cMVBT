@@ -692,7 +692,7 @@ impl<const FAN_OUT: usize,
                         .sorted_by_key(|r| r.key())
                         .collect_vec();
 
-                    let middle = block.len() / 2;
+                    let middle = sorted_block.len() / 2;
                     let (first, second) = sorted_block
                         .split_at_mut(middle);
 
