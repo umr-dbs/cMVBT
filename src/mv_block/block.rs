@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
-
+use crate::mv_page_model::BlockID;
 use crate::mv_page_model::node::Node;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::smart_cell::SmartGuard;
@@ -45,18 +45,6 @@ pub struct Block<
     pub node_data: SafeCell<Node<FAN_OUT, NUM_RECORDS, Key, Payload>>,
 }
 
-impl<const FAN_OUT: usize,
-    const NUM_RECORDS: usize,
-    Key: Default + Ord + Copy + Hash + Display,
-    Payload: Clone + Default
-> Clone for Block<FAN_OUT, NUM_RECORDS, Key, Payload>
-{
-    fn clone(&self) -> Self {
-        Self {
-            node_data: SafeCell::new(self.node_data.as_ref().clone())
-        }
-    }
-}
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
     Key: Default + Ord + Copy + Hash + Display,

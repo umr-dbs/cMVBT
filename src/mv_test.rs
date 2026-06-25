@@ -1,37 +1,29 @@
-use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_tree::mvbt::MVBTSt;
-use crate::mv_tx_model::transaction::{AtomicTransaction};
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
-use itertools::{Either, Itertools};
-use rand::{Rng, RngExt};
-use std::fmt::{Display, Formatter};
-use std::fs::OpenOptions;
-use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
-use std::sync::Arc;
-use std::{fs, hint, mem, thread};
-use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::thread::{spawn, yield_now, JoinHandle};
-use std::time::{Duration, Instant, SystemTime};
-use parking_lot::Mutex;
-use rand::distr::{Alphanumeric, Distribution, Uniform};
-use rand::prelude::SliceRandom;
-use rand::rngs::ThreadRng;
-use rand_distr::Zipf;
-// use crate::mv_block::block_handle::NODES_REQUEST;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
+use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-// use crate::mv_tx_query::tx_manager::TransactionManager;
-use crate::mv_page_model::node::PageType;
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
-use crate::mv_sync::smart_cell::sched_yield;
-use crate::mv_sync::version_handle;
+use crate::mv_sync::{clock, version_handle};
+use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
-use crate::mv_utils::interval::Interval;
+use crossbeam_channel::{Receiver, TryRecvError, unbounded};
+use itertools::{Either, Itertools};
+use parking_lot::Mutex;
+use rand::RngExt;
+use rand::distr::{Alphanumeric, Distribution};
+use rand::prelude::SliceRandom;
+use rand_distr::Zipf;
+use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
+use std::fs::OpenOptions;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::thread::spawn;
+use std::time::{Duration, Instant, SystemTime};
+use std::{fs, mem, thread};
 
 pub const VERBOSE: bool = false;
 pub const LOG_REORG: bool = false;
@@ -722,10 +714,11 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let mut oltp = load_query_into_memory(
             query_file_name_clone.as_str());
 
-        // TODO: Explicit for Experiment
         oltp.drain(0..init_keys).for_each(|i| {
             let _ = index.dispatch_crud(i);
         });
+
+        clock::__destroy_writer();
         // index.block_manager.alloc_count.store(0, Ordering::SeqCst);
         // index.block_manager.reuse_count.store(0, Ordering::SeqCst);
 
@@ -788,7 +781,7 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let (num_scans_executed, olap_total_time) = olaps.join().unwrap();
 
         // let reuse_blocks
-        //     = index.block_manager.reuse_count.load(SeqCst);
+        //     = 0;
         // let alloc_blocks
         //     = index.block_manager.alloc_count.load(SeqCst);
 
@@ -814,10 +807,10 @@ pub(crate) fn main_load(parms: Vec<String>) {
         let mut oltp_tx_buff = load_query_into_memory(
             query_file_name.as_str());
 
-        // TODO: Explicit for Experiment
         oltp_tx_buff.drain(0..init_keys).for_each(|i| {
             let _ = index.dispatch_crud(i);
         });
+        clock::__destroy_writer();
 
         let num = oltp_tx_buff.len();
         let start_oltp_time = Instant::now();
@@ -1214,8 +1207,8 @@ fn load_query(query_file: &str, index: Arc<MVBT>,
 
 
 
-pub const FAN_OUT: usize = 125;
-pub const NUM_RECORDS: usize = 125;
+pub const FAN_OUT: usize = 128;
+pub const NUM_RECORDS: usize = 128;
 
 pub type MVBT = MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 

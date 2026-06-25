@@ -1,21 +1,18 @@
-use std::fmt::Display;
-use std::hash::Hash;
-use std::ops::Deref;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::SeqCst;
-use itertools::Itertools;
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::Attempts;
-use crate::mv_page_model::internal_page::{Fence, TimeMatcher};
-use crate::mv_page_model::node::PageType;
-use crate::mv_test;
+use crate::mv_query::time_matcher::TimeMatcher;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbt::MVBTSt;
+use std::fmt::Display;
+use std::hash::Hash;
 
-use crate::mv_sync::smart_cell::sched_yield;
+use crate::mv_sync::smart_cell::{PageType, sched_yield};
+use crate::mv_test;
 use crate::mv_tree::smo::BlockUnsafeDegree;
+use crate::mv_utils::interval::Interval;
 
 pub const RAND_ATTEMPTS_MAX: Attempts = 10; // for insertion generation upper bound
+pub type Fence<Key> = Interval<Key>;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -43,22 +40,19 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal_rand(&self, attempts: Attempts)
     -> Result<(Fence<Key>, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>), Attempts>
     {
-        let (mut curr_guard,
+        let (_root_block,
             attempts) = self.retrieve_root_write_olc(attempts);
 
         let mut curr_fence
             = Fence::new(self.min_key, self.max_key);
 
+        let mut cursor
+            = _root_block.borrow_read();
+
         let mut traversal_loops =  0;
         loop {
-            let curr_guard_result
-                = curr_guard.deref();
-
-            let curr_page_ref
-                = curr_guard_result;
-
             let (live_n, _dead_n)
-                = curr_page_ref.active_dead_count();
+                = cursor.active_dead();
 
             let mut index
                 = if live_n == 0 { 0 } else { rand::random_range(0..live_n as usize) };
@@ -68,9 +62,12 @@ impl<const FAN_OUT: usize,
                 traversal_loops += 1;
             }
 
-            match curr_guard_result.as_page_ref() {
+            let (len, curr_page_ref)
+                = cursor.as_page_ref();
+
+            match curr_page_ref {
                 PageType::IndexRef(internal_page) => {
-                    for (k, version) in internal_page.versions().iter().enumerate() {
+                    for (k, version) in internal_page.versions(len).iter().enumerate() {
                         if version.is_active() {
                             if index == 0 {
                                 index = k;
@@ -90,12 +87,9 @@ impl<const FAN_OUT: usize,
                     let next_curr_block = internal_page
                         .get_pointer(index);
 
-                    let next_curr_guard
-                        = next_curr_block.borrow_read();
-
                     if LOG_REORG {
                         let r
-                            = next_curr_guard.deref().unsafe_degree();
+                            = next_curr_block.unsafe_degree();
 
                         match r {
                             BlockUnsafeDegree::Overflow => unsafe {
@@ -107,14 +101,15 @@ impl<const FAN_OUT: usize,
                             _ => {}
                         }
                     }
-                    match next_curr_guard.deref().unsafe_degree() {
+                    
+                    match next_curr_block.unsafe_degree() {
                         BlockUnsafeDegree::Overflow
-                        if curr_guard.upgrade_write_lock()
-                        => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
+                        if cursor.upgrade_write_lock()
+                        => cursor = self.on_overflow_node(cursor, next_curr_block, index),
                         BlockUnsafeDegree::ActiveUnderflow
-                        if curr_guard.upgrade_write_lock()
-                        => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
-                            Ok(guard) => curr_guard = guard,
+                        if cursor.upgrade_write_lock()
+                        => match self.on_underflow_node(cursor, next_curr_block, index) {
+                            Ok(next) => cursor = next,
                             Err(..) => {
                                 if VERBOSE {
                                     println!("traversal_write_internal_olc: on_underflow_node Err()");
@@ -122,12 +117,12 @@ impl<const FAN_OUT: usize,
                                 return Err(attempts + 1)
                             }
                         },
-                        BlockUnsafeDegree::Ok => curr_guard = next_curr_guard,
+                        BlockUnsafeDegree::Ok => cursor = next_curr_block.borrow_read(),
                         _ => return Err(attempts + 1)
-                    }
+                    };
                 }
-                _ => return if curr_guard.upgrade_write_lock() {
-                    Ok((curr_fence, curr_guard))
+                _ => return if cursor.upgrade_write_lock() {
+                    Ok((curr_fence, cursor))
                 } else {
                     if VERBOSE {
                         println!("traversal_write_internal_olc: upgrade_write_lock Err()");

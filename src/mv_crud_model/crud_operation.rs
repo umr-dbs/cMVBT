@@ -7,9 +7,9 @@ use crate::mv_tx_model::transaction_result::SnapShot;
 
 pub type TxAtomicOperation<Key, Payload> = CRUDOperation<Key, Payload>;
 
-/// Transactions definitions.
+/// Operations definitions.
 /// Empty variant indicates an initiation error and/or a default stack allocation.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Copy)]
 pub enum CRUDOperation<Key: Ord + Copy + Hash + Display, Payload: Clone> {
     #[default]
     Empty,

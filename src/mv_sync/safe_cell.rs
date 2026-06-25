@@ -47,6 +47,14 @@ impl<T> AsRef<T> for SafeCell<T> {
     }
 }
 
+impl<T: Copy> SafeCell<T> {
+    /// Unsafely gets the wrapped object as reference.
+    #[inline(always)]
+    pub fn get(&self) -> T {
+        unsafe { *self.inner.get() }
+    }
+}
+
 /// Implements AsMut for SafeCell.
 impl<T> AsMut<T> for SafeCell<T> {
     /// Unsafely gets the wrapped object as mutable reference.

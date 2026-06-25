@@ -1,12 +1,3 @@
-use std::collections::LinkedList;
-use std::fmt::{Display, Formatter};
-use std::hash::Hash;
-use std::ops::Deref;
-use std::sync::Arc;
-use CCBPlusTree::record_model::Version;
-use itertools::Itertools;
-use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
-use crate::mv_block::block::Block;
 use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
 use crate::mv_root::frugal_root::{AtomicFrugalList, FrugalRootList};
@@ -18,6 +9,11 @@ use crate::mv_sync::smart_cell::{OptCell, SmartCell, SmartGuard};
 use crate::mv_sync::version_handle;
 use crate::mv_tree::smo::BlockUnsafeDegree;
 use crate::mv_tx_model::transaction_result::SnapShot;
+use CCBPlusTree::record_model::Version;
+use std::collections::LinkedList;
+use std::fmt::{Display, Formatter};
+use std::hash::Hash;
+use std::sync::Arc;
 
 pub(crate) fn make_start_value_root_inner<
     const F: usize,
@@ -52,9 +48,9 @@ impl Display for RootIndexType {
 
 impl Default for RootIndexType {
     fn default() -> Self {
-        // Self::LinkedList(LatchType::default())
+        // Self::LinkedList
         Self::FrugalList
-        // Self::SkipList(LatchType::default())
+        // Self::SkipList
     }
 }
 
@@ -166,19 +162,19 @@ impl<'a,
     pub fn unsafe_degree_root(&self) -> BlockUnsafeDegree {
         match self {
             RootIndexGuard::BTreeGuard(tree) =>
-                tree.current_root().block.unsafe_borrow().unsafe_degree_root(),
+                tree.current_root().block.unsafe_degree_root(),
             // RootIndexGuard::BTreeGuardMut(tree) =>
             //     tree.current_root().block.unsafe_borrow().unsafe_degree_root(),
             RootIndexGuard::SkipListGuard(sk, ..) =>
-                sk.current_root().block.unsafe_borrow().unsafe_degree_root(),
+                sk.current_root().block.unsafe_degree_root(),
             // RootIndexGuard::SkipListGuardMut(sk, ..) =>
             //     sk.current_root().block.unsafe_borrow().unsafe_degree_root(),
             RootIndexGuard::LinkedListGuard(guard) =>
-                guard.back().unwrap().block.unsafe_borrow().unsafe_degree_root(),
+                guard.back().unwrap().block.unsafe_degree_root(),
             // RootIndexGuard::LinkedListGuardMut(guard) =>
             //     guard.back().unwrap().block.unsafe_borrow().unsafe_degree_root(),
             RootIndexGuard::FrugalGuard(fg) =>
-                fg.current_root().0.0.unsafe_borrow().unsafe_degree_root(),
+                fg.current_root().0.0.unsafe_degree_root(),
             // RootIndexGuard::FrugalGuardMut(fg) =>
             //     fg.current_root().0.0.unsafe_borrow().unsafe_degree_root()
         }
@@ -222,7 +218,7 @@ impl<const FAN_OUT: usize,
                 rt.append_root(
                     Root::new(root_inner.0, version, root_inner.1));
 
-                Self::BTree(SmartCell(Arc::new(OptCell::new(rt))))
+                Self::BTree(SmartCell(Arc::new(OptCell::new_blank(rt))))
             },
             RootIndexType::SkipList => {
                 let sk = RootSkipList::new();
@@ -230,7 +226,7 @@ impl<const FAN_OUT: usize,
                     = make_start_value_root_inner(block_manager,);
 
                 sk.0.insert(version, root_inner);
-                Self::SkipList(SmartCell(Arc::new(OptCell::new(sk))))
+                Self::SkipList(SmartCell(Arc::new(OptCell::new_blank(sk))))
             }
             RootIndexType::LinkedList => {
                 let mut ll = LinkedList::new();
@@ -238,20 +234,20 @@ impl<const FAN_OUT: usize,
                     = make_start_value_root_inner(block_manager);
 
                 ll.push_back(Root::new(root_inner.0, version, root_inner.1));
-                Self::LinkedList(SmartCell(Arc::new(OptCell::new(ll))))
+                Self::LinkedList(SmartCell(Arc::new(OptCell::new_blank(ll))))
             }
             RootIndexType::FrugalList => {
                 let (root_inner, version)
                     = make_start_value_root_inner(block_manager);
 
-                Self::FrugalList(SmartCell(Arc::new(OptCell::new(FrugalRootList::new(root_inner, version)))))
+                Self::FrugalList(SmartCell(Arc::new(OptCell::new_blank(FrugalRootList::new(root_inner, version)))))
             }
             // RootIndexType::HybridArray => {}
         }
     }
 
     #[inline(always)]
-    pub fn borrow_read(&self) -> RootIndexGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub fn borrow_read(&self) -> RootIndexGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload> {
         match self {
             RootIndex::BTree(btree) =>
                 RootIndexGuard::BTreeGuard(btree.borrow_read()),

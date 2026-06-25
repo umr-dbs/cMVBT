@@ -1,20 +1,18 @@
+use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
+use crate::mv_page_model::BlockRef;
+use crate::mv_page_model::leaf_page::LeafPage;
+use crate::mv_query::time_matcher::TimeMatcher;
+use crate::mv_record_model::record_point::RecordPointResult;
+use crate::mv_record_model::version_info::Version;
+use crate::mv_root::index_root::RootIndex;
+use crate::mv_sync::smart_cell::PageType;
+use crate::mv_tree::mvbt::MVBTSt;
+use crate::mv_utils::interval::Interval;
+use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
-use itertools::Itertools;
-use crate::mv_block::block::BlockGuard;
-use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_page_model::BlockRef;
-use crate::mv_page_model::internal_page::TimeMatcher;
-use crate::mv_page_model::node::PageType;
-use crate::mv_record_model::record_point::RecordPointResult;
-use crate::mv_record_model::version_info::Version;
-use crate::mv_root::index_root::RootIndex;
-use crate::mv_root::root::Root;
-use crate::mv_tree::mvbt::{MVBTSt};
-use crate::mv_tree::smo::BlockUnsafeDegree;
-use crate::mv_utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -69,25 +67,27 @@ impl<const FAN_OUT: usize,
         curr: BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         key: Key,
         lookup_version: Version)
-        -> BlockGuard<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
+        -> (usize, &'a LeafPage<NUM_RECORDS, Key, Payload>)
     {
-        let mut curr = curr.borrow_read();
-        while let PageType::IndexRef(internal_page) = curr.as_page_ref()
+        let (mut len, mut page)
+            = curr.as_page_ref();
+        
+        while let PageType::IndexRef(internal_page) = page
         {
             let (keys_page, versions_page) = internal_page
-                .keys_versions();
+                .keys_versions(len);
 
-            curr = versions_page
+            (len, page) = versions_page
                 .iter()
                 .zip(keys_page)
                 .enumerate()
                 .rfind(|(_, (v, range))|
                     v.matched(lookup_version) && range.contains(key))
-                .map(|(pos, _)| internal_page.get_pointer(pos).borrow_read())
+                .map(|(pos, _)| internal_page.get_pointer(pos).as_page_ref())
                 .unwrap()
         }
 
-        curr
+        (len, page.as_leaf_page())
     }
 
     fn traverse_read_key_range(
@@ -107,10 +107,13 @@ impl<const FAN_OUT: usize,
         while !blocks.is_empty() {
             curr = blocks.pop_front().unwrap();
 
-            match curr.as_page_ref() {
+            let (len, page) 
+                = curr.as_page_ref();
+            
+            match page {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
-                        .keys_versions();
+                        .keys_versions(len);
 
                     let start_pos_si = versions_page.len() -
                         versions_page.binary_search_by(|v| v.into_cmp().cmp(&lookup_version))
@@ -143,8 +146,11 @@ impl<const FAN_OUT: usize,
         lookup_version: Version)
         -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
-        match Self::traverse_read_key(root, key, lookup_version)
-            .as_records()
+        let (len, leaf_page)
+            = Self::traverse_read_key(root, key, lookup_version);
+
+        match leaf_page
+            .as_records(len)
             .iter()
             .rev()
             .skip_while(|r| r.version.insert_version > lookup_version)
@@ -171,9 +177,8 @@ impl<const FAN_OUT: usize,
         CRUDOperationResult::MatchedRecords(blocks
             .into_iter()
             .map(|leaf| {
-                let records = leaf
-                    .deref()
-                    .as_records();
+                let records
+                    = leaf.as_records();
 
                 let start_pos_si = records.len() -
                     records.binary_search_by(|r|
@@ -197,69 +202,4 @@ impl<const FAN_OUT: usize,
             .flatten()
             .collect())
     }
-
-    // #[inline]
-    // fn retrieve_root_write(&self) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
-    //     let height
-    //         = self.root.height();
-    //
-    //     let master_guard
-    //         = self.root.borrow_read();
-    //
-    //     let root_block
-    //         = master_guard.block();
-    //
-    //     let root_guard
-    //         = root_block.borrow_read();
-    //
-    //     match master_guard.unsafe_degree_root() {
-    //         BlockUnsafeDegree::Overflow =>
-    //             self.split_root(master_guard, root_guard, height),
-    //         BlockUnsafeDegree::ActiveUnderflow =>
-    //             self.merge_root(master_guard, root_guard, height)
-    //             .unwrap(),
-    //         _ => root_guard,
-    //     }
-    // }
-
-    // #[inline]
-    // pub(crate) fn traversal_write(&self, key: Key)
-    //                               -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
-    // {
-    //     let (mut curr_guard) = self.retrieve_root_write();
-    //
-    //     loop {
-    //         match curr_guard.deref().as_page_ref() {
-    //             PageType::IndexRef(internal_page) => {
-    //                 let keys_page = internal_page
-    //                     .keys();
-    //
-    //                 let index = keys_page
-    //                     .iter()
-    //                     .enumerate()
-    //                     // .rev()
-    //                     .rfind(|(.., range)| range.contains(key))
-    //                     .map(|(pos, ..)| pos)
-    //                     .unwrap();
-    //
-    //                 let next_curr_block = internal_page
-    //                     .get_pointer(index)
-    //                     .clone();
-    //
-    //                 let next_curr_guard
-    //                     = next_curr_block.borrow_free();
-    //
-    //                 match next_curr_guard.deref().unsafe_degree() {
-    //                     BlockUnsafeDegree::Overflow =>
-    //                         curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
-    //                     BlockUnsafeDegree::ActiveUnderflow =>
-    //                         curr_guard = self.on_underflow_node(curr_guard, next_curr_guard, index)
-    //                             .unwrap(),
-    //                     BlockUnsafeDegree::Ok => curr_guard = next_curr_guard
-    //                 }
-    //             }
-    //             _ => return curr_guard
-    //         }
-    //     }
-    // }
 }

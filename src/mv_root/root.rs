@@ -5,7 +5,7 @@ use crate::mv_record_model::version_info::Version;
 
 pub const LEVEL_ROOT: Height = 1;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct Root<
     const FAN_OUT: usize,
     const NUM_RECORDS: usize,

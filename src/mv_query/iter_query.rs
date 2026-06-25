@@ -1,14 +1,13 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::Deref;
 use itertools::Itertools;
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::BlockRef;
-use crate::mv_page_model::internal_page::TimeMatcher;
-use crate::mv_page_model::node::PageType;
+use crate::mv_query::time_matcher::TimeMatcher;
 use crate::mv_record_model::record_point::RecordPointResult;
 use crate::mv_record_model::version_info::Version;
+use crate::mv_sync::smart_cell::PageType;
 use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 use crate::mv_tx_query::tx_api::IsolatedSnapShot;
@@ -109,10 +108,13 @@ impl<'a,
             let (curr_fence, curr_block)
                 = self.path.last().unwrap().clone();
 
-            match curr_block.as_page_ref() {
+            let (len, page_ref)
+                = curr_block.as_page_ref();
+
+            match page_ref {
                 PageType::IndexRef(internal_page) => {
                     let (keys_page, versions_page) = internal_page
-                        .keys_versions();
+                        .keys_versions(len);
 
                     match versions_page
                         .iter()
@@ -136,7 +138,7 @@ impl<'a,
                 }
                 PageType::LeafRef(leaf_page) => {
                     let records = leaf_page
-                        .as_records();
+                        .as_records(len);
 
                     self.buff.extend(records
                         .iter()

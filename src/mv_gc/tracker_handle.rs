@@ -1,4 +1,3 @@
-use crate::mv_page_model::internal_page::TimeMatcher;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -6,6 +5,7 @@ use std::sync::Arc;
 use crate::mv_gc::block_tracer::{DeadPageValue, BlockTrace};
 use crate::mv_gc::query_tracer::TransactionTrace;
 use crate::mv_page_model::BlockRef;
+use crate::mv_query::time_matcher::TimeMatcher;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tx_model::transaction_result::SnapShot;
 

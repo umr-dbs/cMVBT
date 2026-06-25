@@ -1,16 +1,13 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::ops::Deref;
-use std::sync::Arc;
-use std::sync::atomic::Ordering::Relaxed;
+
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::{Attempts, BlockRef};
-use crate::mv_page_model::internal_page::TimeMatcher;
-use crate::mv_page_model::node::PageType;
+use crate::mv_query::time_matcher::TimeMatcher;
+use crate::mv_sync::smart_cell::{PageType, sched_yield};
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbt::MVBTSt;
-use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_tree::smo::BlockUnsafeDegree;
 
 impl<const FAN_OUT: usize,
@@ -20,7 +17,7 @@ impl<const FAN_OUT: usize,
 > MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline]
-    pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload> {
+    pub(crate) fn traversal_write_olc(&self, key: Key) -> BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload> {
         let mut attempt = 0;
 
         loop {
@@ -44,7 +41,7 @@ impl<const FAN_OUT: usize,
     pub(crate) fn retrieve_root_write_olc(
         &self,
         mut attempts: Attempts,
-    ) -> (BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
+    ) -> (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
         Attempts)
     {
         loop {
@@ -64,23 +61,20 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn retrieve_root_write_internal_olc(&self) -> Result<
-        BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
+        BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, ()>
     {
-        let root
-            = &self.root;
-
         let mut master_guard
-            = root.borrow_read();
+            = self.root.borrow_read();
 
-        let root_block
-            = master_guard.block();
+        let root
+            = self.root.current_root();
 
-        let root_guard
-            = root_block.borrow_read();
+        let height
+            = root.height();
 
         if LOG_REORG {
             let r
-                = root_guard.deref().unsafe_degree_root();
+                = root.block.unsafe_degree_root();
 
             match r {
                 BlockUnsafeDegree::Overflow => unsafe {
@@ -92,15 +86,16 @@ impl<const FAN_OUT: usize,
                 _ => {}
             }
         }
-        match root_guard.deref().unsafe_degree_root() {
+
+        match root.block.unsafe_degree_root() {
             BlockUnsafeDegree::Overflow
             if master_guard.upgrade_write_lock()
-            => Ok(self.split_root(master_guard, root_guard, root.height())),
+            => Ok(self.split_root(master_guard, &root.block, height)),
             BlockUnsafeDegree::ActiveUnderflow
             if master_guard.upgrade_write_lock() =>
-                self.merge_root(master_guard, root_guard, root.height()),
+                self.merge_root(master_guard, &root.block, height),
             BlockUnsafeDegree::Ok
-            => Ok(root_guard),
+            => Ok(root.block),
             _ => Err(()),
         }
     }
@@ -109,8 +104,11 @@ impl<const FAN_OUT: usize,
     fn traversal_write_internal_olc(&'_ self, key: Key, attempts: Attempts)
     -> Result<BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>, Attempts>
     {
-        let (mut curr_guard,
+        let (root_block,
             attempts) = self.retrieve_root_write_olc(attempts);
+
+        let mut cursor
+            = root_block.borrow_read();
 
         let mut i =  0;
         loop {
@@ -119,10 +117,13 @@ impl<const FAN_OUT: usize,
                 i += 1;
             }
 
-            match curr_guard.as_page_ref() {
+            let (len, curr_page)
+                = cursor.as_page_ref();
+
+            match curr_page {
                 PageType::IndexRef(internal_page) => unsafe {
                     let (keys_page, versions_page) = internal_page
-                        .keys_versions();
+                        .keys_versions(len);
 
                     let index = keys_page
                         .iter()
@@ -148,7 +149,7 @@ impl<const FAN_OUT: usize,
 
                     if LOG_REORG {
                         let r
-                            = next_curr_guard.deref().unsafe_degree();
+                            = next_curr_guard.unsafe_degree();
 
                         match r {
                             BlockUnsafeDegree::Overflow =>
@@ -160,12 +161,12 @@ impl<const FAN_OUT: usize,
                     }
                     match next_curr_guard.unsafe_degree() {
                         BlockUnsafeDegree::Overflow // next_curr_guard.upgrade_write_lock() &&
-                        if curr_guard.upgrade_write_lock()
-                            => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
+                        if cursor.upgrade_write_lock()
+                            => cursor = self.on_overflow_node(cursor, next_curr_guard.cell(), index),
                         BlockUnsafeDegree::ActiveUnderflow // next_curr_guard.upgrade_write_lock() &&
-                        if  curr_guard.upgrade_write_lock()
-                        => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
-                                Ok(guard) => curr_guard = guard,
+                        if cursor.upgrade_write_lock()
+                        => match self.on_underflow_node(cursor, next_curr_guard.cell(), index) {
+                                Ok(next) => cursor = next,
                                 Err(..) => {
                                     if VERBOSE {
                                         println!("traversal_write_internal_olc: on_underflow_node Err()");
@@ -173,12 +174,12 @@ impl<const FAN_OUT: usize,
                                     return Err(attempts + 1)
                                 }
                             },
-                        BlockUnsafeDegree::Ok => curr_guard = next_curr_guard,
+                        BlockUnsafeDegree::Ok => cursor = next_curr_guard.borrow_read(),
                         _ => return Err(attempts + 1)
                     }
                 }
-                _ => return if curr_guard.upgrade_write_lock() {
-                    Ok(curr_guard)
+                _ => return if cursor.upgrade_write_lock() {
+                    Ok(cursor)
                 } else {
                     if VERBOSE {
                         println!("traversal_write_internal_olc: upgrade_write_lock Err()");

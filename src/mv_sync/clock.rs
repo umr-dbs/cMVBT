@@ -1,12 +1,12 @@
-use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
-use std::sync::OnceLock;
-use std::thread::{spawn, yield_now, JoinHandle};
-use parking_lot::Mutex;
 use crate::mv_record_model::version_info::{AtomicVersion, Version};
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::version_handle;
+use parking_lot::Mutex;
+use std::ops::Deref;
+use std::sync::OnceLock;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::thread::yield_now;
 
 pub type Tid = usize;
 
@@ -17,6 +17,10 @@ thread_local! {
 #[inline]
 pub fn __tid() -> Tid {
     STATE.with(|tid| tid.tid)
+}
+
+pub fn __destroy_writer()  {
+    STATE.with(|tid| tid.set_inactive_commit())
 }
 
 static GLOBAL_MIN: PaddedAtomicVersion
@@ -41,7 +45,7 @@ static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomicVersion>>>
     = OnceLock::new();
 
 #[repr(align(64))]
-struct PaddedAtomicVersion(AtomicVersion);
+pub struct PaddedAtomicVersion(pub AtomicVersion);
 impl Deref for PaddedAtomicVersion {
     type Target = AtomicVersion;
     fn deref(&self) -> &AtomicVersion { &self.0 }
@@ -168,12 +172,12 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
     else {
         let agg_min_commit = committed()
             .iter()
-            .take(THREAD_ID.load(Acquire))
+            .take(THREAD_ID.load(Relaxed))
             .fold(clock_time,
                   |acc, l_commit| acc.min(l_commit.load(Relaxed)));
 
         let oo_min
-            = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
+            = GLOBAL_MIN.fetch_max(agg_min_commit, Acquire);
 
         GLOBAL_DIRTY.store(false, Relaxed);
         agg_min_commit.max(oo_min)
@@ -188,8 +192,8 @@ fn thread_local_commit_inactive(id: usize) {
 #[inline]
 fn thread_local_commit(id: usize, version: Version) {
     unsafe {
-        committed().get_unchecked(id).store(version, Release);
-        GLOBAL_DIRTY.store(true, Release);
+        committed().get_unchecked(id).store(version, Relaxed);
+        GLOBAL_DIRTY.store(true, Relaxed);
     }
 }
 

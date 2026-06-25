@@ -12,7 +12,7 @@ impl<const FAN_OUT: usize,
 > Block<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     #[inline(always)]
-    pub fn into_cell(self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
-        SmartCell(Arc::new(OptCell::new(self)))
+    pub fn into_cell(self, is_leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {
+        SmartCell(Arc::new(OptCell::new_block(self, is_leaf)))
     }
 }

@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use std::mem;
 use CCBPlusTree::crud_model::crud_api::CRUDDispatcher;
 use CCBPlusTree::crud_model::crud_operation::CRUDOperation;
 use CCBPlusTree::crud_model::crud_operation_result::CRUDOperationResult;
@@ -25,7 +26,7 @@ use crate::mv_tx_model::transaction_result::SnapShot;
 pub(crate) const TREE_ROOT_MIN_KEY: Version = version_handle::START_VERSION;
 pub(crate) const TREE_ROOT_MAX_KEY: Version = Version::MAX;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ValueRootInner<
     const FANOUT: usize,
     const NUM_RECORDS: usize,
@@ -35,6 +36,16 @@ pub(crate) struct ValueRootInner<
     pub BlockRef<FANOUT, NUM_RECORDS, Key, Payload>,
     pub Height
 );
+
+impl<const FANOUT: usize,
+const NUM_RECORDS: usize,
+Key: Display + Default + Ord + Copy + Hash,
+Payload: Default + Clone> Default for ValueRootInner<FANOUT, NUM_RECORDS, Key, Payload> {
+    fn default() -> Self {
+        unreachable!()
+        // ValueRootInner(unsafe { mem::MaybeUninit::uninit().assume_init() }, INIT_TREE_HEIGHT)
+    }
+}
 
 impl<const FANOUT: usize,
     const NUM_RECORDS: usize,
@@ -85,7 +96,6 @@ impl<
     }
 }
 
-#[derive(Default)]
 pub struct RootTree<
     const FANOUT: usize,
     const NUM_RECORDS: usize,

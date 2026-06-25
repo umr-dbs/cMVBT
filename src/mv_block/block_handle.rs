@@ -4,12 +4,12 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+
+use std::sync::atomic::Ordering::Relaxed;
 use parking_lot::Mutex;
 use crate::mv_block::block::Block;
 use crate::mv_page_model::node::Node;
-use crate::mv_page_model::{BlockRef, ObjectCount};
+use crate::mv_page_model::{AtomicBlockID, BlockID, BlockRef, ObjectCount};
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::smart_cell::SmartCell;
@@ -19,7 +19,7 @@ const ENABLE_SMALL_BLOCK: bool = false;
 const MAX_ZEROS_PER_BLOCK: usize = 3964; // = data region in a mv_block // outdated due to omitted mv_block-id
 
 /// Default starting numerical value for a valid BlockID.
-// pub const START_BLOCK_ID: BlockID = BlockID::MIN;
+pub const START_BLOCK_ID: BlockID = BlockID::MIN;
 
 pub const _1KB: usize = 1024;
 pub const _2KB: usize = 2 * _1KB;
@@ -112,7 +112,7 @@ impl<const FAN_OUT: usize,
     // /// Generates and returns a new atomic (unique across callers) BlockID.
     // #[inline(always)]
     // pub(crate) fn next_block_id(&self) -> BlockID {
-    //     self.block_id_counter.fetch_add(1, Ordering::Relaxed)
+    //     self.block_id_counter.fetch_add(1, Relaxed)
     // }
 
     pub fn reset_alloc_reuse_counts(&self) {
@@ -228,20 +228,11 @@ impl<const FAN_OUT: usize,
         match self.tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
                 // self.reuse_count.fetch_add(1, Relaxed);
+                let (_is_block, block_type, _latch, len_sum)
+                    = block.meta();
 
-                let m_page
-                    = block.unsafe_borrow_mut().node_data.get_mut();
+                block.on_reuse(block_type, len_sum, leaf);
 
-                // println!("Reuse");
-                m_page.on_reuse();
-
-                if leaf {
-                    m_page.mark_leaf()
-                } else {
-                    m_page.mark_internal()
-                }
-
-                // fence(Acquire);
                 block
             }
             _ => {
@@ -250,116 +241,10 @@ impl<const FAN_OUT: usize,
                 Block {
                     // block_id: self.next_block_id(),
                     node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-                }.into_cell()
+                }.into_cell(leaf)
             }
         }
     }
-
-
-    // #[inline(always)]
-    // fn alloc_block_index(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
-    //     if let (Some(active_tx), Some(dead_pages))
-    //         = (self.active_tx.as_ref(), self.dead_pages.as_ref())
-    //     {
-    //         // println!("Enter bb {:?}", SystemTime::now());
-    //         let (.., oldest_dead_page)
-    //             = dead_pages.dispatch(CRUDOperation::PopMin);
-    //
-    //         match oldest_dead_page {
-    //             CRUDOperationResult::MatchedRecord(
-    //                 Some(RecordPoint {
-    //                          key: dead_version,
-    //                          payload: dead_block
-    //                      })
-    //             ) => match active_tx.dispatch(CRUDOperation::PeekMin) {
-    //                 (.., CRUDOperationResult::MatchedRecord(smallest_si)) => {
-    //                     if smallest_si.is_none() || dead_version.lt_self_any(smallest_si.unwrap().key()) {
-    //                         // println!("Enter cc {:?}", SystemTime::now());
-    //                         let m_page
-    //                             = dead_block.unsafe_borrow_mut().node_data.get_mut();
-    //
-    //                         m_page.on_reuse();
-    //
-    //                         if leaf {
-    //                             m_page.mark_leaf()
-    //                         } else {
-    //                             m_page.mark_internal()
-    //                         }
-    //
-    //                         // println!("Leave cc {:?}", SystemTime::now());
-    //                         return dead_block;
-    //                     } else {
-    //                         // println!("Enter aa {:?}", SystemTime::now());
-    //                         let _ = dead_pages.dispatch(
-    //                             CRUDOperation::Insert(dead_version, dead_block));
-    //                         // println!("Leave aa {:?}", SystemTime::now());
-    //                     }
-    //                 }
-    //                 _ => unreachable!()
-    //             },
-    //             _ => {}
-    //         }
-    //     }
-    //
-    //     // println!("Alloc {:?}", SystemTime::now());
-    //     Block {
-    //         // block_id: self.next_block_id(),
-    //         node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-    //     }.into_cell(latch_type)
-    // }
-    //
-    // #[inline(always)]
-    // fn alloc_block(&self, latch_type: LatchType, leaf: bool) -> BlockRef<FAN_OUT, NUM_RECORDS, Key> {
-    //     if let (Some(active_tx), Some(dead_pages))
-    //         = (self.active_tx.as_ref(), self.dead_pages.as_ref())
-    //     {
-    //         match dead_pages.try_lock() {
-    //             Some(mut guard) => {
-    //                 let front
-    //                     = guard.pop_front();
-    //
-    //                 mem::drop(guard);
-    //
-    //                 match front {
-    //                     Some((m_version, page)) => match active_tx.try_lock() {
-    //                         Some(guard_tx_si) => {
-    //                             let smallest_si = guard_tx_si
-    //                                 .peek()
-    //                                 .cloned();
-    //
-    //                             mem::drop(guard_tx_si);
-    //
-    //                             if smallest_si.is_none() || m_version.lt_self_any(smallest_si.unwrap()) {
-    //                                 let m_page
-    //                                     = page.unsafe_borrow_mut().node_data.get_mut();
-    //
-    //                                 m_page.on_reuse();
-    //
-    //                                 if leaf {
-    //                                     m_page.mark_leaf()
-    //                                 } else {
-    //                                     m_page.mark_internal()
-    //                                 }
-    //
-    //                                 return page;
-    //                             } else {
-    //                                 dead_pages.lock().push_back((m_version, page))
-    //                             }
-    //                         }
-    //                         _ => {}
-    //                     },
-    //                     _ => {}
-    //                 }
-    //             }
-    //             _ => {}
-    //         }
-    //     }
-    //
-    //     Block {
-    //         // block_id: self.next_block_id(),
-    //         node_data: SafeCell::new(if leaf { Node::new_leaf() } else { Node::new_internal() })
-    //     }.into_cell(latch_type)
-    // }
 
     #[inline]
     pub(crate) fn new_empty_leaf(&self) -> BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload> {

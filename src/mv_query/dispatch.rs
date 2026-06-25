@@ -1,19 +1,18 @@
-use std::hash::Hash;
-use std::fmt::Display;
-use std::mem;
-use std::sync::atomic::Ordering::{Acquire, Relaxed};
-use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationInnerReason::{KeyAlreadyDeleted, KeyAlreadyExists, KeyDoesNotExist};
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_query::rand_query::RAND_ATTEMPTS_MAX;
 use crate::mv_query::iter_query::RangeQueryIter;
+use crate::mv_query::rand_query::RAND_ATTEMPTS_MAX;
 use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::VersionInfo;
+use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_test::VERBOSE;
 use crate::mv_tree::mvbt::MVBTSt;
-use crate::mv_sync::smart_cell::sched_yield;
+use itertools::Itertools;
+use std::fmt::Display;
+use std::hash::Hash;
+use std::mem;
 
 pub const RANGE_DISPATCH_LAZY: bool = true;
 
@@ -31,13 +30,10 @@ impl<'a,
                 let leaf_guard =
                     self.traversal_write_olc(key);
 
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
 
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
-
-                if leaf_page.as_records()
+                if leaf_page.as_records(current_len)
                     .iter()
                     .rfind(|r| r.key == key)
                     .map(|r| !r.version.is_deleted())
@@ -46,9 +42,6 @@ impl<'a,
                     return CRUDOperationResult::ZeroAffected(KeyAlreadyExists);
                 }
 
-                let current_len
-                    = leaf_page.len();
-
                 let version
                     = self.start_tx_commit();
 
@@ -56,7 +49,7 @@ impl<'a,
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                leaf_page.commit_delta(1, 0);
+                leaf_guard.commit_delta(1, 0);
 
                 self.end_tx_commit(version);
 
@@ -66,19 +59,13 @@ impl<'a,
                 let leaf_guard =
                     self.traversal_write_olc(key);
 
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
-
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
-
-                let current_len
-                    = leaf_page.len();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
 
                 match self.tracker() {
                     Some(db_tracker) if self.has_update_in_place() => match db_tracker.newest_live_si() {
                         Some(newest_si) => match leaf_page
-                            .as_records_mut()
+                            .as_records_mut(current_len)
                             .iter_mut()
                             .rfind(|r| r.key() == key)
                         {
@@ -88,7 +75,7 @@ impl<'a,
                                 if record.version.is_deleted() {
                                     record.version_mut().undelete();
 
-                                    leaf_page.commit_delta(1, -1);
+                                    leaf_guard.commit_delta(1, -1);
                                 }
 
                                 return CRUDOperationResult::Updated(self.current_version())
@@ -96,7 +83,7 @@ impl<'a,
                             _ => { }
                         }
                         None => match leaf_page // empty live index: No readers; e.g., only updates!
-                            .as_records_mut()
+                            .as_records_mut(current_len)
                             .iter_mut()
                             .rfind(|r| r.key() == key)
                         {
@@ -105,7 +92,7 @@ impl<'a,
                                 if record.version.is_deleted() {
                                     record.version_mut().undelete();
 
-                                    leaf_page.commit_delta(1, -1);
+                                    leaf_guard.commit_delta(1, -1);
                                 }
 
                                 return CRUDOperationResult::Updated(self.current_version())
@@ -124,12 +111,12 @@ impl<'a,
                     current_len);
 
                 // soft commit for atomic visibility of new published record
-                leaf_page.commit_delta(1, 0);
+                leaf_guard.commit_delta(1, 0);
 
-                match leaf_page.delete_after_update(key, version) {
+                match leaf_page.delete(key, version, current_len) { // hides uncommitted entry
                     Ok(Some(..)) => {
                         // Apply second soft atomic commit for lifetime end
-                        leaf_page.commit_delta(-1, 1);
+                        leaf_guard.commit_delta(-1, 1);
                         self.end_tx_commit(version);
 
                         CRUDOperationResult::Updated(version)
@@ -154,13 +141,11 @@ impl<'a,
 
                 if VERBOSE {
                     println!("traverse olc end");
-                    println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.active_dead_count());
+                    println!("[key={key}] - Leaf: ({:?}) records", leaf_guard.active_dead());
                 }
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
 
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
                 
                 if VERBOSE {
                     println!("[key={key}] - Begin_commit()");
@@ -176,11 +161,12 @@ impl<'a,
                     println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
                 }
 
-                match leaf_page.delete(key, version) {
+                match leaf_page.delete(key, version, current_len) {
                     Ok(Some(..)) => {
-                        leaf_page.commit_delta(-1, 1);
+                        leaf_guard.commit_delta(-1, 1);
                         if VERBOSE {
-                            println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
+                            println!("After delete Leaf-records:\n{}",
+                                     leaf_page.as_records(current_len).iter().join("\n"));
                         }
 
                         self.end_tx_commit(version);
@@ -224,17 +210,11 @@ impl<'a,
                 let (_fence, leaf_guard) =
                     self.traversal_write_rand_query();
 
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
-
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
-
-                let current_len
-                    = leaf_page.len();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
 
                 let (live_n, _dead_n)
-                    = leaf_page.active_dead_count();
+                    = leaf_guard.active_dead();
 
                 let mut find_i
                     = rand::random_range(0..live_n as usize);
@@ -242,7 +222,7 @@ impl<'a,
                 let mut key = Key::default();
                 let payload = Payload::default();
 
-                for r in leaf_page.as_records() {
+                for r in leaf_page.as_records(current_len) {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
@@ -255,7 +235,7 @@ impl<'a,
                 match self.tracker() {
                     Some(db_tracker) if self.has_update_in_place() => match db_tracker.newest_live_si() {
                         Some(newest_si) => match leaf_page
-                            .as_records_mut()
+                            .as_records_mut(current_len)
                             .iter_mut()
                             .rfind(|r| r.key() == key)
                         {
@@ -263,21 +243,21 @@ impl<'a,
                             if record.version.insert_version > newest_si => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
-                                leaf_page.commit_delta(1, -1);
+                                leaf_guard.commit_delta(1, -1);
 
                                 return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
                             _ => { }
                         }
                         None => match leaf_page // empty live index: No readers; e.g., only updates!
-                            .as_records_mut()
+                            .as_records_mut(current_len)
                             .iter_mut()
                             .rfind(|r| r.key() == key)
                         {
                             Some(record) => {
                                 record.version_mut().undelete();
                                 *record.payload_mut() = payload;
-                                leaf_page.commit_delta(1, -1);
+                                leaf_guard.commit_delta(1, -1);
 
                                 return CRUDOperationResult::UpdatedRand(key, self.current_version_for_reader())
                             },
@@ -295,11 +275,11 @@ impl<'a,
                     current_len);
 
                 // two steps soft commit: Mark new record visible
-                leaf_page.commit_delta(1, 0);
-                match leaf_page.delete_after_update(key, version) {
+                leaf_guard.commit_delta(1, 0);
+                match leaf_page.delete(key, version, current_len) { // invisible uncommitted entry
                     Ok(Some(..)) => {
                         // second step soft commit: Correct counters
-                        leaf_page.commit_delta(-1, 1);
+                        leaf_guard.commit_delta(-1, 1);
                         self.end_tx_commit(version);
 
                         CRUDOperationResult::UpdatedRand(key, version)
@@ -318,14 +298,11 @@ impl<'a,
                 let (_fence, leaf_guard)
                     = self.traversal_write_rand_query();
 
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
-
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
 
                 let (live_n, _dead_n)
-                    = leaf_page.active_dead_count();
+                    = leaf_guard.active_dead();
 
                 let mut find_i
                     = rand::random_range(0..live_n as usize);
@@ -333,7 +310,7 @@ impl<'a,
                 let mut key
                     = Key::default();
 
-                for r in leaf_page.as_records() {
+                for r in leaf_page.as_records(current_len) {
                     if !r.version().is_deleted() {
                         if find_i == 0 {
                             key = r.key;
@@ -349,11 +326,12 @@ impl<'a,
                 if VERBOSE {
                     println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
                 }
-                match leaf_page.delete(key, version) {
+                match leaf_page.delete(key, version, current_len) {
                     Ok(Some(..)) => {
-                        leaf_page.commit_delta(-1, 1);
+                        leaf_guard.commit_delta(-1, 1);
                         if VERBOSE {
-                            println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
+                            println!("After delete Leaf-records:\n{}",
+                                     leaf_page.as_records(current_len).iter().join("\n"));
                         }
 
                         self.end_tx_commit(version);
@@ -367,11 +345,8 @@ impl<'a,
                 let (fence, leaf_guard) =
                     self.traversal_write_rand_query();
 
-                let leaf_deref_mut = leaf_guard
-                    .deref_mut();
-
-                let leaf_page
-                    = leaf_deref_mut.as_leaf_page();
+                let (current_len, leaf_page)
+                    = leaf_guard.as_leaf_page();
 
                 if size_of::<Key>() != mem::size_of::<u64>() { // Not supported
                     println!(">>>> CRUDOperation::InsertRand only supported on *u64* !");
@@ -386,7 +361,7 @@ impl<'a,
                     let generated = rand::random_range(min..=max);
                     let gen_key = unsafe { *((&generated) as * const _ as * const Key) };
 
-                    match leaf_page.as_records()
+                    match leaf_page.as_records(current_len)
                         .iter()
                         .rfind(|r| r.key == gen_key)
                     {
@@ -416,9 +391,6 @@ impl<'a,
                 }
                 let payload = Payload::default();
 
-                let current_len
-                    = leaf_page.len();
-
                 let version
                     = self.start_tx_commit();
 
@@ -426,7 +398,7 @@ impl<'a,
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
-                leaf_page.commit_delta(1, 0);
+                leaf_guard.commit_delta(1, 0);
                 self.end_tx_commit(version);
                 
                 CRUDOperationResult::InsertedRand(key, version)

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::sync::atomic::Ordering::{Acquire, Relaxed};
+use std::sync::atomic::Ordering::Relaxed;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_sync::clock::committed_read;

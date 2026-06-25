@@ -24,9 +24,19 @@ type FrugalHeadNodeLink<Payload> = ArcSwap<FrugalNodeSt<Payload>>;
 const FLAT_LEVEL: TowerLevel = 0; // all linear links
 const SENTINEL_LEVEL: TowerLevel = TowerLevel::MAX; // head starter node
 
+#[inline(always)]
+fn pick_level() -> TowerLevel {
+    const COIN_TOSS_PROBABILITY: f64 = 0.5;
+    let mut lvl: TowerLevel = 1; // tower nodes start at 1; FLAT_LEVEL = 0 is for append_next
+    while rand::random_bool(COIN_TOSS_PROBABILITY) {
+        lvl += 1;
+    }
+    lvl
+}
+
 #[derive(Default)]
 pub struct AtomicFrugalList<
-    Payload: Clone + Default + Display + Sync + Send + 'static>
+    Payload: Clone + Display + Sync + Send + 'static>
 {
     head: FrugalHeadNodeLink<Payload>, // We use handshake for arc (not refcount) loaders/posters
 }
@@ -43,7 +53,7 @@ Clone for AtomicFrugalList<Payload>
 
 #[derive(Default, Clone)]
 pub struct FrugalNodeSt<
-    Payload: Clone + Default + Display + Send + Sync + 'static>
+    Payload: Clone + Display + Send + Sync + 'static>
 {
     pub next: FrugalNodeLink<Payload>, // linear to prev versions
     pub v_ridgy: FrugalNodeLink<Payload>, // skip to prev versions
@@ -127,7 +137,7 @@ impl<Payload: Clone + Default + Display + Sync + Send + 'static> AtomicFrugalLis
         let mut new_tower_node = FrugalNodeSt::new_with(
             payload,
             insert_version,
-            curr.level.get() + 1,
+            pick_level(),
             Some(curr.clone()), // next
             None // v_ridgy
         );
