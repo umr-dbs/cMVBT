@@ -106,8 +106,16 @@ pub fn sched_yield(attempt: Attempts) {
 type LatchVersion = Version;
 type IsRead = bool;
 
+
+const PAD: usize = 56;
+#[repr(C, align(64))]
+pub struct PaddedAtomicVersionN(pub AtomicVersion, [u8; PAD]);
+impl Deref for PaddedAtomicVersionN {
+    type Target = AtomicVersion;
+    fn deref(&self) -> &AtomicVersion { &self.0 }
+}
 pub struct OptCell<E> {
-    pub cell_version: PaddedAtomicVersion,
+    pub cell_version: PaddedAtomicVersionN,
     pub cell: SafeCell<E>
 }
 
@@ -157,7 +165,7 @@ impl<const FAN_OUT: usize,
 
         OptCell {
             cell: SafeCell::new(block),
-            cell_version: PaddedAtomicVersion(AtomicVersion::new(markers)),
+            cell_version: PaddedAtomicVersionN(AtomicVersion::new(markers), [0u8; PAD]),
         }
     }
 }
@@ -169,7 +177,7 @@ impl<E> OptCell<E> {
     pub const fn new_blank(data: E) -> Self {
         Self {
             cell: SafeCell::new(data),
-            cell_version: PaddedAtomicVersion(AtomicVersion::new(Self::CELL_START_VERSION)),
+            cell_version: PaddedAtomicVersionN(AtomicVersion::new(Self::CELL_START_VERSION), [0u8; PAD]),
         }
     }
 

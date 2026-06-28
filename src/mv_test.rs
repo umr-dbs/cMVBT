@@ -1207,8 +1207,8 @@ fn load_query(query_file: &str, index: Arc<MVBT>,
 
 
 
-pub const FAN_OUT: usize = 128;
-pub const NUM_RECORDS: usize = 128;
+pub const FAN_OUT: usize = 125;
+pub const NUM_RECORDS: usize = 125;
 
 pub type MVBT = MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 

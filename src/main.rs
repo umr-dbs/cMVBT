@@ -29,6 +29,7 @@ use jemallocator::Jemalloc;
 use crate::mv_page_model::internal_page::InternalPage;
 use crate::mv_page_model::leaf_page::LeafPage;
 use crate::mv_page_model::node::Node;
+use crate::mv_sync::smart_cell::{OptCell, PaddedAtomicVersionN, SmartCell};
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -37,10 +38,12 @@ const TEST: bool = false;
 
 fn main() {
     if TEST {
+        println!("OptCell = {}", mem::size_of::<OptCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>>());
         println!("Block = {}", mem::size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>());
         println!("Node = {}", mem::size_of::<Node<FAN_OUT, NUM_RECORDS, Key, Payload>>());
         println!("InternalPage = {}", mem::size_of::<InternalPage<FAN_OUT, NUM_RECORDS, Key, Payload>>());
         println!("LeafPage = {}", mem::size_of::<LeafPage<NUM_RECORDS, Key, Payload>>());
+        print!("PaddedAtomic SmartCell: {}", mem::size_of::<PaddedAtomicVersionN>());
         return;
     }
    
