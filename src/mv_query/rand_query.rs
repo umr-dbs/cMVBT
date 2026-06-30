@@ -1,13 +1,12 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
-use std::sync::atomic::fence;
-use std::sync::atomic::Ordering::SeqCst;
-use itertools::Itertools;
+
 use crate::mv_block::block::BlockGuard;
 use crate::mv_page_model::Attempts;
-use crate::mv_page_model::internal_page::{Fence, TimeMatcher};
+use crate::mv_page_model::internal_page::Fence;
 use crate::mv_page_model::node::PageType;
+use crate::mv_page_model::time_matcher::TimeMatcher;
 use crate::mv_test;
 use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbt::MVBTSt;

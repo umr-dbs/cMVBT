@@ -1,37 +1,30 @@
 use crate::mv_crud_model::crud_operation::CRUDOperation;
-use crate::mv_tree::mvbt::MVBTSt;
-use crate::mv_tx_model::transaction::{AtomicTransaction};
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender, TryRecvError};
+use crate::mv_tree::mvbt::{MVBTSt, MVBT, Payload, Key};
+use crossbeam_channel::{unbounded, Receiver, TryRecvError};
 use itertools::{Either, Itertools};
-use rand::{Rng, RngExt};
-use std::fmt::{Display, Formatter};
+use rand::RngExt;
 use std::fs::OpenOptions;
-use std::sync::atomic::{fence, AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, SeqCst};
+use std::sync::atomic::{ AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::Arc;
-use std::{fs, hint, mem, thread};
+use std::{fs, mem, thread};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::thread::{spawn, yield_now, JoinHandle};
+use std::thread::{spawn, ThreadId};
 use std::time::{Duration, Instant, SystemTime};
 use parking_lot::Mutex;
-use rand::distr::{Alphanumeric, Distribution, Uniform};
+use rand::distr::{Alphanumeric, Distribution};
 use rand::prelude::SliceRandom;
-use rand::rngs::ThreadRng;
 use rand_distr::Zipf;
-// use crate::mv_block::block_handle::NODES_REQUEST;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-// use crate::mv_tx_query::tx_manager::TransactionManager;
-use crate::mv_page_model::node::PageType;
 use crate::mv_query::dispatch::RANGE_DISPATCH_LAZY;
 use crate::mv_root::index_root::RootIndexType;
-use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_sync::version_handle;
 use crate::mv_tx_model::transaction_result::SnapShot;
-use crate::mv_utils::crud_rate_control::{ThreadWorker, ThreadWorkerInfo};
-use crate::mv_utils::interval::Interval;
+use crate::mv_tree::mvbt::FAN_OUT;
+use crate::mv_tree::mvbt::NUM_RECORDS;
 
 pub const VERBOSE: bool = false;
 pub const LOG_REORG: bool = false;
@@ -93,7 +86,14 @@ pub static SPLITS_ROOT_COUNTER: Mutex<Vec<SnapShot>> = Mutex::new(vec![]);
 //     AtomicUsize::new(0), AtomicUsize::new(0),
 //     AtomicUsize::new(0), AtomicUsize::new(0),
 // ];
-
+pub struct ThreadWorkerInfo {
+    pub thread_id: ThreadId,
+    pub crud: CRUDOperation<Key, Payload>,
+    pub fps: usize,
+    pub load: f64,
+    pub tick_ops: usize,
+    pub total_ops: usize
+}
 fn olap_tests(index: Arc<MVBT>,
               num_olaps: usize,
               tx_per_thread: usize,
@@ -263,69 +263,69 @@ const UPDATE: u8 = 1;
 const DELETE: u8 = 2;
 
 pub(crate) fn main_insert_rate_limiter(parms: Vec<String>) {
-    let log = parms[2].parse::<bool>().unwrap_or(false);
-    let runtime_sec = parms[3].parse::<u64>().unwrap_or(10);
-    let num_workers = parms[4].parse::<usize>().unwrap_or(10);
-    let fps = parms[5].parse::<usize>().unwrap_or(100);
-    let crud = CRUDOperation::InsertRand;
-    let index = Arc::new(MVBT::default());
-    let olap_workers = parms[6].parse::<usize>().unwrap_or(10);
-    let olaps_per_worker = parms[7].parse::<usize>().unwrap_or(10);
-    let olap_skew_workers = parms[8].parse::<f32>().unwrap_or(0f32);
-    let olaps_key_range = parms[9].parse::<Key>().unwrap_or(Key::MAX);
-    let olaps_si_freshest = parms[10].parse::<bool>().unwrap_or(false);
-    let (info_sender, info_receiver)
-        = unbounded();
-
-    let file_name
-        = format!("mv_runtime_{runtime_sec}_workers_{num_workers}_fps_{fps}_crud_{crud}.csv");
-
-    let _ = fs::remove_file(file_name.as_str());
-    let mut log_file = BufWriter::new(OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create(true)
-        .open(file_name.as_str()).unwrap());
-
-    log_file.write_all(b"tid,crud,fps,load,tick_ops,total_ops\n").unwrap();
-
-    let start_time = Instant::now();
-    let workers = (0..num_workers)
-        .map(|_| ThreadWorker::new(
-            index.clone(),
-            fps,
-            crud.clone(),
-            log,
-            info_sender.clone()))
-        .collect_vec();
-
-    let signal = info_receiver.clone();
-    spawn(move || olap_tests(
-        index,
-        olap_workers,
-        olaps_per_worker,
-        olap_skew_workers,
-        Either::Left(olaps_key_range),
-        olaps_si_freshest,
-        Some(signal)));
-
-    while start_time.elapsed().as_secs() < runtime_sec {
-        match info_receiver.try_recv() {
-            Ok(info) =>
-                log_file.write_all(format!("{}\n", info).as_bytes()).unwrap(),
-            _ => thread::yield_now()
-        }
-    }
-
-    println!("Total Ops = {}", workers
-        .into_iter()
-        .map(|t| t.stop())
-        .collect_vec()
-        .into_iter()
-        .map(|handle| handle.join().unwrap())
-        .sum::<usize>());
-
-    mem::drop(info_receiver);
+    // let log = parms[2].parse::<bool>().unwrap_or(false);
+    // let runtime_sec = parms[3].parse::<u64>().unwrap_or(10);
+    // let num_workers = parms[4].parse::<usize>().unwrap_or(10);
+    // let fps = parms[5].parse::<usize>().unwrap_or(100);
+    // let crud = CRUDOperation::InsertRand;
+    // let index = Arc::new(MVBT::default());
+    // let olap_workers = parms[6].parse::<usize>().unwrap_or(10);
+    // let olaps_per_worker = parms[7].parse::<usize>().unwrap_or(10);
+    // let olap_skew_workers = parms[8].parse::<f32>().unwrap_or(0f32);
+    // let olaps_key_range = parms[9].parse::<Key>().unwrap_or(Key::MAX);
+    // let olaps_si_freshest = parms[10].parse::<bool>().unwrap_or(false);
+    // let (info_sender, info_receiver)
+    //     = unbounded();
+    // 
+    // let file_name
+    //     = format!("mv_runtime_{runtime_sec}_workers_{num_workers}_fps_{fps}_crud_{crud}.csv");
+    // 
+    // let _ = fs::remove_file(file_name.as_str());
+    // let mut log_file = BufWriter::new(OpenOptions::new()
+    //     .write(true)
+    //     .append(true)
+    //     .create(true)
+    //     .open(file_name.as_str()).unwrap());
+    // 
+    // log_file.write_all(b"tid,crud,fps,load,tick_ops,total_ops\n").unwrap();
+    // 
+    // let start_time = Instant::now();
+    // let workers = (0..num_workers)
+    //     .map(|_| ThreadWorker::new(
+    //         index.clone(),
+    //         fps,
+    //         crud.clone(),
+    //         log,
+    //         info_sender.clone()))
+    //     .collect_vec();
+    // 
+    // let signal = info_receiver.clone();
+    // spawn(move || olap_tests(
+    //     index,
+    //     olap_workers,
+    //     olaps_per_worker,
+    //     olap_skew_workers,
+    //     Either::Left(olaps_key_range),
+    //     olaps_si_freshest,
+    //     Some(signal)));
+    // 
+    // while start_time.elapsed().as_secs() < runtime_sec {
+    //     match info_receiver.try_recv() {
+    //         Ok(info) =>
+    //             log_file.write_all(format!("{}\n", info).as_bytes()).unwrap(),
+    //         _ => thread::yield_now()
+    //     }
+    // }
+    // 
+    // println!("Total Ops = {}", workers
+    //     .into_iter()
+    //     .map(|t| t.stop())
+    //     .collect_vec()
+    //     .into_iter()
+    //     .map(|handle| handle.join().unwrap())
+    //     .sum::<usize>());
+    // 
+    // mem::drop(info_receiver);
 }
 pub(crate) fn main_test(parms: Vec<String>) {
     let n = parms[2].parse().unwrap();
@@ -1214,14 +1214,6 @@ fn load_query(query_file: &str, index: Arc<MVBT>,
 
 
 
-pub const FAN_OUT: usize = 125;
-pub const NUM_RECORDS: usize = 125;
-
-pub type MVBT = MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
-
-pub type Key = u64;
-// pub type Payload = PayloadIndirection;
-pub type Payload = u64;
 
 pub const PAYLOAD_STR_LEN_MIN: usize = 704;
 pub const PAYLOAD_STR_LEN_MAX: usize = 7078;

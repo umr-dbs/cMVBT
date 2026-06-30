@@ -4,12 +4,12 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::mem;
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use parking_lot::Mutex;
 use crate::mv_block::block::Block;
 use crate::mv_page_model::node::Node;
-use crate::mv_page_model::{BlockRef, ObjectCount};
+use crate::mv_page_model::{BlockID, BlockRef, ObjectCount};
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::smart_cell::SmartCell;
@@ -27,6 +27,9 @@ pub const _4KB: usize = 4 * _1KB;
 pub const _8KB: usize = 8 * _1KB;
 pub const _16KB: usize = 16 * _1KB;
 pub const _32KB: usize = 32 * _1KB;
+
+pub type AtomicBlockID = AtomicU64;
+pub const START_BLOCK_ID: BlockID = BlockID::MIN;
 
 pub const fn bsz_alignment_min<Key, Payload>() -> usize
 where
@@ -112,7 +115,8 @@ impl<const FAN_OUT: usize,
     // /// Generates and returns a new atomic (unique across callers) BlockID.
     // #[inline(always)]
     // pub(crate) fn next_block_id(&self) -> BlockID {
-    //     self.block_id_counter.fetch_add(1, Ordering::Relaxed)
+    //     // 0
+    //     self.block_id_counter.fetch_add(1, Relaxed) // TODO:
     // }
 
     pub fn reset_alloc_reuse_counts(&self) {

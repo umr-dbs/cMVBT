@@ -1,14 +1,16 @@
 use crate::mv_block::block::Block;
-use crate::mv_test::{main_append, main_generate, main_load, main_load_cc_new, main_load_ycsb, main_sorted_insert, Key, MVBT, Payload, FAN_OUT, NUM_RECORDS, };
+use crate::mv_test::{main_append, main_generate, main_load, main_load_ycsb};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
-use std::{env, fs, mem};
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::sync::atomic::Ordering::SeqCst;
+use std::{env, fs};
+
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
+use crate::mv_tree::mvbt::Key;
+use crate::mv_tree::mvbt::NUM_RECORDS;
+use crate::mv_tree::mvbt::Payload;
+use crate::mv_tree::mvbt::{FAN_OUT, MVBT};
 
 mod mv_block;
 mod mv_crud_model;
@@ -23,7 +25,9 @@ mod mv_tx_model;
 mod mv_tx_query;
 mod mv_sync;
 mod mv_utils;
+mod mv_buffer;
 
+use crate::mv_sync::smart_cell::OptCell;
 use jemallocator::Jemalloc;
 
 #[global_allocator]
@@ -120,7 +124,7 @@ fn make_splash() {
         " |               # Current version: {}                              |",
         env!("CARGO_PKG_VERSION")
     );
-    println!(" |               -------------------------                               |");
+    println!(" |               --------------------------                              |");
     println!(
         " |               # HLE:   {}                                         |",
         hle()
@@ -150,17 +154,21 @@ fn startup() {
     println!(">>HLE: \t\t\t{}", hle());
 
     let block_size = size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>();
+    let b_kb = block_size as f32 / 1024f32;
 
-    let kb = block_size as f32 / 1024f32;
-
+    let cell_sz = size_of::<OptCell<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>>();
+    let cell_kb = cell_sz as f32 / 1024f32;
     println!(
         "\
            >>FAN_OUT: \t\t{FAN_OUT}\n\
            >>NUM_RECORDS: \t\t{NUM_RECORDS}\n\
-           >>size_of(BLOCK): \t{} bytes; {kb} kb\n\
-           >>size_of(PTR): \t{} bytes",
-        size_of::<Block<FAN_OUT, NUM_RECORDS, Key, Payload>>(),
-        mem::size_of::<*const ()>()
+           >>size_of(BLOCK): \t{} bytes; {b_kb} kb\n\
+           >>size_of(CELL): \t{} bytes; {cell_kb} kb\n\
+           >>size_of(REF): \t{} bytes; {} kb",
+        block_size,
+        cell_sz,
+        cell_sz + size_of::<usize>() * 2,
+        (cell_sz + size_of::<usize>() * 2) as f32 / 1024f32
     );
     println!("*****************************************************");
 }

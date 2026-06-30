@@ -5,8 +5,8 @@ use itertools::Itertools;
 use crate::mv_block::block::{Block, BlockGuard};
 use crate::mv_block::block_handle::BlockAllocManager;
 use crate::mv_page_model::{BlockRef, Height};
-use crate::mv_page_model::internal_page::TimeMatcher;
 use crate::mv_page_model::node::PageType;
+use crate::mv_page_model::time_matcher::TimeMatcher;
 use crate::mv_root::index_root::RootIndexGuard;
 use crate::mv_root::root::Root;
 use crate::mv_test::VERBOSE;
@@ -109,18 +109,17 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn filling_40_percent(&self) -> usize { // 40%
-        self.filling_20_percent() * 2
+        (2 * self.max_units() + 4) / 5
     }
 
     #[inline(always)]
     pub fn filling_80_percent(&self) -> usize { // 80%
-        self.filling_40_percent() * 2
+        (4 * self.max_units() + 4) / 5
     }
 
     #[inline(always)]
     pub fn filling_20_percent(&self) -> usize { // 20%
-        let max_units = self.max_units();
-        (max_units as f32 / 5_f32).ceil() as usize
+        (self.max_units() + 4) / 5
     }
 
     #[inline(always)]

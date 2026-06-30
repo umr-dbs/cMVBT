@@ -2,34 +2,11 @@ use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{addr_of, addr_of_mut};
-
+use crate::mv_page_model::BlockID;
 use crate::mv_page_model::node::Node;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_sync::smart_cell::SmartGuard;
 
-
-// impl BlockUnsafeDegree {
-//     pub const fn is_ok(&self) -> bool {
-//         match self {
-//             Self::Ok => true,
-//             _ => false
-//         }
-//     }
-// 
-//     pub const fn is_length_overflow(&self) -> bool {
-//         match self {
-//             Self::Overflow => true,
-//             _ => false
-//         }
-//     }
-// 
-//     pub const fn is_active_underflow(&self) -> bool {
-//         match self {
-//             Self::ActiveUnderflow => true,
-//             _ => false
-//         }
-//     }
-// }
 
 // #[repr(align(4096))]
 // #[repr(packed)]
@@ -53,6 +30,7 @@ impl<const FAN_OUT: usize,
 {
     fn clone(&self) -> Self {
         Self {
+            // block_id: self.block_id,
             node_data: SafeCell::new(self.node_data.as_ref().clone())
         }
     }

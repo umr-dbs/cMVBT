@@ -1,9 +1,3 @@
-use std::fmt::{Display, Formatter};
-use std::hash::Hash;
-use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicUsize, fence};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
-use itertools::Itertools;
 use crate::mv_page_model::BlockRef;
 use crate::mv_page_model::internal_page::InternalPage;
 use crate::mv_page_model::leaf_page::LeafPage;
@@ -11,17 +5,39 @@ use crate::mv_record_model::record_point::RecordPoint;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_sync::safe_cell::SafeCell;
 use crate::mv_utils::interval::Interval;
+use itertools::Itertools;
+use std::fmt::{Display, Formatter};
+use std::hash::Hash;
+use std::mem::ManuallyDrop;
+use std::sync::atomic::AtomicU32;
 
-// #[derive(Clone)]
-// pub enum Node<
-//     const FAN_OUT: usize,
-//     const NUM_RECORDS: usize,
-//     Key: Default + Ord + Copy + Hash + Display
-// > {
-//     Index(InternalPage<FAN_OUT, NUM_RECORDS, Key>),
-//     Leaf(LeafPage<NUM_RECORDS, Key>),
-// }
+pub type PageLenField       = AtomicU32;
+pub type PageLenPrimitive   = u32;
+pub type Active             = u32;
+pub type Dead               = u32;
 
+#[inline(always)]
+pub const fn from_len_sum(len: PageLenPrimitive) -> usize {
+    (active_len(len) + dead_len(len)) as usize
+}
+#[inline(always)]
+pub const fn from_len(len: PageLenPrimitive) -> (Active, Dead) {
+    (active_len(len), dead_len(len))
+}
+#[inline(always)]
+pub const fn active_len(len: PageLenPrimitive) -> Active {
+    len >> 16
+}
+#[inline(always)]
+pub const fn dead_len(len: PageLenPrimitive) -> Dead {
+    len & 0xFF_FF
+}
+#[inline(always)]
+pub const fn from_active_dead(active: Active, dead: Dead) -> PageLenPrimitive {
+    (active << 16) | dead
+}
+
+const PADDING: usize = 54;
 #[repr(C, align(64))]
 pub struct Node<
     const FAN_OUT: usize,
@@ -29,8 +45,8 @@ pub struct Node<
     Key: Default + Ord + Copy + Hash + Display,
     Payload: Clone + Default
 > {
-    m_type: AtomicUsize,
-    _pad: [u8; 56],
+    m_type: usize,
+    _pad: [u8; PADDING],
     page: SafeCell<InnerPage<FAN_OUT, NUM_RECORDS, Key, Payload>>,
 }
 
@@ -42,11 +58,11 @@ impl<const FAN_OUT: usize,
     fn drop(&mut self) {
         match self.m_type() {
             PAGE_TYPE_INTERNAL => unsafe {
-                fence(Acquire);
+                // fence(Acquire);
                 ManuallyDrop::drop(&mut self.page.internal)
             },
             PAGE_TYPE_LEAF => unsafe {
-                fence(Acquire);
+                // fence(Acquire);
                 ManuallyDrop::drop(&mut self.page.leaf)
             },
             _ => {}
@@ -92,8 +108,8 @@ impl<const FAN_OUT: usize,
     Payload: Clone + Default
 > Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     #[inline(always)]
-    pub fn m_type(&self) -> usize {
-        self.m_type.load(Relaxed)
+    pub const fn m_type(&self) -> usize {
+        self.m_type
     }
 
     #[inline(always)]
@@ -115,8 +131,8 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn new_leaf() -> Self {
         Self {
-            m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
-            _pad: [0u8; 56],
+            m_type: PAGE_TYPE_LEAF,
+            _pad: [0u8; PADDING],
             page: SafeCell::new(InnerPage {
                 leaf: ManuallyDrop::new(LeafPage::new())
             }),
@@ -126,8 +142,8 @@ impl<const FAN_OUT: usize,
     #[inline(always)]
     pub const fn new_internal() -> Self {
         Self {
-            m_type: AtomicUsize::new(PAGE_TYPE_INTERNAL),
-            _pad: [0u8; 56],
+            m_type: PAGE_TYPE_INTERNAL,
+            _pad: [0u8; PADDING],
             page: SafeCell::new(InnerPage {
                 internal: ManuallyDrop::new(InternalPage::new())
             }),
@@ -135,7 +151,7 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn is_leaf(&self) -> bool {
+    pub const fn is_leaf(&self) -> bool {
         self.m_type() == PAGE_TYPE_LEAF
     }
 
@@ -284,13 +300,13 @@ impl<const FAN_OUT: usize,
     }
 
     #[inline(always)]
-    pub fn mark_leaf(&mut self) {
-        self.m_type.store(PAGE_TYPE_LEAF, SeqCst)
+    pub const fn mark_leaf(&mut self) {
+        self.m_type = PAGE_TYPE_LEAF
     }
 
-    #[inline]
-    pub fn mark_internal(&mut self) {
-        self.m_type.store(PAGE_TYPE_INTERNAL, SeqCst)
+    #[inline(always)]
+    pub const fn mark_internal(&mut self) {
+        self.m_type = PAGE_TYPE_INTERNAL
     }
 }
 
@@ -311,8 +327,8 @@ impl<const FAN_OUT: usize,
 > Default for Node<FAN_OUT, NUM_RECORDS, Key, Payload> {
     fn default() -> Self {
         Self {
-            m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
-            _pad: [0u8; 56],
+            m_type: PAGE_TYPE_LEAF,
+            _pad: [0u8; PADDING],
             page: SafeCell::new(InnerPage { leaf: ManuallyDrop::new(LeafPage::new()) }),
         }
     }
@@ -326,16 +342,16 @@ impl<const FAN_OUT: usize,
     fn clone(&self) -> Self {
         if self.is_leaf() {
             Self {
-                m_type: AtomicUsize::new(PAGE_TYPE_LEAF),
-                _pad: [0u8; 56],
+                m_type: PAGE_TYPE_LEAF,
+                _pad: [0u8; PADDING],
                 page: SafeCell::new(InnerPage {
                     leaf: unsafe { self.page.leaf.clone() }
                 }),
             }
         } else {
             Self {
-                m_type: AtomicUsize::new(PAGE_TYPE_INTERNAL),
-                _pad: [0u8; 56],
+                m_type: PAGE_TYPE_INTERNAL,
+                _pad: [0u8; PADDING],
                 page: SafeCell::new(InnerPage {
                     internal: unsafe { self.page.internal.clone() }
                 }),

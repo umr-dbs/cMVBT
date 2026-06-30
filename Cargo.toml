@@ -1,6 +1,6 @@
 [package]
 name = "cMVBT"
-version = "0.0.109"
+version = "0.0.110"
 edition = "2024"
 authors = ["Amir Tonta <amir.tonta@mathematik.uni-marburg.de>"]
 description = "cMVBT Research Implementation"
@@ -43,6 +43,7 @@ rand = "0.10.1"
 itertools = "0.15.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision", "arc_lock"] }
 arc-swap = "1.9.1"
+dashmap = "6.2.1"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.186"
 num_cpus = "1.17"

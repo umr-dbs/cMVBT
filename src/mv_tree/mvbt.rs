@@ -7,7 +7,12 @@ use crate::mv_page_model::{Height, ObjectCount};
 use crate::mv_root::index_root::{RootIndex, RootIndexType};
 use crate::mv_sync::clock::GlobalClock;
 
-pub type LockLevel = ObjectCount;
+pub const FAN_OUT: usize        = 125;
+pub const NUM_RECORDS: usize    = 125;
+pub type Key                    = u64;
+pub type Payload                = u64;
+// pub type Payload = PayloadIndirection;
+pub type MVBT                   = MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>;
 
 pub const INIT_TREE_HEIGHT: Height = 1;
 // pub const MAX_TREE_HEIGHT: Height = Height::MAX;
