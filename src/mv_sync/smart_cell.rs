@@ -186,6 +186,14 @@ impl<'a, E: Default + 'static> Deref for SmartGuard<'a, E> {
 }
 
 impl<'a, E: Default + 'static> SmartGuard<'a, E> {
+    pub fn is_still_live(&self) -> bool {
+        match self {
+            Reader(cell, stat) =>
+                *stat == cell.0.cell_version.load(Acquire),
+            _ => true
+        }
+    }
+
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
@@ -255,7 +263,7 @@ impl<E: Default> SmartCell<E> {
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         unsafe {
             mem::transmute(
-                Reader(self, self.0.cell_version.load(Relaxed) & !WRITE_OBSOLETE_FLAG_VERSION)
+                Reader(self, self.0.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION)
             )
         }
     }

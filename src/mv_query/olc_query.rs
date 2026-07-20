@@ -142,7 +142,7 @@ impl<const FAN_OUT: usize,
                     let index
                         = index.unwrap();
 
-                    let next_curr_guard = internal_page
+                    let mut next_curr_guard = internal_page
                         .get_pointer(index)
                         .borrow_read();
 
@@ -158,12 +158,17 @@ impl<const FAN_OUT: usize,
                             _ => {}
                         }
                     }
+                    if !curr_guard.is_still_live() {
+                        return Err(attempts + 1)
+                    }
                     match next_curr_guard.unsafe_degree() {
                         BlockUnsafeDegree::Overflow // next_curr_guard.upgrade_write_lock() &&
-                        if curr_guard.upgrade_write_lock()
+                        if curr_guard.upgrade_write_lock() 
+                            && next_curr_guard.upgrade_write_lock()
                             => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
                         BlockUnsafeDegree::ActiveUnderflow // next_curr_guard.upgrade_write_lock() &&
                         if  curr_guard.upgrade_write_lock()
+                            && next_curr_guard.upgrade_write_lock()
                         => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
                                 Ok(guard) => curr_guard = guard,
                                 Err(..) => {
