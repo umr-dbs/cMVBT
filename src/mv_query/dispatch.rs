@@ -116,6 +116,16 @@ impl<'a,
                     _ => { }
                 }
 
+                // Validate before publishing anything: once the new record is soft-committed
+                // it is visible to readers, so it cannot be retracted by a failed update.
+                // The leaf is latched by us, hence the answer cannot change below.
+                match leaf_page.as_records().iter().rfind(|r| r.key == key) {
+                    None => return CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
+                    Some(r) if r.version.is_deleted() =>
+                        return CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted),
+                    Some(_) => {}
+                }
+
                 let version
                     = self.start_tx_commit();
 
@@ -126,23 +136,15 @@ impl<'a,
                 // soft commit for atomic visibility of new published record
                 leaf_page.commit_delta(1, 0);
 
-                match leaf_page.delete_after_update(key, version) {
-                    Ok(Some(..)) => {
-                        // Apply second soft atomic commit for lifetime end
-                        leaf_page.commit_delta(-1, 1);
-                        self.end_tx_commit(version);
+                leaf_page.delete_after_update(key, version)
+                    .expect("latched leaf: the validated live predecessor must still be there")
+                    .expect("latched leaf: the validated live predecessor must still be there");
 
-                        CRUDOperationResult::Updated(version)
-                    }
-                    Ok(None) => {
-                        leaf_page.undo_uncommitted(current_len);
-                        CRUDOperationResult::ZeroAffected(KeyDoesNotExist)
-                    }
-                    Err(()) => {
-                        leaf_page.undo_uncommitted(current_len);
-                        CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)
-                    }
-                }
+                // Apply second soft atomic commit for lifetime end
+                leaf_page.commit_delta(-1, 1);
+                self.end_tx_commit(version);
+
+                CRUDOperationResult::Updated(version)
             }
             CRUDOperation::Delete(key) => {
                 if VERBOSE {

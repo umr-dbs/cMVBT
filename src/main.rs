@@ -26,6 +26,9 @@ mod mv_tx_query;
 mod mv_sync;
 mod mv_utils;
 mod mv_buffer;
+mod ycsb;
+#[cfg(feature = "dexa")]
+mod dexa;
 
 use crate::mv_sync::smart_cell::OptCell;
 use jemallocator::Jemalloc;
@@ -46,6 +49,7 @@ fn main() {
             "append" => main_append(parms),
             "load" => main_load(parms),
             "load2" => main_load_ycsb(parms),
+            "ycsb" => ycsb::main_ycsb(parms),
             // "load_cc_new" => main_load_cc_new(parms),
             // "sorted_insert" => main_sorted_insert(parms),
             s => println!("Unknown Command '{s}'")

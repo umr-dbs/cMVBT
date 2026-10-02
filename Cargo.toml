@@ -24,7 +24,10 @@ overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
 
 [features]
+default = ["dexa"]
 hardware-lock-elision = []
+# Version-list baselines (Version Chains, Frugal Lists, vWeaver, skip lists) in the same binary
+dexa = ["dep:serde"]
 
 [lib]
 name = "cmvbt"
@@ -44,6 +47,7 @@ itertools = "0.15.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision", "arc_lock"] }
 arc-swap = "1.9.1"
 dashmap = "6.2.1"
+serde = { version = "1.0", features = ["derive"], optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.186"
 num_cpus = "1.17"
