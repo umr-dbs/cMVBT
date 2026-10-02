@@ -92,6 +92,10 @@ impl<'a,
             return self.buff.pop_front();
         }
 
+        if self.is_completed {
+            return None // snapshot already released; do not release it a second time
+        }
+
         let si
             = self.snapshot();
 

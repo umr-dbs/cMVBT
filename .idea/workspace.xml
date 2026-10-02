@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml">
+      <package file="$PROJECT_DIR$">
+        <feature name="default" enabled="true" />
+      </package>
+    </cargoProject>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Cleaned the treeroot wrapper." />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="68" />
+  </component>
+  <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Rust File" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;elshaikh-amir&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/umr-dbs/MV-BPlusTree.git&quot;,
+    &quot;accountId&quot;: &quot;2c015459-7930-4a16-b15a-7a78167db4aa&quot;
+  }
+}</component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="7xiq7p29" />
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 4
+}</component>
+  <component name="ProjectId" id="2ZXG0ctrovZb7AEUf6Cw9LrZnrA" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Cargo.Check.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.Run MV-BPlusTree.executor&quot;: &quot;Debug&quot;,
+    &quot;Cargo.build debug.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.build.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.check.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.clean.executor&quot;: &quot;Run&quot;,
+    &quot;CidrDebugProfileConversion&quot;: &quot;true&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/home/amir/RustroverProjects/MV-BPlusTree&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunAnythingCache">
+    <option name="myCommands">
+      <command value="cargo check" />
+      <command value="cargo build --release" />
+      <command value="cargo clean" />
+    </option>
+  </component>
+  <component name="RunManager" selected="Cargo.Run MV-BPlusTree">
+    <configuration name="Check" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="release" />
+      <option name="command" value="check" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="Run MV-BPlusTree" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="buildProfileId" value="dev" />
+      <option name="command" value="run --package MV-BPlusTree --bin MV-BPlusTree" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="build debug" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="build" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="clean" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
+      <option name="command" value="clean" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <option name="emulateTerminal" value="true" />
+      <option name="channel" value="DEFAULT" />
+      <option name="requiredFeatures" value="true" />
+      <option name="allFeatures" value="false" />
+      <option name="withSudo" value="false" />
+      <option name="buildTarget" value="REMOTE" />
+      <option name="backtrace" value="SHORT" />
+      <option name="isRedirectInput" value="false" />
+      <option name="redirectInputPath" value="" />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo.Check" />
+      <item itemvalue="Cargo.Run MV-BPlusTree" />
+      <item itemvalue="Cargo.build debug" />
+      <item itemvalue="Cargo.clean" />
+    </list>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Cargo.Run MV-BPlusTree" />
+        <item itemvalue="Cargo.clean" />
+        <item itemvalue="Cargo.build debug" />
+        <item itemvalue="Cargo.Check" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="RustProjectSettings">
+    <option name="toolchainHomeDirectory" value="$USER_HOME$/.cargo/bin" />
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="" />
+      <created>1702560788312</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1702560788312</updated>
+      <workItem from="1702560789341" duration="1051000" />
+      <workItem from="1707314882124" duration="7698000" />
+      <workItem from="1707324667457" duration="28000" />
+      <workItem from="1707829747191" duration="9000" />
+      <workItem from="1707835560834" duration="1275000" />
+      <workItem from="1707836918808" duration="13000" />
+      <workItem from="1709210276412" duration="736000" />
+      <workItem from="1709211754605" duration="3050000" />
+      <workItem from="1710510844991" duration="8590000" />
+      <workItem from="1715596845938" duration="1731000" />
+      <workItem from="1716371206163" duration="137000" />
+      <workItem from="1716371368014" duration="82000" />
+      <workItem from="1718795586713" duration="10425000" />
+      <workItem from="1723105086403" duration="1997000" />
+      <workItem from="1723196586382" duration="104000" />
+      <workItem from="1725876902434" duration="56000" />
+      <workItem from="1727869551630" duration="351000" />
+      <workItem from="1729758135902" duration="7956000" />
+      <workItem from="1729773711290" duration="1276000" />
+      <workItem from="1736767718764" duration="865000" />
+      <workItem from="1737018808343" duration="882000" />
+      <workItem from="1737024533049" duration="6374000" />
+      <workItem from="1737549748010" duration="1198000" />
+      <workItem from="1738669683390" duration="1978000" />
+      <workItem from="1741006918652" duration="1496000" />
+      <workItem from="1742216421947" duration="916000" />
+      <workItem from="1743424630756" duration="34000" />
+      <workItem from="1743424769121" duration="228000" />
+      <workItem from="1743425906090" duration="2583000" />
+      <workItem from="1744727959878" duration="110000" />
+      <workItem from="1751361014971" duration="1685000" />
+      <workItem from="1755500522247" duration="598000" />
+      <workItem from="1755501137208" duration="33000" />
+      <workItem from="1755589720825" duration="651000" />
+      <workItem from="1758282599477" duration="2651000" />
+      <workItem from="1759925371145" duration="654000" />
+      <workItem from="1764066611832" duration="792000" />
+      <workItem from="1764247306790" duration="742000" />
+      <workItem from="1769073157724" duration="1622000" />
+      <workItem from="1770893635317" duration="5447000" />
+      <workItem from="1783417675758" duration="101000" />
+      <workItem from="1783600877440" duration="74000" />
+      <workItem from="1783600976314" duration="295000" />
+      <workItem from="1783601281212" duration="728000" />
+      <workItem from="1785752363215" duration="43000" />
+      <workItem from="1785753079594" duration="462000" />
+      <workItem from="1785755118341" duration="86000" />
+      <workItem from="1785756506472" duration="162000" />
+    </task>
+    <task id="LOCAL-00001" summary="TxManager draft">
+      <option name="closed" value="true" />
+      <created>1707324687291</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1707324687291</updated>
+    </task>
+    <task id="LOCAL-00002" summary="Thanks Marius for bugfix!">
+      <option name="closed" value="true" />
+      <created>1718804513504</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1718804513504</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Thanks Marius for bugfix!">
+      <option name="closed" value="true" />
+      <created>1718806083979</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1718806083979</updated>
+    </task>
+    <task id="LOCAL-00004" summary="Cleaned the treeroot wrapper.">
+      <option name="closed" value="true" />
+      <created>1758285244801</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1758285244801</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="TxManager draft" />
+    <MESSAGE value="Thanks Marius for bugfix!" />
+    <MESSAGE value="Cleaned the treeroot wrapper." />
+    <option name="LAST_COMMIT_MESSAGE" value="Cleaned the treeroot wrapper." />
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+</project>

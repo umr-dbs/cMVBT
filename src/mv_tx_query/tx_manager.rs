@@ -129,6 +129,12 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    /// The snapshot a reader transaction is tracked under, `None` for non-readers.
+    #[inline(always)]
+    fn tracked_snapshot(&self) -> Option<SnapShot> {
+        self.snapshot().filter(|_| self.is_read())
+    }
+
     #[inline(always)]
     pub fn is_read(&self) -> bool {
         match self {
@@ -268,20 +274,10 @@ impl<const FAN_OUT: usize,
         let dispatcher
             = self.tx_dispatcher();
 
-        let deq_active_query
-            = self.db_tracker();
-
-        let si
-            = tx.snapshot();
-
-        let r = tx.execute(dispatcher);
-        if si.is_some() && deq_active_query.is_some() {
-            Self::deq_bookkeeping(deq_active_query.unwrap(), si.unwrap());
-        }
-
-        r
+        // Readers register and release their snapshot inside the dispatch.
+        tx.execute(dispatcher)
     }
-    
+
     pub fn managed(&mut self, threads: usize) {
         self.join();
         self.pool.replace(threadpool::Builder::new()
@@ -337,12 +333,8 @@ impl<const FAN_OUT: usize,
         tracker: Option<&TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>,
         tx: &TransactionHolder<FAN_OUT, NUM_RECORDS, Key, Payload>)
     {
-        if tx.is_read() {
-            match (tracker, tx.snapshot()) {
-                (Some(tracker), Some(snapshot)) =>
-                    tracker.on_tx_start(snapshot),
-                _ => {}
-            }
+        if let (Some(tracker), Some(snapshot)) = (tracker, tx.tracked_snapshot()) {
+            tracker.on_tx_start(snapshot)
         }
     }
 
@@ -391,7 +383,7 @@ impl<const FAN_OUT: usize,
                 = tx.into();
 
             let si
-                = tx.snapshot();
+                = tx.tracked_snapshot();
 
             Self::enq_bookkeeping_from_tracker(m_db_tracker.as_ref(), &tx);
 
@@ -415,7 +407,7 @@ impl<const FAN_OUT: usize,
 
         self.pool.as_ref().unwrap().execute(move || {
             let si
-                = tx.snapshot();
+                = tx.tracked_snapshot();
 
             let _ = tx.execute(dispatcher);
             if si.is_some() && deq_active_query.is_some() {
@@ -441,7 +433,7 @@ impl<const FAN_OUT: usize,
 
         self.pool.as_ref().unwrap().execute(move || {
             let si
-                = tx.snapshot();
+                = tx.tracked_snapshot();
 
             let _ = sender.send(tx.execute(dispatcher));
             if si.is_some() && deq_active_query.is_some() {

@@ -1,11 +1,13 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::atomic::fence;
+use std::sync::atomic::Ordering::SeqCst;
 
 use crate::mv_gc::block_tracer::{DeadPageValue, BlockTrace};
 use crate::mv_gc::query_tracer::TransactionTrace;
 use crate::mv_page_model::BlockRef;
-use crate::mv_page_model::time_matcher::TimeMatcher;
+use crate::mv_sync::clock::committed_snapshot;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
@@ -73,18 +75,36 @@ impl<const P_F: usize,
         self.live_tx.peek_max()
     }
 
+    /// Pins the calling reader *before* it draws its snapshot; see `TransactionTrace::pin`.
+    #[inline]
+    pub(crate) fn pin_reader(&self, lower_bound: SnapShot) -> (SnapShot, u64) {
+        let ticket = self.live_tx.pin(lower_bound);
+        fence(SeqCst);
+        ticket
+    }
+
+    #[inline]
+    pub(crate) fn unpin_reader(&self, ticket: &(SnapShot, u64)) {
+        self.live_tx.unpin(ticket)
+    }
+
+    /// Hands out the oldest dead block no reader can reach anymore, if any.
+    ///
+    /// A block that died at version `d` is still reachable by every reader with snapshot `< d`.
+    /// The bound is composed of the global committed snapshot, which lower-bounds every reader
+    /// that has not announced itself yet, and the oldest announced reader. The committed
+    /// snapshot MUST be read first: a reader announcing itself after our scan of the live
+    /// readers draws its snapshot after our read of the committed snapshot, hence cannot
+    /// observe a smaller one.
     #[inline]
     pub fn free_block(&self) -> Option<BlockRef<P_F, P_N, Key, Payload>> {
-        // self.dead_blocks.pop_min().map(|(_v, block)| block)
-        if let Some((dead_v, dead_block)) = self.dead_blocks.pop_min() {
-            match self.live_tx.peek_min() {
-                None => return Some(dead_block),
-                Some(live_min_snapshot) if dead_v.lt_self_any(live_min_snapshot) =>
-                    return Some(dead_block),
-                _ => self.register_died_page(dead_v, dead_block)
-            }
-        }
+        let committed = committed_snapshot(Version::MAX);
+        fence(SeqCst);
+        let bound = self.live_tx
+            .peek_min()
+            .map_or(committed, |live_min| live_min.min(committed));
 
-        None
+        self.dead_blocks
+            .pop_min_if(|death_version| death_version < bound)
     }
 }

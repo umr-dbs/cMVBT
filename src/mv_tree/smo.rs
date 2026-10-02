@@ -211,7 +211,7 @@ impl<const FAN_OUT: usize,
         let current_len
             = internal_page.sum_len();
 
-        match self.split(simba.deref(), &fence) {
+        let death_version = match self.split(simba.deref(), &fence) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,
@@ -235,6 +235,7 @@ impl<const FAN_OUT: usize,
                 internal_page.commit_delta(1, 1);
                 internal_page.mark_version_obsolete(child_index);
                 self.end_tx_commit(version);
+                version
             }
             BlockSplit::ByVersion(fresh) => {
                 let version
@@ -249,11 +250,15 @@ impl<const FAN_OUT: usize,
                 internal_page.commit_delta(0, 1);
                 internal_page.mark_version_obsolete(child_index);
                 self.end_tx_commit(version);
+                version
             }
-        }
+        };
 
+        // The graveyard is ordered by the version at which the node died (the reorganization
+        // version), not by the version at which it was created: readers with a snapshot older
+        // than the death version still traverse the node.
         self.block_manager.register_dead(
-            internal_page.get_version(child_index),
+            death_version,
             internal_page.get_pointer(child_index).clone());
 
         mufasa
@@ -316,11 +321,11 @@ impl<const FAN_OUT: usize,
                     .mark_version_obsolete(index_simba);
 
                 self.block_manager.register_dead_col([
-                    (mufasa_internal_page.get_version(index_simba),
-                     mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (mufasa_internal_page.get_version(index_sibling),
-                     mufasa_internal_page.get_pointer(index_sibling).clone())
-                ])
+                    (version, mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (version, mufasa_internal_page.get_pointer(index_sibling).clone())
+                ]);
+
+                self.end_tx_commit(version);
             }
             MergeResult::KeySplit(
                 index_sibling,
@@ -376,11 +381,11 @@ impl<const FAN_OUT: usize,
                     .mark_version_obsolete(index_simba);
 
                 self.block_manager.register_dead_col([
-                    (mufasa_internal_page.get_version(index_simba),
-                     mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (mufasa_internal_page.get_version(index_sibling),
-                     mufasa_internal_page.get_pointer(index_sibling).clone())
-                ])
+                    (version, mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (version, mufasa_internal_page.get_pointer(index_sibling).clone())
+                ]);
+
+                self.end_tx_commit(version);
             }
             _ => return Err(()),
         }
@@ -924,14 +929,13 @@ impl<const FAN_OUT: usize,
                 let new_root_latch
                     = new_root_block.borrow_read();
 
-                let old_v = _master_guard.version();
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height + 1));
 
                 self.end_tx_commit(version);
 
                 self.block_manager.register_dead(
-                    old_v, root_guard.inner_cell());
+                    version, root_guard.inner_cell());
 
                 new_root_latch
             }
@@ -942,14 +946,13 @@ impl<const FAN_OUT: usize,
                 let new_root_latch
                     = new_root_block.borrow_read();
 
-                let old_v = _master_guard.version();
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height));
 
                 self.end_tx_commit(version);
 
                 self.block_manager.register_dead(
-                    old_v, root_guard.inner_cell());
+                    version, root_guard.inner_cell());
 
                 new_root_latch
             }

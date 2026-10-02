@@ -162,6 +162,14 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
         }
     });
 
+    committed_snapshot(clock_time)
+}
+
+/// Side-effect free (w.r.t. the calling thread's commit slot) variant of `committed_read`.
+/// The result is monotonically non-decreasing over time, hence it lower-bounds every snapshot
+/// a reader obtains afterwards. Pass `Version::MAX` when no clock reading is at hand.
+#[inline]
+pub(crate) fn committed_snapshot(clock_time: Version) -> Version {
     if !GLOBAL_DIRTY.load(Relaxed) {
         GLOBAL_MIN.load(Relaxed)
     }

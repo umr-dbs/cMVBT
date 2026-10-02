@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::Relaxed;
 
 use crossbeam_skiplist::SkipMap;
 use crate::mv_page_model::BlockRef;
@@ -12,14 +14,17 @@ pub(crate) type DeadPageValue<const FAN_OUT: usize, const NUM_RECORDS: usize, Ke
 type BlockTracerIndex<const FAN_OUT: usize, const NUM_RECORDS: usize, Key, Payload>
 = SkipMap<DeadPageKey, DeadPageValue<FAN_OUT, NUM_RECORDS, Key, Payload>>;
 
-pub(crate) type DeadPageKey = Version;
+/// Ordered by death version first. The sequence number makes keys unique, since a single
+/// reorganization (e.g., a merge) kills several nodes at the very same version and a plain
+/// `SkipMap::insert` would silently replace (and thereby leak) the earlier one.
+pub(crate) type DeadPageKey = (Version, u64);
 
 pub(crate) struct BlockTrace<
     const P_F: usize,
     const P_N: usize,
     Key: Copy + Default + Hash + Ord + Display + 'static,
     Payload: Clone + Default + 'static>
-(BlockTracerIndex<P_F, P_N, Key, Payload>);
+(BlockTracerIndex<P_F, P_N, Key, Payload>, AtomicU64);
 
 impl<const P_F: usize,
     const P_N: usize,
@@ -39,25 +44,26 @@ impl<const P_F: usize,
     Payload: Clone + Default> BlockTrace<P_F, P_N, Key, Payload>
 {
     pub(crate) fn new() -> Self {
-        Self(SkipMap::new())
+        Self(SkipMap::new(), AtomicU64::new(0))
+    }
+
+    /// Removes and returns the oldest dead block iff `is_reclaimable(death_version)` holds.
+    /// The removal is the claim: exactly one thread wins a given block.
+    #[inline(always)]
+    pub(crate) fn pop_min_if(&self, is_reclaimable: impl FnOnce(Version) -> bool)
+        -> Option<BlockRef<P_F, P_N, Key, Payload>>
+    {
+        let entry = self.front()?;
+        if is_reclaimable(entry.key().0) && entry.remove() {
+            Some(entry.value().clone())
+        } else {
+            None
+        }
     }
 
     #[inline(always)]
-    pub(crate) fn pop_min(&self) -> Option<(DeadPageKey, BlockRef<P_F, P_N, Key, Payload>)> {
-        self.pop_front()
-            .map(|entry|
-                (*entry.key(), entry.value().clone()))
-    }
-
-    #[inline(always)]
-    pub(crate) fn peek_min(&self) -> Option<Version> {
-        self.front()
-            .map(|entry| *entry.key())
-    }
-
-    #[inline(always)]
-    pub(crate) fn register_died_page(&self, page_version: Version, page: DeadPageValue<P_F, P_N, Key, Payload>) {
-        let _ = self.insert(page_version, page);
+    pub(crate) fn register_died_page(&self, death_version: Version, page: DeadPageValue<P_F, P_N, Key, Payload>) {
+        self.insert((death_version, self.1.fetch_add(1, Relaxed)), page);
     }
 
     #[inline(always)]

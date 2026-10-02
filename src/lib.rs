@@ -132,8 +132,8 @@ pub extern "C" fn tree_gc_api_scan(
 impl MVBTreeWithGCApiExport {
     #[inline(always)]
     fn find(&self, key: *const u8, _sz: usize, value_out: *mut u8) -> bool {
-        let querying_v
-            = self.index().current_version_for_reader();
+        let (querying_v, _pin)
+            = self.index().pinned_reader_snapshot();
 
         match self.execute_on_caller_thread(AtomicTransaction::new(
             Some(querying_v),
@@ -186,8 +186,8 @@ impl MVBTreeWithGCApiExport {
 
     #[inline(always)]
     fn scan(&self, key: *const u8, _key_sz: usize, mut scan_sz: i32, mut values_out: *mut *mut u8) -> i32 {
-        let querying_v
-            = self.index().current_version_for_reader();
+        let (querying_v, _pin)
+            = self.index().pinned_reader_snapshot();
 
         let key_start = unsafe { *(key as *const u64) };
         let key_end = key_start + scan_sz as u64 - 1;
@@ -208,5 +208,89 @@ impl MVBTreeWithGCApiExport {
             }
             _ => -1
         }
+    }
+}
+#[cfg(test)]
+mod gc_stress {
+    use super::*;
+    use crate::mv_record_model::record_point::RecordPointResult;
+    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    const STABLE_STRIDE: u64 = 10; // keys divisible by this are inserted once and never touched again
+    const KEYS: u64 = 20_000;
+
+    /// Writers churn the non-stable keys (insert/delete -> constant node reorganizations, i.e.,
+    /// GC reuse), while scanners check that the committed snapshot stays intact:
+    /// every stable key shows up, keys are strictly ascending, and payload == key.
+    /// A node reused while a reader still traverses it breaks one of these.
+    #[test]
+    fn scans_stay_consistent_under_gc_reuse() {
+        let tree = Box::into_raw(Box::new(MVBTreeWithGCApiExport(
+            TransactionManager::new_unmanaged(MVBTreeApi::default(), true)))) as usize;
+
+        let api = || unsafe { &*(tree as *mut MVBTreeWithGCApiExport) };
+
+        for k in (0..KEYS).filter(|k| k % STABLE_STRIDE == 0) {
+            assert!(api().insert(&k as *const u64 as _, 8, &k as *const u64 as _, 8));
+        }
+
+        let stop = AtomicBool::new(false);
+        let violations = std::sync::atomic::AtomicUsize::new(0);
+
+        thread::scope(|s| {
+            for w in 0..4u64 {
+                let (stop, api) = (&stop, &api);
+                s.spawn(move || {
+                    let mut x = 0x9E3779B97F4A7C15u64 ^ w;
+                    while !stop.load(Relaxed) {
+                        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                        let k = x % KEYS;
+                        if k % STABLE_STRIDE == 0 { continue }
+                        if x & (1 << 40) == 0 {
+                            api().insert(&k as *const u64 as _, 8, &k as *const u64 as _, 8);
+                        } else {
+                            api().remove(&k as *const u64 as _, 8);
+                        }
+                    }
+                });
+            }
+
+            for r in 0..4u64 {
+                let (stop, api, violations) = (&stop, &api, &violations);
+                s.spawn(move || {
+                    let mut x = 0xD1B54A32D192ED03u64 ^ r;
+                    while !stop.load(Relaxed) {
+                        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                        let start = x % (KEYS - 500);
+                        let mut out: *mut u8 = ptr::null_mut();
+                        let n = api().scan(&start as *const u64 as _, 8, 500, &mut out);
+                        assert!(n >= 0);
+                        let got = unsafe {
+                            Vec::from_raw_parts(out as *mut RecordPointResult<u64, u64>, n as usize, n as usize)
+                        };
+
+                        let ascending = got.windows(2).all(|w| w[0].key < w[1].key);
+                        let payloads = got.iter().all(|r| r.payload == r.key);
+                        let stable_seen = got.iter().filter(|r| r.key % STABLE_STRIDE == 0).count() as u64;
+                        let stable_expected = (start..start + 500).filter(|k| k % STABLE_STRIDE == 0).count() as u64;
+
+                        if !(ascending && payloads && stable_seen == stable_expected) {
+                            violations.fetch_add(1, Relaxed);
+                        }
+                    }
+                });
+            }
+
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(20) && violations.load(Relaxed) == 0 {
+                thread::sleep(Duration::from_millis(100));
+            }
+            stop.store(true, Relaxed);
+        });
+
+        assert_eq!(violations.load(Relaxed), 0, "a scan observed a corrupted snapshot");
+        unsafe { drop(Box::from_raw(tree as *mut MVBTreeWithGCApiExport)) }
     }
 }
