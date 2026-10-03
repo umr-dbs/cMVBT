@@ -10,9 +10,10 @@
 #   THETAS="0 0.5 0.8 0.99 1.2 1.4"   (0 = uniform; alpha above 1 is supported)   VALUE_SIZES="1024 8"
 #   RECORDS=10000000 THREADS=32 OLAP_THREADS=16 OLAP_RANGE=10000 SECS=20 WARMUP=2 GC=false REPEATS=1
 #   RUN_TIMEOUT=3600   OUT=results/ycsb-<timestamp>   BIN=target/paper/cMVBT   QUICK=1 (tiny scale for a smoke test)
+# Every measured process is restricted to NUMA node 0 with `numactl --cpunodebind=0 --membind=0`.
 # Workload D reads the latest records (zipfian distance from the newest), E scans, churn is not YCSB (see readme); for
 # those the same alpha parameterizes the key choice.
-set -u
+set -uo pipefail
 cd "$(dirname "$0")/.."
 
 QUICK=${QUICK:-0}
@@ -33,28 +34,47 @@ else
 fi
 OUT=${OUT:-results/ycsb-$(date +%Y%m%d-%H%M%S)}
 BIN=${BIN:-target/paper/cMVBT}
+NUMACTL=${NUMACTL:-numactl}
 
-[ -x "$BIN" ] || { echo ">> building $BIN (profile paper)"; cargo build --profile paper || exit 1; }
+command -v "$NUMACTL" >/dev/null 2>&1 || { echo "error: '$NUMACTL' is required" >&2; exit 2; }
+NUMA_HARDWARE=$("$NUMACTL" --hardware 2>/dev/null) || { echo "error: cannot query NUMA topology" >&2; exit 2; }
+grep -q '^node 0 cpus:' <<< "$NUMA_HARDWARE" || { echo "error: NUMA node 0 is unavailable" >&2; exit 2; }
+if [ "$BIN" = "target/paper/cMVBT" ]; then
+  cargo build --profile paper || exit 1
+elif [ ! -x "$BIN" ]; then
+  echo "error: custom BIN '$BIN' is not executable" >&2; exit 2
+fi
 BIN=$(realpath "$BIN"); mkdir -p "$OUT"; OUT=$(realpath "$OUT")
 { echo "date: $(date -Is)"; echo "git: $(git rev-parse HEAD 2>/dev/null)"; echo "binary: $BIN"
   echo "SYSTEMS=$SYSTEMS WORKLOADS=$WORKLOADS THETAS=$THETAS VALUE_SIZES=$VALUE_SIZES RECORDS=$RECORDS THREADS=$THREADS OLAP_THREADS=$OLAP_THREADS SECS=$SECS GC=$GC"
+  echo "numa: $NUMACTL --cpunodebind=0 --membind=0"
   lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|Thread|Core|Socket"; free -g 2>/dev/null | head -2; } > "$OUT/machine.txt"
 
+failures=0
 for rep in $(seq 1 "$REPEATS"); do
  for value in $VALUE_SIZES; do
   for workload in $WORKLOADS; do
    for theta in $THETAS; do
     for system in $SYSTEMS; do
       echo ">> [$rep] $system workload=$workload theta=$theta value=${value}B" | tee -a "$OUT/log.txt"
-      timeout "$RUN_TIMEOUT" "$BIN" ycsb --system "$system" --workload "$workload" --theta "$theta" --value-size "$value" \
+      before=0
+      [ -f "$OUT/ycsb.csv" ] && before=$(wc -l < "$OUT/ycsb.csv")
+      timeout "$RUN_TIMEOUT" "$NUMACTL" --cpunodebind=0 --membind=0 "$BIN" ycsb --system "$system" --workload "$workload" --theta "$theta" --value-size "$value" \
         --records "$RECORDS" --threads "$THREADS" --olap-threads "$OLAP_THREADS" --olap-range "$OLAP_RANGE" \
         --secs "$SECS" --warmup "$WARMUP" --gc "$GC" --seed "$((41 + rep))" --csv "$OUT/ycsb.csv" >> "$OUT/log.txt" 2>&1
       rc=$?
-      [ $rc -ne 0 ] && echo "[$rep] rc=$rc: $system $workload theta=$theta value=$value" | tee -a "$OUT/failures.txt"
+      after=$before
+      [ -f "$OUT/ycsb.csv" ] && after=$(wc -l < "$OUT/ycsb.csv")
+      if [ $rc -ne 0 ] || [ "$after" -le "$before" ]; then
+        echo "[$rep] rc=$rc csv-lines=$before->$after: $system $workload theta=$theta value=$value" | tee -a "$OUT/failures.txt"
+        failures=$((failures + 1))
+      fi
     done
    done
   done
  done
 done
-echo ">> done; results in $OUT"; [ -s "$OUT/failures.txt" ] && { echo ">> FAILED RUNS:"; cat "$OUT/failures.txt"; }
-exit 0
+echo ">> done; results in $OUT"
+if [ "$failures" -ne 0 ]; then
+  echo ">> FAILED RUNS:"; cat "$OUT/failures.txt"; exit 1
+fi

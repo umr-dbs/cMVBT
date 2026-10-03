@@ -64,6 +64,15 @@ pub enum Dist {
 
 impl Dist {
     pub fn parse(name: &str, theta: f64, hot_frac: f64, hot_prob: f64) -> Result<Dist, String> {
+        if !theta.is_finite() || theta < 0.0 {
+            return Err("--theta must be a finite number >= 0".into());
+        }
+        if !hot_frac.is_finite() || !(0.0..=1.0).contains(&hot_frac) {
+            return Err("--hot-frac must be a finite number in [0, 1]".into());
+        }
+        if !hot_prob.is_finite() || !(0.0..=1.0).contains(&hot_prob) {
+            return Err("--hot-prob must be a finite number in [0, 1]".into());
+        }
         match name {
             "uniform" => Ok(Dist::Uniform),
             "zipf" | "zipfian" if theta <= 0.0 => Ok(Dist::Uniform),
@@ -262,6 +271,9 @@ impl Mix {
 
         let mut mix = [0.0; 6];
         mix.copy_from_slice(&parts);
+        if mix.iter().any(|share| !share.is_finite() || *share < 0.0) {
+            return Err("--mix components must be finite and non-negative".into());
+        }
         if (mix.iter().sum::<f64>() - 100.0).abs() > 1e-6 {
             return Err("--mix must sum to 100".into());
         }

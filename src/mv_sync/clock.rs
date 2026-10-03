@@ -1,6 +1,6 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
+use std::sync::atomic::Ordering::{Relaxed, Release};
 use std::sync::OnceLock;
 use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
@@ -114,7 +114,8 @@ impl ThreadState {
 
     fn new() -> Self {
         let tid = FREE_TIDS.lock().pop().unwrap_or_else(|| {
-            let tid = THREAD_ID.fetch_add(1, SeqCst);
+            // The atomic only reserves a unique index; every slot is statically initialized.
+            let tid = THREAD_ID.fetch_add(1, Relaxed);
             assert!(tid < MAX_THREADS, "more than {MAX_THREADS} threads use the commit clock at the same time");
             tid
         });
@@ -163,7 +164,7 @@ pub(crate) fn committed_snapshot(clock_time: Version) -> Version {
     else {
         let agg_min_commit = committed()
             .iter()
-            .take(THREAD_ID.load(Acquire))
+            .take(THREAD_ID.load(Relaxed))
             .fold(clock_time,
                   |acc, l_commit| acc.min(l_commit.load(Relaxed)));
 
@@ -210,6 +211,54 @@ impl GlobalClock {
     #[inline(always)]
     pub(crate) fn start_commit(&self) -> Version {
         STATE.with(|t_state| t_state.reset_reads());
-        self.0.fetch_add(1, SeqCst)
+        // Atomic modification order provides unique versions. Page publication uses Release/Acquire separately.
+        self.0.fetch_add(1, Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GlobalClock, Version};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    #[test]
+    fn relaxed_clock_allocates_unique_contiguous_versions_concurrently() {
+        const THREADS: usize = 8;
+        const VERSIONS_PER_THREAD: usize = 1_000;
+
+        let clock = Arc::new(GlobalClock::new());
+        let start = clock.current_version();
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut workers = Vec::with_capacity(THREADS);
+
+        for _ in 0..THREADS {
+            let clock = Arc::clone(&clock);
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                (0..VERSIONS_PER_THREAD)
+                    .map(|_| {
+                        let version = clock.start_commit();
+                        clock.end_commit(version);
+                        version
+                    })
+                    .collect::<Vec<Version>>()
+            }));
+        }
+
+        let versions = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("clock worker panicked"))
+            .collect::<Vec<_>>();
+        let unique = versions.iter().copied().collect::<HashSet<_>>();
+        let allocated = (THREADS * VERSIONS_PER_THREAD) as Version;
+
+        assert_eq!(versions.len(), allocated as usize);
+        assert_eq!(unique.len(), versions.len());
+        assert_eq!(versions.iter().copied().min(), Some(start));
+        assert_eq!(versions.iter().copied().max(), Some(start + allocated - 1));
+        assert_eq!(clock.current_version(), start + allocated);
     }
 }

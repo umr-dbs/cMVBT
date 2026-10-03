@@ -100,3 +100,58 @@ fn registered_readers_of_many_versions_all_see_their_own_snapshot() {
         tracker.unpin_reader(pin);
     }
 }
+
+#[test]
+fn lazy_historical_scan_is_exact_while_writers_reorganize_with_gc() {
+    let _serial = crate::mv_sync::TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    const N: u64 = 6000;
+    const WRITERS: u64 = 4;
+    let tree = Tree::make_standard(RootIndexType::FrugalList);
+    tree.enable_gc(false);
+    let version = (0..N).map(|k| insert(&tree, k)).last().unwrap();
+
+    let mut iter = match tree.dispatch_crud(CRUDOperation::RangeIter(Interval::new(0, u64::MAX), version)) {
+        CRUDOperationResult::MatchedRecordIter(iter) => iter,
+        _ => panic!("range iterator was not created"),
+    };
+    let mut seen: Vec<(u64, u64)> = iter.by_ref().take(17).map(|r| (r.key, r.payload)).collect();
+
+    std::thread::scope(|scope| {
+        for writer in 0..WRITERS {
+            let tree = &tree;
+            scope.spawn(move || {
+                for key in (writer..N).step_by(WRITERS as usize) {
+                    assert!(matches!(tree.dispatch_crud(CRUDOperation::Delete(key)), CRUDOperationResult::Deleted(..)));
+                    let fresh = N + key;
+                    assert!(matches!(tree.dispatch_crud(CRUDOperation::Insert(fresh, fresh)), CRUDOperationResult::Inserted(..)));
+                }
+            });
+        }
+    });
+
+    seen.extend(iter.map(|r| (r.key, r.payload)));
+    seen.sort_unstable();
+    assert_eq!(seen, (0..N).map(|k| (k, k)).collect::<Vec<_>>(),
+               "the historical iterator mixed versions, lost keys, duplicated keys, or returned a wrong payload");
+    assert_eq!(scan(&tree, tree.current_version()).len(), N as usize, "the live window changed size");
+}
+
+#[test]
+fn dropping_a_partial_lazy_scan_releases_its_snapshot() {
+    let _serial = crate::mv_sync::TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let tree = Tree::make_standard(RootIndexType::FrugalList);
+    tree.enable_gc(false);
+    let version = (0..1000u64).map(|k| insert(&tree, k)).last().unwrap();
+    let tracker = tree.tracker().unwrap();
+
+    {
+        let mut iter = match tree.dispatch_crud(CRUDOperation::RangeIter(Interval::new(0, u64::MAX), version)) {
+            CRUDOperationResult::MatchedRecordIter(iter) => iter,
+            _ => panic!("range iterator was not created"),
+        };
+        assert_eq!(tracker.newest_live_si(), Some(version));
+        assert!(iter.next().is_some());
+    }
+
+    assert_eq!(tracker.newest_live_si(), None, "dropping an unfinished iterator leaked its reader registration");
+}

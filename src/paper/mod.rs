@@ -12,8 +12,11 @@
 //! `RESULTS_CSV` (default `oltp.csv`), `EXPERIMENT` and `REPEAT` label the row.
 
 mod systems;
+mod online;
 #[cfg(test)]
 mod tests;
+
+pub use online::main_online;
 
 use std::fs::OpenOptions;
 use std::io::{BufReader, Read, Write};

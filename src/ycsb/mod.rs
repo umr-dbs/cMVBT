@@ -25,8 +25,8 @@ use stats::{Histogram, ThreadStats};
 pub(crate) use systems::parse_root_index;
 use value::ValueKind;
 use systems::{make_system, ReadOutcome, SystemOptions, YcsbIndex, SYSTEMS};
-pub(crate) use workload::Rng;
-use workload::{preset, DeleteKeys, Dist, KeyChooser, Mix, Op, OPS};
+pub(crate) use workload::{Dist, KeyChooser, Rng};
+use workload::{preset, DeleteKeys, Mix, Op, OPS};
 
 const USAGE: &str = "\
 usage: ycsb [--key value]...
@@ -76,10 +76,19 @@ struct Config {
 }
 
 fn parse_args(parms: &[String]) -> Result<Config, String> {
+    const FLAGS: [&str; 20] = [
+        "system", "workload", "mix", "records", "value-size", "threads", "load-threads",
+        "secs", "warmup", "dist", "theta", "hot-frac", "hot-prob", "scramble", "scan-len",
+        "delete", "olap-threads", "olap-range", "root-index", "gc",
+    ];
+    const EXTRA_FLAGS: [&str; 2] = ["seed", "csv"];
     let mut kv = std::collections::HashMap::new();
     let mut it = parms.iter();
     while let Some(flag) = it.next() {
         let name = flag.strip_prefix("--").ok_or_else(|| format!("expected --flag, got '{flag}'"))?;
+        if !FLAGS.contains(&name) && !EXTRA_FLAGS.contains(&name) {
+            return Err(format!("unknown option '--{name}'"));
+        }
         let value = it.next().ok_or_else(|| format!("--{name} needs a value"))?;
         kv.insert(name.to_string(), value.clone());
     }
@@ -130,8 +139,12 @@ fn parse_args(parms: &[String]) -> Result<Config, String> {
         csv: get(&kv, "csv", "ycsb.csv".to_string())?,
     };
 
-    if cfg.records < 2 || cfg.scan_len == 0 || cfg.olap_range == 0 || cfg.threads + cfg.olap_threads == 0 {
-        return Err("records >= 2, scan-len >= 1, olap-range >= 1 and at least one thread are required".into());
+    if cfg.records < 2 || cfg.scan_len == 0 || cfg.olap_range == 0 || cfg.load_threads == 0
+        || cfg.threads + cfg.olap_threads == 0 {
+        return Err("records >= 2, load-threads >= 1, scan-len >= 1, olap-range >= 1 and at least one worker thread are required".into());
+    }
+    if !cfg.secs.is_finite() || cfg.secs <= 0.0 || !cfg.warmup.is_finite() || cfg.warmup < 0.0 {
+        return Err("secs must be finite and > 0; warmup must be finite and >= 0".into());
     }
     Ok(cfg)
 }
@@ -143,7 +156,10 @@ pub fn main_ycsb(parms: Vec<String>) {
 
     match parse_args(&parms[2..]).and_then(|cfg| run(cfg)) {
         Ok(()) => {}
-        Err(e) => eprintln!("error: {e}\n\n{USAGE}\n(systems: {SYSTEMS})"),
+        Err(e) => {
+            eprintln!("error: {e}\n\n{USAGE}\n(systems: {SYSTEMS})");
+            std::process::exit(2);
+        }
     }
 }
 

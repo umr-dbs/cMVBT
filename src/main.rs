@@ -49,6 +49,7 @@ fn main() {
             "generate" => main_generate(parms),
             "append" => main_append(parms),
             "load" => paper::main_load(parms),
+            "paper-ycsb" => paper::main_online(parms),
             "load-legacy" => main_load(parms),
             "retry-exp" => paper::main_retry_exp(parms),
             "load2" => main_load_ycsb(parms),

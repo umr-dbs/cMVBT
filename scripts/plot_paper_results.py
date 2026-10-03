@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Plots the measurements of scripts/run_paper_experiments.sh like the figures of the paper.
+"""Plot the unified CSV produced by run_paper_experiments.sh.
 
-    scripts/plot_paper_results.py results/<run> [--out DIR] [--formats pdf,png]
+    scripts/plot_paper_results.py results/paper-<timestamp> [--out DIR] [--formats pdf,png]
 
-Figure 8   scan latency vs. update rate               latency.csv
-Figure 9   throughput, concurrent, without GC          concurrent_nogc.csv
-Figure 10  throughput, concurrent, with GC             concurrent_gc.csv
-Figure 11  scalability of throughput (60% updates)     scalability.csv
-Figure 12  retry probability for Zipf distributions    retries.csv
-Figure 13  node reuse vs. allocations with GC          concurrent_gc.csv (cMVBT rows)
-extra      OLTP-only throughput                        oltp_only.csv
-Repetitions are averaged; error bars show min/max. Missing CSV files are skipped.
+Creates paper Figures 5-10 (for the systems integrated in this repository) and additional
+operation- and scan-latency figures from the same measurements.
 """
 import argparse
 import sys
@@ -22,177 +16,221 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-LABELS = {"cmvbt": "cMVBT", "chain": "Version Chains", "frugal": "Frugal Lists (vWeaver)", "vweaver": "vWeaver",
-          "skiplist": "Skip Lists"}
-STYLE = {"cmvbt": ("#0072B2", "o", "-"), "chain": ("#D55E00", "s", "--"), "frugal": ("#009E73", "^", "-."),
-         "vweaver": ("#CC79A7", "v", ":"), "skiplist": ("#999999", "x", ":")}
-ORDER = ["cmvbt", "chain", "frugal", "vweaver", "skiplist"]
+LABELS = {
+    "cmvbt": "cMVBT",
+    "chain": "Version Chains",
+    "frugal": "Frugal Lists",
+    "vweaver": "vWeaver",
+    "skiplist": "Skip Lists",
+}
+STYLE = {
+    "cmvbt": ("#E41A1C", "x", "-"),
+    "chain": ("#377EB8", "o", "-"),
+    "frugal": ("#111111", "^", "-"),
+    "vweaver": ("#FF7F00", "o", "-"),
+    "skiplist": ("#984EA3", "s", "--"),
+}
+ORDER = list(LABELS)
 
-plt.rcParams.update({"font.size": 9, "axes.grid": True, "grid.alpha": 0.3, "figure.dpi": 150,
-                     "axes.spines.top": False, "axes.spines.right": False, "legend.frameon": False})
+plt.rcParams.update({
+    "font.size": 9,
+    "axes.grid": True,
+    "grid.alpha": 0.35,
+    "figure.dpi": 150,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "legend.frameon": False,
+})
 
 
-def load(run: Path, name: str):
-    path = run / name
+def read_csv(path: Path) -> pd.DataFrame | None:
     if not path.exists() or path.stat().st_size == 0:
-        print(f"skip {name}: not found", file=sys.stderr)
+        print(f"skip: {path} not found", file=sys.stderr)
         return None
     return pd.read_csv(path)
 
 
-def workload_rate(df):
-    df["update_rate"] = df["workload"].astype(int)  # workload files are named after their update rate
-    return df
-
-
-def lines(ax, df, x, y, group="system", yscale=None, order=ORDER, label=None):
-    """One line per system: mean over repetitions, min/max as error bars."""
-    for key in [k for k in order if k in set(df[group])]:
-        part = df[df[group] == key]
-        agg = part.groupby(x)[y].agg(["mean", "min", "max"]).sort_index()
-        color, marker, ls = STYLE.get(key, ("k", "o", "-"))
-        ax.errorbar(agg.index, agg["mean"], yerr=[agg["mean"] - agg["min"], agg["max"] - agg["mean"]],
-                    color=color, marker=marker, linestyle=ls, markersize=4, capsize=2, linewidth=1.3,
-                    label=(label or LABELS)[key] if isinstance(label or LABELS, dict) else key)
+def aggregate_lines(ax, data, x, y, yscale="log"):
+    for system in [name for name in ORDER if name in set(data["system"])]:
+        part = data[data["system"] == system]
+        values = part.groupby(x)[y].agg(["mean", "min", "max"]).sort_index()
+        color, marker, linestyle = STYLE[system]
+        ax.errorbar(
+            values.index,
+            values["mean"],
+            yerr=[values["mean"] - values["min"], values["max"] - values["mean"]],
+            color=color,
+            marker=marker,
+            linestyle=linestyle,
+            linewidth=1.3,
+            markersize=4,
+            capsize=2,
+            label=LABELS[system],
+        )
     if yscale:
         ax.set_yscale(yscale)
 
 
 def save(fig, out: Path, name: str, formats):
-    for fmt in formats:
-        fig.savefig(out / f"{name}.{fmt}", bbox_inches="tight")
+    for extension in formats:
+        fig.savefig(out / f"{name}.{extension}", bbox_inches="tight")
     plt.close(fig)
-    print("wrote", ", ".join(f"{name}.{f}" for f in formats))
+    print("wrote", ", ".join(f"{name}.{extension}" for extension in formats))
 
 
-def fig8_scan_latency(run, out, formats):
-    df = load(run, "latency.csv")
-    if df is None:
+def figure5(data, out, formats):
+    part = data[data["experiment"] == "fig5_scan_latency"].copy()
+    if part.empty:
         return
-    df = workload_rate(df)
-    df["avg_scan_ms"] = df["avg_scan_ns"] / 1e6
-    fig, ax = plt.subplots(figsize=(4.2, 3))
-    lines(ax, df, "update_rate", "avg_scan_ms", yscale="log")
+    part["scan_avg_ms"] = part["scan_avg_ns"] / 1e6
+    fig, ax = plt.subplots(figsize=(4.4, 3.1))
+    aggregate_lines(ax, part, "update_rate", "scan_avg_ms")
     ax.set_xlabel("Update percentage")
     ax.set_ylabel("Average scan latency [ms]")
     ax.legend()
-    save(fig, out, "fig8_scan_latency", formats)
+    save(fig, out, "fig5_scan_latency", formats)
 
 
-def throughput_figure(run, out, formats, csv, name, title):
-    df = load(run, csv)
-    if df is None:
+def throughput(data, experiment, name, out, formats):
+    part = data[data["experiment"] == experiment]
+    if part.empty:
         return
-    df = workload_rate(df)
-    secs = df["oltp_time_ns"] / 1e9
-    df["scans_per_s"] = df["scans"] / secs
-    df["oltp_per_s"] = df["oltp_ops"] / secs
-    fig, axes = plt.subplots(2, 1, figsize=(4.2, 5), sharex=True)
-    lines(axes[0], df, "update_rate", "scans_per_s", yscale="log")
-    lines(axes[1], df, "update_rate", "oltp_per_s", yscale="log")
+    fig, axes = plt.subplots(2, 1, figsize=(4.4, 5.2), sharex=True)
+    aggregate_lines(axes[0], part, "update_rate", "scan_ops_per_s")
+    aggregate_lines(axes[1], part, "update_rate", "oltp_ops_per_s")
     axes[0].set_ylabel("Scans / s")
     axes[1].set_ylabel("OLTP operations / s")
     axes[1].set_xlabel("Update percentage")
-    axes[0].set_title(title, fontsize=9)
     axes[0].legend()
     save(fig, out, name, formats)
 
 
-def fig11_scalability(run, out, formats):
-    df = load(run, "scalability.csv")
-    if df is None:
+def figure8(data, out, formats):
+    olap = data[data["experiment"] == "fig8_olap_scalability"]
+    oltp = data[data["experiment"] == "fig8_oltp_scalability"]
+    if olap.empty and oltp.empty:
         return
-    secs = df["oltp_time_ns"] / 1e9
-    df["scans_per_s"] = df["scans"] / secs
-    df["oltp_per_s"] = df["oltp_ops"] / secs
-    fig, axes = plt.subplots(1, 2, figsize=(7.5, 3))
-    for ax, y, label in ((axes[0], "oltp_per_s", "OLTP operations / s"), (axes[1], "scans_per_s", "Scans / s")):
-        lines(ax, df, "oltp_threads", y, yscale="log")
-        ax.set_xlabel("Writer threads (readers = writers / 2)")
-        ax.set_ylabel(label)
+    fig, axes = plt.subplots(2, 1, figsize=(4.5, 5.4))
+    if not olap.empty:
+        aggregate_lines(axes[0], olap, "readers", "scan_ops_per_s")
+    if not oltp.empty:
+        aggregate_lines(axes[1], oltp, "writers", "oltp_ops_per_s")
+    axes[0].set_xlabel("Concurrency level (OLAP threads)")
+    axes[0].set_ylabel("Scan throughput [tx/s]")
+    axes[1].set_xlabel("Concurrency level (OLTP threads)")
+    axes[1].set_ylabel("OLTP throughput [tx/s]")
     axes[0].legend()
-    fig.suptitle("HTAP, 60% updates", fontsize=9)
-    save(fig, out, "fig11_scalability", formats)
+    save(fig, out, "fig8_scalability", formats)
 
 
-def fig12_retries(run, out, formats):
-    df = load(run, "retries.csv")
-    if df is None:
+def figure9(run, out, formats):
+    retries = read_csv(run / "retries.csv")
+    if retries is None:
         return
     groups = ["g0", "g1_5", "g6_9", "g10_19", "g20p"]
-    names = ["0", "1-5", "6-9", "10-19", "20+"]
-    for g in groups:
-        df[g] = df[g] / df["total"]
-    fig, ax = plt.subplots(figsize=(4.4, 3))
-    cmap = plt.get_cmap("viridis")
-    alphas = sorted(df["alpha"].unique())
-    for i, alpha in enumerate(alphas):
-        mean = df[df["alpha"] == alpha][groups].mean()
-        ax.plot(names, mean.values, marker="o", markersize=4, color=cmap(i / max(1, len(alphas) - 1)),
-                label=f"α = {alpha:g}")
+    labels = ["0", "1-5", "6-9", "10-19", "20+"]
+    fig, ax = plt.subplots(figsize=(4.4, 3.1))
+    colors = plt.get_cmap("viridis")
+    alphas = sorted(retries["alpha"].unique())
+    for position, alpha in enumerate(alphas):
+        rows = retries[retries["alpha"] == alpha]
+        probability = rows[groups].div(rows["total"], axis=0).mean()
+        ax.plot(labels, probability, marker="o", linewidth=1.2,
+                color=colors(position / max(1, len(alphas) - 1)), label=f"α={alpha:g}")
     ax.set_yscale("log")
-    ax.set_xlabel("Retry group")
+    ax.set_xlabel("Retries")
     ax.set_ylabel("Probability")
     ax.legend(ncol=2, fontsize=7)
-    save(fig, out, "fig12_retry_probability", formats)
+    save(fig, out, "fig9_retry_probability", formats)
 
 
-def fig13_node_reuse(run, out, formats):
-    df = load(run, "concurrent_gc.csv")
-    if df is None:
+def figure10(data, out, formats):
+    part = data[data["experiment"] == "fig10_node_reuse"]
+    if part.empty:
         return
-    df = workload_rate(df)
-    df = df[df["system"] == "cmvbt"]
-    if df.empty:
-        return
-    fig, ax = plt.subplots(figsize=(4.2, 3))
-    for col, label, color, marker in (("blocks_reused", "Nodes reused (GC list)", "#0072B2", "o"),
-                                      ("blocks_allocated", "Nodes allocated (memory manager)", "#D55E00", "s")):
-        agg = df.groupby("update_rate")[col].mean().sort_index()
-        ax.plot(agg.index, agg.values, marker=marker, markersize=4, color=color, label=label)
+    fig, ax = plt.subplots(figsize=(4.4, 3.1))
+    for column, label, color, marker in (
+        ("blocks_reused", "Nodes reused", "#7F0000", "P"),
+        ("blocks_allocated", "Nodes allocated", "#B22222", "x"),
+    ):
+        values = part.groupby("update_rate")[column].mean().sort_index()
+        ax.plot(values.index, values.values, color=color, marker=marker, label=label)
     ax.set_yscale("log")
     ax.set_xlabel("Update percentage")
-    ax.set_ylabel("Node allocations")
+    ax.set_ylabel("Total nodes")
     ax.legend()
-    reuse = df.groupby("update_rate").apply(
-        lambda d: d["blocks_reused"].sum() / max(1, (d["blocks_reused"] + d["blocks_allocated"]).sum()),
-        include_groups=False)
-    print("node reuse share per update rate:", {int(k): f"{v:.1%}" for k, v in reuse.items()})
-    save(fig, out, "fig13_node_reuse", formats)
+    save(fig, out, "fig10_node_reuse", formats)
 
 
-def oltp_only(run, out, formats):
-    df = load(run, "oltp_only.csv")
-    if df is None:
+def latency_extras(data, out, formats):
+    for experiment, suffix in (
+        ("fig6_throughput_nogc", "nogc"),
+        ("fig7_throughput_gc", "gc"),
+    ):
+        part = data[data["experiment"] == experiment].copy()
+        if part.empty:
+            continue
+        fig, axes = plt.subplots(2, 2, figsize=(8.2, 5.8), sharex=True)
+        for ax, operation in zip(axes.flat, ["update", "insert", "delete", "scan"]):
+            part[f"{operation}_p99_us"] = part[f"{operation}_p99_ns"] / 1e3
+            aggregate_lines(ax, part, "update_rate", f"{operation}_p99_us")
+            ax.set_title(f"{operation.capitalize()} p99")
+            ax.set_xlabel("Update percentage")
+            ax.set_ylabel("Latency [µs]")
+        axes.flat[0].legend()
+        fig.tight_layout()
+        save(fig, out, f"extra_operation_latency_{suffix}", formats)
+
+        scan = part.copy()
+        fig, axes = plt.subplots(1, 3, figsize=(10.5, 3))
+        for ax, quantile in zip(axes, ["p50", "p95", "p99"]):
+            scan[f"scan_{quantile}_ms"] = scan[f"scan_{quantile}_ns"] / 1e6
+            aggregate_lines(ax, scan, "update_rate", f"scan_{quantile}_ms")
+            ax.set_title(quantile)
+            ax.set_xlabel("Update percentage")
+            ax.set_ylabel("Scan latency [ms]")
+        axes[0].legend()
+        fig.tight_layout()
+        save(fig, out, f"extra_scan_latency_{suffix}", formats)
+
+
+def distribution_groups(data):
+    """Yield one output-safe group per access distribution."""
+    if "distribution" not in data.columns or "theta" not in data.columns:
+        yield "legacy", data
         return
-    df = workload_rate(df)
-    df["oltp_per_s"] = df["oltp_ops"] / (df["oltp_time_ns"] / 1e9)
-    fig, ax = plt.subplots(figsize=(4.2, 3))
-    lines(ax, df, "update_rate", "oltp_per_s", yscale="log")
-    ax.set_xlabel("Update percentage")
-    ax.set_ylabel("OLTP operations / s")
-    ax.legend()
-    save(fig, out, "extra_oltp_only", formats)
+    for (distribution, theta), part in data.groupby(["distribution", "theta"], dropna=False):
+        if distribution == "uniform":
+            name = "uniform"
+        else:
+            name = f"zipf-{float(theta):g}"
+        yield name, part
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("run", type=Path, help="results directory of run_paper_experiments.sh")
-    ap.add_argument("--out", type=Path, help="figure directory (default: <run>/figures)")
-    ap.add_argument("--formats", default="pdf,png")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("run", type=Path)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--formats", default="pdf,png")
+    args = parser.parse_args()
 
+    data = read_csv(args.run / "paper.csv")
+    if data is None:
+        sys.exit(1)
     out = args.out or args.run / "figures"
     out.mkdir(parents=True, exist_ok=True)
-    formats = args.formats.split(",")
+    formats = [extension.strip() for extension in args.formats.split(",") if extension.strip()]
 
-    fig8_scan_latency(args.run, out, formats)
-    throughput_figure(args.run, out, formats, "concurrent_nogc.csv", "fig9_throughput_nogc", "Concurrent OLTP, without GC")
-    throughput_figure(args.run, out, formats, "concurrent_gc.csv", "fig10_throughput_gc", "Concurrent OLTP, with GC")
-    fig11_scalability(args.run, out, formats)
-    fig12_retries(args.run, out, formats)
-    fig13_node_reuse(args.run, out, formats)
-    oltp_only(args.run, out, formats)
+    for distribution, part in distribution_groups(data):
+        distribution_out = out / distribution
+        distribution_out.mkdir(parents=True, exist_ok=True)
+        figure5(part, distribution_out, formats)
+        throughput(part, "fig6_throughput_nogc", "fig6_throughput_nogc", distribution_out, formats)
+        throughput(part, "fig7_throughput_gc", "fig7_throughput_gc", distribution_out, formats)
+        figure8(part, distribution_out, formats)
+        figure10(part, distribution_out, formats)
+        latency_extras(part, distribution_out, formats)
+    figure9(args.run, out, formats)
 
 
 if __name__ == "__main__":

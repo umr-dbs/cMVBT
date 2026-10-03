@@ -1,131 +1,254 @@
 #!/usr/bin/env bash
-# Re-runs the experiments of the paper (Section 8) for the cMVBT and the version-list baselines and writes
-# the measurements as CSV files.
+# Reproduce Section 8 / Figures 5-10 with operations generated online at execution time.
+# Every measured process is restricted to NUMA node 0 for CPUs and memory.
 #
-#   scripts/run_paper_experiments.sh [experiment ...]
+#   scripts/run_paper_experiments.sh [latency|concurrent|gc|scalability|retries|allocations|all ...]
 #
-# Experiments (default: all):
-#   latency      Figure 8   scan latency vs. update rate, no GC, 100K scans over all versions   (cmvbt chain vweaver)
-#   concurrent   Figure 9   32 writers + 16 readers vs. update rate, no GC                       (cmvbt chain frugal)
-#   gc           Figure 10  as above with GC; Figure 13 (node reuse) comes from the cmvbt rows
-#   scalability  Figure 11  threads vs. throughput at 60% updates                                (cmvbt frugal)
-#   retries      Figure 12  retry probability of optimistic write traversals vs. Zipf alpha      (cmvbt)
-#   oltp         OLTP only (no readers), 32 writers, vs. update rate                             (cmvbt chain frugal)
+# Current reproduction defaults:
+#   Figure 5: 2M initial inserts, 10M writes, 100K historical full scans, no GC.
+#   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh full-scan readers.
+#   Figure 8: 60% updates; independent OLAP and OLTP thread scalability sweeps.
+#   Figure 9: 1M insertions with uniform access and Zipf alphas 0.1, 0.4, 0.8, 0.99, 1.4.
+#   Figure 10: cMVBT node allocation/reuse under the OLTP workload with GC.
 #
-# Environment:
-#   OUT=results/<timestamp>   output directory (resume into an existing one to add experiments)
-#   REPEATS=1                 repetitions of every run
-#   QUICK=1                   tiny smoke-test scale (100K operations, 2K scans, 200K insertions)
-#   RUN_TIMEOUT=7200          seconds before a single run is aborted and logged to failures.txt
-#   SLEEP=2                   pause between runs
-#   BIN=target/paper/cMVBT    binary; built with `cargo build --profile paper` if missing
-#   UPDATE_RATES="10 20 50 75 90 100"   ZIPF_ALPHAS="0 0.4 0.8 1.0 1.2 1.4"
-#   WRITERS=32 READERS=16 INIT=10000 BLOCKS=1000 SCANS=100000 RETRY_INSERTIONS=1000000
-#   SCALE_PAIRS="1:2 2:4 4:8 6:12 7:14 8:16 10:20 12:24 14:28 16:32"   (readers:writers)
-set -u
+# All online rows also contain update/insert/delete/scan count, average, p50, p95, p99,
+# p99.9 and maximum latency. The integrated systems do not include libmdbx, so the CoW
+# curves from Figures 6 and 8 cannot be reproduced by this binary.
+#
+# Environment overrides:
+#   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
+#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 WRITERS=32 READERS=16
+#   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
+#   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=100000
+#   FIG5_SYSTEMS="cmvbt chain frugal vweaver" FIG6_SYSTEMS="cmvbt chain frugal"
+#   SCALE_SYSTEMS="cmvbt chain frugal" OLAP_LEVELS="1 2 4 6 8 16 32"
+#   OLTP_LEVELS="2 4 8 16 32 64" ZIPF_ALPHAS="0 0.1 0.4 0.8 0.99 1.4"
+#   NUMACTL=numactl QUICK=1 (small smoke-test sizes)
+set -uo pipefail
 cd "$(dirname "$0")/.."
 
 QUICK=${QUICK:-0}
 REPEATS=${REPEATS:-1}
-OUT=${OUT:-results/$(date +%Y%m%d-%H%M%S)}
+OUT=${OUT:-results/paper-$(date +%Y%m%d-%H%M%S)}
+BIN=${BIN:-target/paper/cMVBT}
+NUMACTL=${NUMACTL:-numactl}
+RUN_TIMEOUT=${RUN_TIMEOUT:-7200}
+SLEEP=${SLEEP:-2}
 UPDATE_RATES=${UPDATE_RATES:-"10 20 50 75 90 100"}
-ZIPF_ALPHAS=${ZIPF_ALPHAS:-"0 0.4 0.8 1.0 1.2 1.4"}
+ZIPF_ALPHAS=${ZIPF_ALPHAS:-"0 0.1 0.4 0.8 0.99 1.4"}
+DISTRIBUTIONS=${DISTRIBUTIONS:-"uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"}
+INIT=${INIT:-2000000}
 WRITERS=${WRITERS:-32}
 READERS=${READERS:-16}
-INIT=${INIT:-10000}
-SCALE_PAIRS=${SCALE_PAIRS:-"1:2 2:4 4:8 6:12 7:14 8:16 10:20 12:24 14:28 16:32"}
-if [ "$QUICK" = 1 ]; then
-  BLOCKS=${BLOCKS:-100}; SCANS=${SCANS:-2000}; RETRY_INSERTIONS=${RETRY_INSERTIONS:-200000}; RUN_TIMEOUT=${RUN_TIMEOUT:-600}; SLEEP=${SLEEP:-0}
-else
-  BLOCKS=${BLOCKS:-1000}; SCANS=${SCANS:-100000}; RETRY_INSERTIONS=${RETRY_INSERTIONS:-1000000}; RUN_TIMEOUT=${RUN_TIMEOUT:-7200}; SLEEP=${SLEEP:-2}
-fi
-BLOCK_OPS=1000   # operations per block: BLOCKS * BLOCK_OPS operations follow the initial insertions
-BIN=${BIN:-target/paper/cMVBT}
+SCANS=${SCANS:-100000}
+LATENCY_OPERATIONS=${LATENCY_OPERATIONS:-10000000}
+THROUGHPUT_OPERATIONS=${THROUGHPUT_OPERATIONS:-1000000}
+RETRY_INSERTIONS=${RETRY_INSERTIONS:-1000000}
+FIG5_SYSTEMS=${FIG5_SYSTEMS:-"cmvbt chain frugal vweaver"}
+FIG6_SYSTEMS=${FIG6_SYSTEMS:-"cmvbt chain frugal"}
+SCALE_SYSTEMS=${SCALE_SYSTEMS:-"cmvbt chain frugal"}
+OLAP_LEVELS=${OLAP_LEVELS:-"1 2 4 6 8 16 32"}
+OLTP_LEVELS=${OLTP_LEVELS:-"2 4 8 16 32 64"}
 
-if [ ! -x "$BIN" ]; then
-  echo ">> building $BIN (profile paper)"; cargo build --profile paper || exit 1
+if [ "$QUICK" = 1 ]; then
+  INIT=1000
+  LATENCY_OPERATIONS=10000
+  THROUGHPUT_OPERATIONS=10000
+  SCANS=100
+  RETRY_INSERTIONS=10000
+  UPDATE_RATES="10 60 100"
+  OLAP_LEVELS="1 2"
+  OLTP_LEVELS="2 4"
+  RUN_TIMEOUT=600
+  SLEEP=0
+fi
+
+command -v "$NUMACTL" >/dev/null 2>&1 || { echo "error: '$NUMACTL' is required" >&2; exit 2; }
+NUMA_HARDWARE=$("$NUMACTL" --hardware 2>/dev/null) || { echo "error: cannot query NUMA topology" >&2; exit 2; }
+grep -q '^node 0 cpus:' <<< "$NUMA_HARDWARE" || {
+  echo "error: NUMA node 0 is unavailable" >&2; exit 2;
+}
+
+# Always rebuild the default binary, so a run can never silently use stale source code.
+if [ "$BIN" = "target/paper/cMVBT" ]; then
+  cargo build --profile paper || exit 1
+elif [ ! -x "$BIN" ]; then
+  echo "error: custom BIN '$BIN' is not executable" >&2
+  exit 2
 fi
 BIN=$(realpath "$BIN")
-mkdir -p "$OUT/workloads"; OUT=$(realpath "$OUT")
-LOG="$OUT/log.txt"; FAILS="$OUT/failures.txt"
+mkdir -p "$OUT"
+OUT=$(realpath "$OUT")
+CSV="$OUT/paper.csv"
+RETRY_CSV="$OUT/retries.csv"
+LOG="$OUT/log.txt"
+FAILS="$OUT/failures.txt"
 
 {
-  echo "date: $(date -Is)"; echo "git: $(git rev-parse HEAD 2>/dev/null) $(git status --porcelain 2>/dev/null | wc -l) uncommitted files"
-  echo "binary: $BIN"; echo "args: QUICK=$QUICK REPEATS=$REPEATS UPDATE_RATES=$UPDATE_RATES WRITERS=$WRITERS READERS=$READERS INIT=$INIT BLOCKS=$BLOCKS SCANS=$SCANS"
-  lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|Thread|Core|Socket"; free -g 2>/dev/null | head -2
+  echo "date: $(date -Is)"
+  echo "git: $(git rev-parse HEAD 2>/dev/null) ($(git status --porcelain 2>/dev/null | wc -l) uncommitted files)"
+  echo "binary: $BIN"
+  echo "numa: $NUMACTL --cpunodebind=0 --membind=0"
+  echo "INIT=$INIT DISTRIBUTIONS=$DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS REPEATS=$REPEATS"
+  lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|NUMA node|Thread|Core|Socket"
+  free -g 2>/dev/null | head -2
+  echo "$NUMA_HARDWARE"
 } > "$OUT/machine.txt"
 
-run() { # run <csv> <experiment> <repeat> <command...>
-  local csv=$1 exp=$2 rep=$3; shift 3
-  echo ">> [$exp #$rep] $*" | tee -a "$LOG"
-  RESULTS_CSV="$OUT/$csv" EXPERIMENT=$exp REPEAT=$rep timeout "$RUN_TIMEOUT" "$@" >> "$LOG" 2>&1
-  local rc=$?
-  if [ $rc -ne 0 ]; then echo "[$exp #$rep] rc=$rc: $*" | tee -a "$FAILS"; fi
+failures=0
+run() { # run <label> <expected-csv> <command...>
+  local label=$1 csv=$2
+  shift 2
+  local before=0 after rc
+  [ -f "$csv" ] && before=$(wc -l < "$csv")
+  echo ">> [$label] $NUMACTL --cpunodebind=0 --membind=0 $*" | tee -a "$LOG"
+  timeout "$RUN_TIMEOUT" "$NUMACTL" --cpunodebind=0 --membind=0 "$@" >> "$LOG" 2>&1
+  rc=$?
+  after=$before
+  [ -f "$csv" ] && after=$(wc -l < "$csv")
+  if [ "$rc" -ne 0 ] || [ "$after" -le "$before" ]; then
+    echo "[$label] rc=$rc csv-lines=$before->$after: $*" | tee -a "$FAILS"
+    failures=$((failures + 1))
+  fi
   sleep "$SLEEP"
 }
 
-# Workload of an update rate u: the first INIT operations are insertions, then BLOCKS blocks of 1000 operations with
-# u% updates; insertions and deletions share the rest equally, so the number of live records stays constant.
-workload() {
-  local u=$1 f="$OUT/workloads/$1.dat"
-  if [ ! -s "$f" ]; then
-    local upd=$((u * BLOCK_OPS / 100)) rest=$((BLOCK_OPS - u * BLOCK_OPS / 100))
-    echo ">> generating $f (updates $upd, inserts $((rest / 2)), deletes $((rest - rest / 2)) per block)" | tee -a "$LOG" >&2
-    "$BIN" generate "$f" "$INIT" "$BLOCKS" $((rest / 2)) "$upd" $((rest - rest / 2)) 0 >> "$LOG" 2>&1 || { rm -f "$f"; echo "generate $u failed" | tee -a "$FAILS" >&2; }
-  fi
-  echo "$f"
+online() { # label experiment repeat system distribution theta rate gc operations writers readers historical-scans scan-threads
+  local label=$1 experiment=$2 rep=$3 system=$4
+  local distribution=$5 theta=$6 rate=$7 gc=$8 operations=$9
+  shift 9
+  local writers=$1 readers=$2 historical=$3 scan_threads=$4
+  run "$label" "$CSV" "$BIN" paper-ycsb --experiment "$experiment" --repeat "$rep" \
+    --system "$system" --distribution "$distribution" --theta "$theta" --scramble true \
+    --update-rate "$rate" --gc "$gc" --records "$INIT" \
+    --operations "$operations" --writers "$writers" --readers "$readers" \
+    --historical-scans "$historical" --scan-threads "$scan_threads" \
+    --seed "$((41 + rep))" --csv "$CSV"
+}
+
+for_distribution() { # callback remaining-args...
+  local callback=$1
+  shift
+  local spec distribution theta
+  for spec in $DISTRIBUTIONS; do
+    if [[ "$spec" == zipf:* ]]; then
+      distribution=zipf
+      theta=${spec#zipf:}
+    elif [ "$spec" = uniform ]; then
+      distribution=uniform
+      theta=0
+    else
+      echo "error: bad distribution '$spec' (use uniform or zipf:<theta>)" >&2
+      exit 2
+    fi
+    "$callback" "$distribution" "$theta" "$@"
+  done
+}
+
+latency_distribution() {
+  local distribution=$1 theta=$2 rep=$3 rate=$4 system=$5
+  online "fig5/$system/$distribution$theta/u$rate/#$rep" fig5_scan_latency "$rep" "$system" \
+    "$distribution" "$theta" "$rate" false "$LATENCY_OPERATIONS" 1 0 "$SCANS" 1
 }
 
 exp_latency() {
-  for rep in $(seq 1 "$REPEATS"); do for u in $UPDATE_RATES; do f=$(workload "$u"); [ -s "$f" ] || continue
-    for sys in cmvbt chain vweaver; do
-      run latency.csv latency "$rep" "$BIN" load "$f" false 1 "$SCANS" 0 max fg false false "$INIT" "$sys"
-    done; done; done
+  for rep in $(seq 1 "$REPEATS"); do
+    for rate in $UPDATE_RATES; do
+      for system in $FIG5_SYSTEMS; do
+        for_distribution latency_distribution "$rep" "$rate" "$system"
+      done
+    done
+  done
 }
 
-exp_concurrent() { # <gc> <csv> <experiment>
-  local gc=$1 csv=$2 exp=$3
-  for rep in $(seq 1 "$REPEATS"); do for u in $UPDATE_RATES; do f=$(workload "$u"); [ -s "$f" ] || continue
-    for sys in cmvbt chain frugal; do
-      run "$csv" "$exp" "$rep" "$BIN" load "$f" true "$READERS" "$WRITERS" 0 max fg "$gc" false "$INIT" "$sys"
-    done; done; done
+exp_concurrent() { # gc experiment
+  local gc=$1 experiment=$2
+  for rep in $(seq 1 "$REPEATS"); do
+    for rate in $UPDATE_RATES; do
+      for system in $FIG6_SYSTEMS; do
+        for_distribution concurrent_distribution "$rep" "$rate" "$system" "$gc" "$experiment"
+      done
+    done
+  done
+}
+
+concurrent_distribution() {
+  local distribution=$1 theta=$2 rep=$3 rate=$4 system=$5 gc=$6 experiment=$7
+  online "$experiment/$system/$distribution$theta/u$rate/#$rep" "$experiment" "$rep" "$system" \
+    "$distribution" "$theta" "$rate" "$gc" "$THROUGHPUT_OPERATIONS" "$WRITERS" "$READERS" 0 1
+}
+
+scalability_distribution() {
+  local distribution=$1 theta=$2 rep=$3 system=$4 dimension=$5 threads=$6
+  if [ "$dimension" = olap ]; then
+    online "fig8-olap/$system/$distribution$theta/r$threads/#$rep" fig8_olap_scalability "$rep" "$system" \
+      "$distribution" "$theta" 60 false "$THROUGHPUT_OPERATIONS" "$WRITERS" "$threads" 0 1
+  else
+    online "fig8-oltp/$system/$distribution$theta/w$threads/#$rep" fig8_oltp_scalability "$rep" "$system" \
+      "$distribution" "$theta" 60 false "$THROUGHPUT_OPERATIONS" "$threads" "$READERS" 0 1
+  fi
 }
 
 exp_scalability() {
-  f=$(workload 60); [ -s "$f" ] || return
-  for rep in $(seq 1 "$REPEATS"); do for pair in $SCALE_PAIRS; do
-    r=${pair%%:*}; w=${pair##*:}
-    for sys in cmvbt frugal; do
-      run scalability.csv scalability "$rep" "$BIN" load "$f" true "$r" "$w" 0 max fg false false "$INIT" "$sys"
-    done; done; done
-}
-
-exp_oltp() {
-  for rep in $(seq 1 "$REPEATS"); do for u in $UPDATE_RATES; do f=$(workload "$u"); [ -s "$f" ] || continue
-    for sys in cmvbt chain frugal; do
-      run oltp_only.csv oltp_only "$rep" "$BIN" load "$f" true 0 "$WRITERS" 0 max fg false false "$INIT" "$sys"
-    done; done; done
+  for rep in $(seq 1 "$REPEATS"); do
+    for system in $SCALE_SYSTEMS; do
+      for readers in $OLAP_LEVELS; do
+        for_distribution scalability_distribution "$rep" "$system" olap "$readers"
+      done
+      for writers in $OLTP_LEVELS; do
+        for_distribution scalability_distribution "$rep" "$system" oltp "$writers"
+      done
+    done
+  done
 }
 
 exp_retries() {
-  for rep in $(seq 1 "$REPEATS"); do for a in $ZIPF_ALPHAS; do
-    run retries.csv retries "$rep" "$BIN" retry-exp "$WRITERS" "$RETRY_INSERTIONS" "$a"
-  done; done
+  for rep in $(seq 1 "$REPEATS"); do
+    for alpha in $ZIPF_ALPHAS; do
+      RESULTS_CSV="$RETRY_CSV" EXPERIMENT=fig9_retries REPEAT="$rep" \
+        run "fig9/alpha$alpha/#$rep" "$RETRY_CSV" "$BIN" retry-exp "$WRITERS" "$RETRY_INSERTIONS" "$alpha"
+    done
+  done
 }
 
-[ $# -eq 0 ] && set -- all
-for e in "$@"; do
-  case $e in
+exp_allocations() {
+  for rep in $(seq 1 "$REPEATS"); do
+    for rate in $UPDATE_RATES; do
+      for_distribution allocation_distribution "$rep" "$rate"
+    done
+  done
+}
+
+
+allocation_distribution() {
+  local distribution=$1 theta=$2 rep=$3 rate=$4
+  online "fig10/$distribution$theta/u$rate/#$rep" fig10_node_reuse "$rep" cmvbt \
+    "$distribution" "$theta" "$rate" true "$THROUGHPUT_OPERATIONS" "$WRITERS" 0 0 1
+}
+
+[ "$#" -eq 0 ] && set -- all
+for experiment in "$@"; do
+  case "$experiment" in
     latency) exp_latency ;;
-    concurrent) exp_concurrent false concurrent_nogc.csv concurrent_nogc ;;
-    gc) exp_concurrent true concurrent_gc.csv concurrent_gc ;;
+    concurrent) exp_concurrent false fig6_throughput_nogc ;;
+    gc) exp_concurrent true fig7_throughput_gc ;;
     scalability) exp_scalability ;;
     retries) exp_retries ;;
-    oltp) exp_oltp ;;
-    all) exp_latency; exp_concurrent false concurrent_nogc.csv concurrent_nogc; exp_concurrent true concurrent_gc.csv concurrent_gc
-         exp_scalability; exp_retries; exp_oltp ;;
-    *) echo "unknown experiment '$e'" >&2; exit 2 ;;
+    allocations) exp_allocations ;;
+    all)
+      exp_latency
+      exp_concurrent false fig6_throughput_nogc
+      exp_concurrent true fig7_throughput_gc
+      exp_scalability
+      exp_retries
+      exp_allocations
+      ;;
+    *) echo "unknown experiment '$experiment'" >&2; exit 2 ;;
   esac
 done
-echo ">> done; results in $OUT"; [ -s "$FAILS" ] && { echo ">> FAILED RUNS:"; cat "$FAILS"; }
-exit 0
+
+if [ "$failures" -ne 0 ]; then
+  echo ">> $failures run(s) failed; see $FAILS" >&2
+  exit 1
+fi
+echo ">> complete: results in $OUT"

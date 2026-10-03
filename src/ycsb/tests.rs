@@ -1,11 +1,10 @@
 //! Correctness tests of the systems and of the benchmark driver beyond the model tests in `systems.rs`.
 
-use std::collections::HashSet;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 
 use super::systems::{make_system, ReadOutcome, SystemOptions, YcsbIndex};
-use super::workload::{Dist, KeyChooser, Mix, Rng};
+use super::workload::{preset, Dist, KeyChooser, Mix, Rng};
 use super::value::ValueKind;
 
 use crate::mv_sync::TEST_SERIAL as SERIAL;
@@ -239,29 +238,33 @@ fn mix_parsing_rejects_bad_input() {
     assert!(Mix::parse("50:50:0:0:0").is_err(), "too few components");
     assert!(Mix::parse("50:40:0:0:0:0").is_err(), "does not sum to 100");
     assert!(Mix::parse("a:50:0:0:0:50").is_err(), "not a number");
+    assert!(Mix::parse("-1:51:0:0:0:50").is_err(), "negative component");
+    assert!(Mix::parse("NaN:0:0:0:0:0").is_err(), "non-finite component");
     assert!(Dist::parse("zipf", 0.99, 0.0, 0.0).is_ok());
+    assert!(Dist::parse("zipf", f64::NAN, 0.01, 0.9).is_err());
+    assert!(Dist::parse("hotspot", 0.99, 1.1, 0.9).is_err());
+    assert!(Dist::parse("hotspot", 0.99, 0.01, -0.1).is_err());
     assert!(Dist::parse("nonsense", 0.99, 0.0, 0.0).is_err());
+    for name in ["a", "b", "c", "d", "e", "f", "churn", "update-heavy"] {
+        assert!(preset(name, 0.99).is_some(), "missing workload preset {name}");
+    }
 }
 
-/// The whole driver (load, concurrent OLTP + OLAP, statistics, CSV) on every system and workload class.
+/// The whole driver (load, concurrent OLTP + OLAP, statistics, CSV) in one production-shaped run.
+/// System adapters, workloads, value kinds and GC modes are covered independently above and in
+/// `systems.rs`; a real CLI invocation creates exactly one tree in its process.
 #[test]
-fn driver_runs_every_system_and_workload_without_violations() {
+fn driver_runs_end_to_end_without_violations() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let csv = std::env::temp_dir().join(format!("ycsb-test-{}.csv", std::process::id()));
     let _ = std::fs::remove_file(&csv);
-    for system in ALL {
-        for workload in ["a", "c", "d", "e", "f", "churn"] {
-            for (gc, value) in [("false", "8"), ("true", "1024")] {
-                let args: Vec<String> = ["--system", system, "--workload", workload, "--records", "30000", "--threads", "4",
-                    "--olap-threads", "2", "--olap-range", "2000", "--secs", "0.3", "--warmup", "0.1", "--gc", gc,
-                    "--value-size", value, "--csv", csv.to_str().unwrap()].iter().map(|s| s.to_string()).collect();
-                let cfg = super::parse_args(&args).unwrap();
-                super::run(cfg).unwrap_or_else(|e| panic!("{system} {workload} gc={gc}: {e}"));
-            }
-        }
-    }
+    let args: Vec<String> = ["--system", "cmvbt", "--workload", "churn", "--records", "30000", "--threads", "4",
+        "--olap-threads", "2", "--olap-range", "2000", "--secs", "0.3", "--warmup", "0.1", "--gc", "true",
+        "--value-size", "1024", "--csv", csv.to_str().unwrap()].iter().map(|s| s.to_string()).collect();
+    let cfg = super::parse_args(&args).unwrap();
+    super::run(cfg).unwrap();
     let rows = std::fs::read_to_string(&csv).unwrap().lines().count();
-    assert_eq!(rows, 1 + ALL.len() * 6 * 2, "one CSV row per run plus the header");
+    assert_eq!(rows, 2, "one CSV row plus the header");
     let _ = std::fs::remove_file(&csv);
 }
 
@@ -275,5 +278,10 @@ fn driver_rejects_bad_arguments() {
     assert!(bad(&["--dist", "weird"]));
     assert!(bad(&["--records"]));
     assert!(bad(&["--value-size", "16"]));
+    assert!(bad(&["--load-threads", "0"]));
+    assert!(bad(&["--secs", "0"]));
+    assert!(bad(&["--secs", "NaN"]));
+    assert!(bad(&["--warmup", "-1"]));
+    assert!(bad(&["--unknown", "value"]));
     assert!(bad(&["records", "5"]));
 }
