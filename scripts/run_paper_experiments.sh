@@ -5,7 +5,7 @@
 #   scripts/run_paper_experiments.sh [latency|concurrent|gc|scalability|retries|allocations|all ...]
 #
 # Current reproduction defaults:
-#   Figure 5: 2M initial inserts, 10M writes, 100K historical full scans, no GC.
+#   Figure 5: 2M initial inserts, 10M writes, 10K historical full scans, no GC.
 #   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh full-scan readers.
 #   Figure 8: 60% updates; independent OLAP and OLTP thread scalability sweeps.
 #   Figure 9: 1M insertions with uniform access and Zipf alphas 0.1, 0.4, 0.8, 0.99, 1.4.
@@ -19,7 +19,7 @@
 #   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
 #   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 WRITERS=32 READERS=16
 #   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
-#   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=100000
+#   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=10000
 #   FIG5_SYSTEMS="cmvbt chain frugal vweaver" FIG6_SYSTEMS="cmvbt chain frugal"
 #   SCALE_SYSTEMS="cmvbt chain frugal" OLAP_LEVELS="1 2 4 6 8 16 32"
 #   OLTP_LEVELS="2 4 8 16 32 64" ZIPF_ALPHAS="0 0.1 0.4 0.8 0.99 1.4"
@@ -40,7 +40,7 @@ DISTRIBUTIONS=${DISTRIBUTIONS:-"uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zip
 INIT=${INIT:-2000000}
 WRITERS=${WRITERS:-32}
 READERS=${READERS:-16}
-SCANS=${SCANS:-100000}
+SCANS=${SCANS:-10000}
 LATENCY_OPERATIONS=${LATENCY_OPERATIONS:-10000000}
 THROUGHPUT_OPERATIONS=${THROUGHPUT_OPERATIONS:-1000000}
 RETRY_INSERTIONS=${RETRY_INSERTIONS:-1000000}
