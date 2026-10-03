@@ -319,7 +319,9 @@ impl<const FAN_OUT: usize,
                             }
                             write_idx += 1;
                         } else {
-                            ptr::drop_in_place(read_ptr);
+                            // Concurrent readers may still traverse this record's version list (optimistic
+                            // reads are only validated afterwards), so it must not be freed here.
+                            self.limbo.lock().push(ptr::read(read_ptr));
                         }
                     }
                     records.set_len(write_idx);
@@ -814,7 +816,9 @@ impl<const FAN_OUT: usize,
                             }
                             write_idx += 1;
                         } else {
-                            ptr::drop_in_place(read_ptr);
+                            // Concurrent readers may still traverse this record's version list (optimistic
+                            // reads are only validated afterwards), so it must not be freed here.
+                            self.limbo.lock().push(ptr::read(read_ptr));
                         }
                     }
                     records.set_len(write_idx);

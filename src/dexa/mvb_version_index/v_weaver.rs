@@ -348,6 +348,7 @@ impl<const FAN_OUT: usize,
                     continue;
                 }
 
+                let lower_before = interval.lower;
                 let recs_slice = unsafe {
                     leaf_guard.deref_unsafe() }.unwrap().as_records();
                 let start
@@ -395,7 +396,9 @@ impl<const FAN_OUT: usize,
                     _ => interval.lower = (self.inc_key)(leaf_fence.upper)
                 }
 
-                if interval.lower > interval.upper { // checked after dispatch; the interval is inclusive
+                // The interval is inclusive. `inc_key` saturates, so a scan up to Key::MAX that ends in an
+                // empty last leaf would otherwise never terminate: stop when the lower bound cannot advance.
+                if interval.lower > interval.upper || interval.lower <= lower_before {
                     break
                 }
             }

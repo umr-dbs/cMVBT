@@ -27,6 +27,7 @@ mod mv_sync;
 mod mv_utils;
 mod mv_buffer;
 mod ycsb;
+mod paper;
 #[cfg(feature = "dexa")]
 mod dexa;
 
@@ -47,7 +48,9 @@ fn main() {
             "" | "test" => test(),
             "generate" => main_generate(parms),
             "append" => main_append(parms),
-            "load" => main_load(parms),
+            "load" => paper::main_load(parms),
+            "load-legacy" => main_load(parms),
+            "retry-exp" => paper::main_retry_exp(parms),
             "load2" => main_load_ycsb(parms),
             "ycsb" => ycsb::main_ycsb(parms),
             // "load_cc_new" => main_load_cc_new(parms),

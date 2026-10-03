@@ -59,18 +59,21 @@ impl<Payload: Clone + Default + Display + Sync + Send + 'static> Iterator for Ve
 }
 
 impl<Payload: Clone + Default + Display + Sync + Send + 'static> Clone for AtomicVersionList<Payload> {
+    /// Deep copy that keeps the deletion version of every entry. (The previous version re-appended all but the
+    /// oldest entry as live ones, so cloning a record, e.g., when merging underflowing leaves, resurrected
+    /// deleted keys.)
     fn clone(&self) -> Self {
-        let mut iter
-            = self.iter().collect_vec();
+        let mut head: *const VersionedEntry<Payload> = null();
+        for (payload, insert_version, del_version) in self.iter().collect_vec().into_iter().rev() {
+            head = Box::into_raw(Box::new(VersionedEntry {
+                next: head,
+                payload,
+                insert_version,
+                del_version: Cell::new(del_version),
+            }));
+        }
 
-        let last = iter.pop().unwrap();
-        let list = Self::new(
-            last.0, last.1, if last.2 == Version::MAX { None } else { Some(last.2) });
-
-        iter.into_iter().rev().for_each(|(p, i, _)|
-            list.append(i, p));
-
-        list
+        Self { head: AtomicPtr::new(head as *mut _) }
     }
 }
 

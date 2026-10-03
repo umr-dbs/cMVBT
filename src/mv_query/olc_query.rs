@@ -12,6 +12,7 @@ use crate::mv_test::{LOG_REORG, VERBOSE};
 use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_sync::smart_cell::sched_yield;
 use crate::mv_tree::smo::BlockUnsafeDegree;
+use crate::mv_utils::retry_stats;
 
 impl<const FAN_OUT: usize,
     const NUM_RECORDS: usize,
@@ -31,9 +32,7 @@ impl<const FAN_OUT: usize,
                     sched_yield(attempt);
                 }
                 Ok(guard) => {
-                    // RESTARTS_COUNTER
-                    //     .get(attempt as usize)
-                    //     .inspect(|a| { a.fetch_add(1, Relaxed); });
+                    retry_stats::record(attempt);
                     break guard
                 },
             }

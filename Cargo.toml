@@ -20,6 +20,18 @@ overflow-checks = false
 #debug = 0                # no debug info
 #incremental = false      # better optimization consistency
 
+# The configuration of the paper's experiments: `cargo build --profile paper` (target/paper/cMVBT)
+[profile.paper]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = 0
+incremental = false
+overflow-checks = false
+
 [build]
 rustflags = ["-C", "target-cpu=native"]
 
@@ -47,6 +59,7 @@ itertools = "0.15.0"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision", "arc_lock"] }
 arc-swap = "1.9.1"
 dashmap = "6.2.1"
+triomphe = "0.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.186"

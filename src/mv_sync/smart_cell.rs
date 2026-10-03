@@ -1,5 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::{hint, mem, ptr};
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 use std::mem::transmute_copy;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -162,14 +164,17 @@ impl<E: Default> Clone for SmartCell<E> {
 }
 
 pub enum SmartGuard<'a, E: Default> {
-    Reader(&'a SmartCell<E>, LatchVersion),
+    /// Holds a bitwise copy of the cell's `Arc` pointer (no reference count), i.e., the cell must be kept alive by
+    /// someone else (the tree, a parent page, the graveyard) while the guard lives. It must not borrow the
+    /// `SmartCell` handle itself: guards outlive the stack frames of the functions that clone root handles.
+    Reader(ManuallyDrop<SmartCell<E>>, LatchVersion, PhantomData<&'a ()>),
     Writer(SmartCell<E>, LatchVersion),
 }
 
 impl<'a, E: Default + 'static> Clone for SmartGuard<'a, E> {
     fn clone(&self) -> Self {
         match self {
-            Reader(cell, latch) => Reader(*cell, *latch),
+            Reader(cell, latch, marker) => Reader(ManuallyDrop::new(unsafe { ptr::read(&**cell) }), *latch, *marker),
             _ => unreachable!()
         }
     }
@@ -188,7 +193,7 @@ impl<'a, E: Default + 'static> Deref for SmartGuard<'a, E> {
 impl<'a, E: Default + 'static> SmartGuard<'a, E> {
     pub fn is_still_live(&self) -> bool {
         match self {
-            Reader(cell, stat) =>
+            Reader(cell, stat, ..) =>
                 *stat == cell.0.cell_version.load(Acquire),
             _ => true
         }
@@ -197,11 +202,11 @@ impl<'a, E: Default + 'static> SmartGuard<'a, E> {
     #[inline(always)]
     pub fn upgrade_write_lock(&mut self) -> bool {
         match self {
-            Reader(cell, read_latch) => unsafe {
+            Reader(cell, read_latch, ..) => unsafe {
                 if let Some(write_latch)
                     = cell.0.write_lock(*read_latch & !WRITE_OBSOLETE_FLAG_VERSION)
                 {
-                    let writer = Writer(cell.clone(), write_latch);
+                    let writer = Writer(SmartCell::clone(cell), write_latch);
                     ptr::write(self, writer);
                     return true;
                 }
@@ -213,7 +218,7 @@ impl<'a, E: Default + 'static> SmartGuard<'a, E> {
 
     pub fn inner_cell(self) -> SmartCell<E> {
         match self {
-            Reader(cell, ..) => cell.clone(),
+            Reader(ref cell, ..) => SmartCell::clone(cell),
             Writer(ref cell, ..) => cell.clone(),
         }
     }
@@ -263,7 +268,9 @@ impl<E: Default> SmartCell<E> {
     pub fn borrow_read(&self) -> SmartGuard<'static, E> {
         unsafe {
             mem::transmute(
-                Reader(self, self.0.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION)
+                Reader(ManuallyDrop::new(ptr::read(self)),
+                       self.0.cell_version.load(Acquire) & !WRITE_OBSOLETE_FLAG_VERSION,
+                       PhantomData)
             )
         }
     }

@@ -75,45 +75,63 @@ impl Dist {
     }
 }
 
-/// Precomputed constants of Gray et al.'s zipfian generator (as used by YCSB).
+/// Zipfian distribution over `n` ranks, P(rank k) ~ 1 / k^theta for any theta > 0 (also theta = 1 and theta > 1, which
+/// the generator YCSB uses, Gray et al.'s, does not support). Rejection-inversion sampling after Hörmann and
+/// Derflinger (as in Apache Commons Math): exact, O(1) set-up and O(1) expected time per sample.
 pub struct ZipfParams {
     n: u64,
     theta: f64,
-    alpha: f64,
-    zetan: f64,
-    eta: f64,
-    half_pow_theta: f64,
+    h_integral_x1: f64,
+    h_integral_n: f64,
+    s: f64,
 }
 
 impl ZipfParams {
     pub fn new(n: u64, theta: f64) -> Self {
-        assert!(theta > 0.0 && (theta - 1.0).abs() > 1e-9, "zipfian theta must be > 0 and != 1");
-        let zeta = |n: u64| (1..=n).map(|i| 1.0 / (i as f64).powf(theta)).sum::<f64>();
-        let zetan = zeta(n);
-        let zeta2 = zeta(2.min(n));
-        Self {
-            n,
-            theta,
-            alpha: 1.0 / (1.0 - theta),
-            zetan,
-            eta: (1.0 - (2.0 / n as f64).powf(1.0 - theta)) / (1.0 - zeta2 / zetan),
-            half_pow_theta: 0.5f64.powf(theta),
-        }
+        assert!(theta > 0.0 && n >= 1, "zipfian needs theta > 0 and at least one rank");
+        let mut z = Self { n, theta, h_integral_x1: 0.0, h_integral_n: 0.0, s: 0.0 };
+        z.h_integral_x1 = z.h_integral(1.5) - 1.0;
+        z.h_integral_n = z.h_integral(n as f64 + 0.5);
+        z.s = 2.0 - z.h_integral_inverse(z.h_integral(2.5) - z.h(2.0));
+        z
+    }
+
+    fn h(&self, x: f64) -> f64 {
+        (-self.theta * x.ln()).exp()
+    }
+
+    fn h_integral(&self, x: f64) -> f64 {
+        let log_x = x.ln();
+        helper2((1.0 - self.theta) * log_x) * log_x
+    }
+
+    fn h_integral_inverse(&self, x: f64) -> f64 {
+        let t = (x * (1.0 - self.theta)).max(-1.0);
+        (helper1(t) * x).exp()
     }
 
     /// A rank in [0, n), 0 being the hottest.
     #[inline]
     pub fn sample(&self, rng: &mut Rng) -> u64 {
-        let uz = rng.next_f64() * self.zetan;
-        if uz < 1.0 {
-            0
-        } else if uz < 1.0 + self.half_pow_theta {
-            1.min(self.n - 1)
-        } else {
-            let r = (self.n as f64 * (self.eta * (uz / self.zetan) - self.eta + 1.0).powf(self.alpha)) as u64;
-            r.min(self.n - 1)
+        loop {
+            let u = self.h_integral_n + rng.next_f64() * (self.h_integral_x1 - self.h_integral_n);
+            let x = self.h_integral_inverse(u);
+            let k = ((x + 0.5) as u64).clamp(1, self.n);
+            if k as f64 - x <= self.s || u >= self.h_integral(k as f64 + 0.5) - self.h(k as f64) {
+                return k - 1
+            }
         }
     }
+}
+
+/// (exp(x) - 1) / x, stable around 0.
+fn helper2(x: f64) -> f64 {
+    if x.abs() > 1e-8 { x.exp_m1() / x } else { 1.0 + x * 0.5 * (1.0 + x / 3.0 * (1.0 + 0.25 * x)) }
+}
+
+/// ln(1 + x) / x, stable around 0.
+fn helper1(x: f64) -> f64 {
+    if x.abs() > 1e-8 { x.ln_1p() / x } else { 1.0 - x * (0.5 - x * (1.0 / 3.0 - 0.25 * x)) }
 }
 
 /// Maps ranks to ids bijectively and pseudo-randomly, so hot keys spread over the whole key
@@ -317,17 +335,37 @@ mod tests {
         }
     }
 
+    /// The sampler must reproduce P(k) = k^-theta / H for every theta, in particular above 1 and at 1.
     #[test]
-    fn zipfian_is_skewed_and_in_range() {
-        let n = 100_000;
-        let z = ZipfParams::new(n, 0.99);
-        let mut rng = Rng::new(7);
-        let hot = (0..200_000).filter(|_| {
-            let r = z.sample(&mut rng);
-            assert!(r < n);
-            r < n / 100
-        }).count();
-        assert!(hot > 100_000, "top 1% of ranks should draw well over half of the samples, got {hot}");
+    fn zipfian_matches_its_probability_mass_function() {
+        let n = 50u64;
+        for theta in [0.2, 0.5, 0.8, 0.99, 1.0, 1.2, 1.4, 2.0] {
+            let z = ZipfParams::new(n, theta);
+            let mut rng = Rng::new(11);
+            let samples = 400_000;
+            let mut counts = vec![0u64; n as usize];
+            (0..samples).for_each(|_| {
+                let r = z.sample(&mut rng);
+                assert!(r < n);
+                counts[r as usize] += 1;
+            });
+            let norm: f64 = (1..=n).map(|k| (k as f64).powf(-theta)).sum();
+            for k in [1u64, 2, 3, 5, 10, 25, 50] {
+                let expected = (k as f64).powf(-theta) / norm;
+                let got = counts[(k - 1) as usize] as f64 / samples as f64;
+                let tolerance = 5.0 * (expected * (1.0 - expected) / samples as f64).sqrt() + 1e-4;
+                assert!((got - expected).abs() < tolerance, "theta {theta}, rank {k}: {got:.5} vs {expected:.5}");
+            }
+        }
+    }
+
+    #[test]
+    fn zipfian_handles_huge_domains_and_a_single_rank() {
+        let mut rng = Rng::new(2);
+        let big = ZipfParams::new(1 << 40, 0.99);
+        assert!((0..10_000).all(|_| big.sample(&mut rng) < 1 << 40));
+        let one = ZipfParams::new(1, 1.4);
+        assert!((0..100).all(|_| one.sample(&mut rng) == 0));
     }
 
     #[test]

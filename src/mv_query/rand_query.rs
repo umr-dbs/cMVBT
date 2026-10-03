@@ -109,11 +109,26 @@ impl<const FAN_OUT: usize,
                     match next_curr_guard.deref().unsafe_degree() {
                         BlockUnsafeDegree::Overflow
                         if curr_guard.upgrade_write_lock()
-                        => curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index),
+                        => {
+                            curr_guard = self.on_overflow_node(curr_guard, next_curr_guard, index);
+
+                            // The random descent may repair several children of the same node one after the
+                            // other, unlike the key-directed descent, which continues in the repaired child.
+                            // Each key split adds entries; once the node is unsafe itself it has no room for
+                            // the next repair, so restart (the parent will repair it first).
+                            if let BlockUnsafeDegree::Overflow = curr_guard.deref().unsafe_degree() {
+                                return Err(attempts + 1)
+                            }
+                        }
                         BlockUnsafeDegree::ActiveUnderflow
                         if curr_guard.upgrade_write_lock()
                         => match self.on_underflow_node(curr_guard, next_curr_guard, index) {
-                            Ok(guard) => curr_guard = guard,
+                            Ok(guard) => {
+                                curr_guard = guard;
+                                if let BlockUnsafeDegree::Overflow = curr_guard.deref().unsafe_degree() {
+                                    return Err(attempts + 1)
+                                }
+                            }
                             Err(..) => {
                                 if VERBOSE {
                                     println!("traversal_write_internal_olc: on_underflow_node Err()");

@@ -8,7 +8,10 @@
 
 mod stats;
 mod systems;
+mod value;
 mod workload;
+#[cfg(test)]
+mod tests;
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -19,8 +22,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use stats::{Histogram, ThreadStats};
-use systems::{make_system, parse_root_index, ReadOutcome, SystemOptions, YcsbIndex, SYSTEMS};
-use workload::{preset, DeleteKeys, Dist, KeyChooser, Mix, Op, Rng, OPS};
+pub(crate) use systems::parse_root_index;
+use value::ValueKind;
+use systems::{make_system, ReadOutcome, SystemOptions, YcsbIndex, SYSTEMS};
+pub(crate) use workload::Rng;
+use workload::{preset, DeleteKeys, Dist, KeyChooser, Mix, Op, OPS};
 
 const USAGE: &str = "\
 usage: ycsb [--key value]...
@@ -28,11 +34,13 @@ usage: ycsb [--key value]...
   --workload <a|b|c|d|e|f|churn|update-heavy|custom> operation mix preset       [a]
   --mix r:u:i:d:s:rmw      percentages (sum 100); overrides the preset's mix
   --records <n>            initially loaded keys (dense ids 0..n)                [1000000]
+  --value-size <8|1024>    8 = the value stored inline; 1024 = YCSB's 1 KB record behind a   [1024]
+                           pointer (triomphe::Arc: copies are an atomic increment)
   --threads <n>            OLTP threads                                          [8]
   --load-threads <n>       threads of the initial load (disjoint ascending key chunks)  [4]
   --secs <s> --warmup <s>  measured / warm-up duration                           [10 / 2]
   --dist <uniform|zipf|latest|hotspot>  key distribution (preset default)
-  --theta <x>              zipfian skew, 0 = uniform, must be != 1               [0.99]
+  --theta <x>              zipfian skew (alpha), 0 = uniform, any x > 0, also > 1      [0.99]
   --hot-frac <x> --hot-prob <x>  hotspot parameters                              [0.01 / 0.9]
   --scramble <bool>        spread hot ranks over the key range                   [true]
   --scan-len <n>           max keys per YCSB scan, uniform in 1..=n              [100]
@@ -61,6 +69,7 @@ struct Config {
     olap_threads: usize,
     olap_range: u64,
     root_index: String,
+    value: ValueKind,
     gc: bool,
     seed: u64,
     csv: String,
@@ -115,6 +124,7 @@ fn parse_args(parms: &[String]) -> Result<Config, String> {
         olap_threads: get(&kv, "olap-threads", 0)?,
         olap_range: get(&kv, "olap-range", 10_000)?,
         root_index: get(&kv, "root-index", "fg".to_string())?,
+        value: ValueKind::parse(&get(&kv, "value-size", "1024".to_string())?)?,
         gc: get(&kv, "gc", false)?,
         seed: get(&kv, "seed", 42)?,
         csv: get(&kv, "csv", "ycsb.csv".to_string())?,
@@ -242,13 +252,13 @@ fn olap_worker(index: &dyn YcsbIndex, cfg: &Config, next_fresh: &AtomicU64, next
 }
 
 fn run(cfg: Config) -> Result<(), String> {
-    let opts = SystemOptions { gc: cfg.gc, root_index: parse_root_index(&cfg.root_index)? };
+    let opts = SystemOptions { gc: cfg.gc, root_index: parse_root_index(&cfg.root_index)?, value: cfg.value };
     let index = make_system(&cfg.system, opts)?;
 
     println!("# system={} workload={} mix={:?} dist={:?} scramble={} deletes={:?}",
              cfg.system, cfg.workload, cfg.mix.0, cfg.dist, cfg.scramble, cfg.deletes);
-    println!("# records={} oltp_threads={} olap_threads={} olap_range={} warmup={}s measure={}s gc={}",
-             cfg.records, cfg.threads, cfg.olap_threads, cfg.olap_range, cfg.warmup, cfg.secs, cfg.gc);
+    println!("# records={} value={} bytes oltp_threads={} olap_threads={} olap_range={} warmup={}s measure={}s gc={}",
+             cfg.records, cfg.value.bytes(), cfg.threads, cfg.olap_threads, cfg.olap_range, cfg.warmup, cfg.secs, cfg.gc);
 
     let load_time = load(&index, cfg.records, cfg.load_threads);
     println!("# loaded {} records in {:.2}s", cfg.records, load_time.as_secs_f64());
@@ -330,7 +340,7 @@ fn write_csv(cfg: &Config, secs: f64, oltp_ops: u64, total: &ThreadStats, olap_s
     let existed = std::path::Path::new(&cfg.csv).exists();
     let mut f = OpenOptions::new().create(true).append(true).open(&cfg.csv)?;
     if !existed {
-        writeln!(f, "system,workload,mix,dist,scramble,records,oltp_threads,olap_threads,olap_range,gc,secs,\
+        writeln!(f, "system,workload,mix,dist,scramble,records,oltp_threads,olap_threads,olap_range,gc,value_bytes,theta,secs,\
 oltp_ops,oltp_ops_per_s,read_p50_us,read_p99_us,update_p50_us,update_p99_us,insert_p50_us,insert_p99_us,\
 delete_p50_us,delete_p99_us,scan_p50_us,scan_p99_us,olap_scans,olap_scans_per_s,olap_records_per_s,\
 olap_p50_ms,olap_p99_ms,violations")?;
@@ -347,6 +357,8 @@ olap_p50_ms,olap_p99_ms,violations")?;
         cfg.olap_threads.to_string(),
         cfg.olap_range.to_string(),
         cfg.gc.to_string(),
+        cfg.value.bytes().to_string(),
+        match cfg.dist { Dist::Zipfian(t) | Dist::Latest(t) => t.to_string(), _ => "0".to_string() },
         format!("{secs:.2}"),
         oltp_ops.to_string(),
         format!("{:.0}", oltp_ops as f64 / secs),

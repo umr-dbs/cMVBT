@@ -227,6 +227,7 @@ mod gc_stress {
     /// A node reused while a reader still traverses it breaks one of these.
     #[test]
     fn scans_stay_consistent_under_gc_reuse() {
+        let _serial = crate::mv_sync::TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let tree = Box::into_raw(Box::new(MVBTreeWithGCApiExport(
             TransactionManager::new_unmanaged(MVBTreeApi::default(), true)))) as usize;
 

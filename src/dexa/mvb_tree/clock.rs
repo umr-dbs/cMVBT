@@ -35,8 +35,15 @@ const INACTIVE_COMMIT_VERSION_MAX: Version
 static THREAD_ID: AtomicUsize
     = AtomicUsize::new(0);
 
-static SHARDED_COMMITTED: OnceLock<Mutex<Vec<PaddedAtomicVersion>>>
-    = OnceLock::new();
+/// Commit slots of all threads. Fixed in size and never reallocated: threads read the whole array lock-free, so a
+/// growing `Vec` would free the buffer under their feet (use-after-free when more threads than cores registered).
+/// Thread ids are recycled when threads end.
+const MAX_THREADS: usize = 4096;
+
+static SLOTS: [PaddedAtomicVersion; MAX_THREADS]
+    = [const { PaddedAtomicVersion(AtomicVersion::new(INACTIVE_COMMIT_VERSION_MAX)) }; MAX_THREADS];
+
+static FREE_TIDS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 #[repr(align(64))]
 struct PaddedAtomicVersion(AtomicVersion);
@@ -104,49 +111,29 @@ impl ThreadState {
     }
 
     fn new() -> Self {
-        let tid_curr = THREAD_ID.fetch_add(1, SeqCst);
-        loop {
-            if tid_curr >= committed().len() {
-                match SHARDED_COMMITTED
-                    .get()
-                    .unwrap()
-                    .try_lock()
-                {
-                    Some(mut lock) => lock
-                        .extend((0..num_cpus::get_physical())
-                            .map(|_| PaddedAtomicVersion(AtomicVersion::new(INACTIVE_COMMIT_VERSION_MAX)))),
-                    _ => {
-                        yield_now();
-                        continue
-                    }
-                }
-            }
-            else {
-                break ThreadState {
-                    tid: tid_curr,
-                    reads_in_row: SafeCell::new(0),
-                }
-            }
+        let tid = FREE_TIDS.lock().pop().unwrap_or_else(|| {
+            let tid = THREAD_ID.fetch_add(1, SeqCst);
+            assert!(tid < MAX_THREADS, "more than {MAX_THREADS} threads use the commit clock at the same time");
+            tid
+        });
+
+        ThreadState {
+            tid,
+            reads_in_row: SafeCell::new(0),
         }
     }
 }
 
 impl Drop for ThreadState {
     fn drop(&mut self) {
-        thread_local_commit_inactive(self.tid)
+        thread_local_commit_inactive(self.tid);
+        FREE_TIDS.lock().push(self.tid);
     }
 }
 
-#[inline]
+#[inline(always)]
 fn committed() -> &'static [PaddedAtomicVersion] {
-    unsafe {
-        &*SHARDED_COMMITTED.get_or_init(||
-            Mutex::new(
-                (0..num_cpus::get_physical())
-                    .map(|_| PaddedAtomicVersion(AtomicVersion::new(INACTIVE_COMMIT_VERSION_MAX)))
-                    .collect()))
-            .data_ptr()
-    }
+    &SLOTS
 }
 
 #[inline]

@@ -73,8 +73,8 @@ pub struct BlockAllocManager<
 > {
     tracker: SafeCell<Option<TrackerHandle<FAN_OUT, NUM_RECORDS, Key, Payload>>>,
     update_in_place: Cell<bool>,
-    // pub reuse_count: AtomicUsize,
-    // pub alloc_count: AtomicUsize,
+    reuse_count: AtomicU64,
+    alloc_count: AtomicU64,
     // block_id_counter: AtomicBlockID,
 }
 
@@ -88,8 +88,8 @@ impl<const FAN_OUT: usize,
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             tracker: SafeCell::new(None),
             update_in_place: Cell::new(false),
-            // reuse_count: AtomicUsize::new(0),
-            // alloc_count: AtomicUsize::new(0),
+            reuse_count: AtomicU64::new(0),
+            alloc_count: AtomicU64::new(0),
         }
     }
 }
@@ -120,8 +120,13 @@ impl<const FAN_OUT: usize,
     // }
 
     pub fn reset_alloc_reuse_counts(&self) {
-        // self.reuse_count.store(0, SeqCst);
-        // self.alloc_count.store(0, SeqCst);
+        self.reuse_count.store(0, Relaxed);
+        self.alloc_count.store(0, Relaxed);
+    }
+
+    /// (nodes taken from the memory manager, nodes reused from the graveyard) since the last reset.
+    pub fn alloc_reuse_counts(&self) -> (u64, u64) {
+        (self.alloc_count.load(Relaxed), self.reuse_count.load(Relaxed))
     }
     
     #[inline(always)]
@@ -181,8 +186,8 @@ impl<const FAN_OUT: usize,
             // block_id_counter: AtomicBlockID::new(START_BLOCK_ID),
             tracker: SafeCell::new(None),
             update_in_place: Cell::new(false),
-            // reuse_count: AtomicUsize::new(0),
-            // alloc_count: AtomicUsize::new(0),
+            reuse_count: AtomicU64::new(0),
+            alloc_count: AtomicU64::new(0),
         }
     }
 
@@ -231,7 +236,7 @@ impl<const FAN_OUT: usize,
         // NODES_REQUEST.fetch_add(1, Relaxed);
         match self.tracker.as_ref().as_ref().map(|tracker| tracker.free_block()) {
             Some(Some(block)) => {
-                // self.reuse_count.fetch_add(1, Relaxed);
+                self.reuse_count.fetch_add(1, Relaxed);
 
                 let m_page
                     = block.unsafe_borrow_mut().node_data.get_mut();
@@ -249,7 +254,7 @@ impl<const FAN_OUT: usize,
                 block
             }
             _ => {
-                // self.alloc_count.fetch_add(1, Relaxed);
+                self.alloc_count.fetch_add(1, Relaxed);
                 // println!("Alloc");
                 Block {
                     // block_id: self.next_block_id(),

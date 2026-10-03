@@ -9,7 +9,7 @@ use crate::dexa::mvb_page_model::{Attempts, BlockRef, Height, Level, ObjectCount
 use crate::dexa::mvb_block::block::{Block, BlockGuard};
 use crate::dexa::types::{dec_key, inc_key, INDEX};
 use crate::dexa::mvb_record_model::{AtomicVersion, Version};
-use crate::dexa::mvb_record_model::v_record_point::VersionIndexType;
+use crate::dexa::mvb_record_model::v_record_point::{VersionIndexType, VersionedRecordPoint};
 use crate::dexa::mvb_tree::clock::GlobalClock;
 use crate::dexa::mvb_utils::un_cell::UnCell;
 
@@ -31,6 +31,9 @@ pub struct MVBPlusTree<
     pub(crate) global_clock: GlobalClock,
     pub(crate) v_index_type: VersionIndexType,
     pub(crate) gc: bool,
+    /// Records removed by the GC. Their version lists are kept until the tree is dropped: scans may still hold
+    /// pointers into them, and freeing them right away is a use-after-free (no epoch/hazard scheme in place).
+    pub(crate) limbo: parking_lot::Mutex<Vec<VersionedRecordPoint<Key, Payload>>>,
     pub(crate) min_key: Key,
     pub(crate) max_key: Key,
     pub(crate) inc_key: fn(Key) -> Key,
@@ -112,6 +115,7 @@ impl<const FAN_OUT: usize,
             global_clock: GlobalClock::new(),
             v_index_type,
             gc,
+            limbo: parking_lot::Mutex::new(Vec::new()),
         }
     }
 
