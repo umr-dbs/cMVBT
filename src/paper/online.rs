@@ -13,7 +13,7 @@ use std::time::Instant;
 
 const USAGE: &str = "\
 usage: paper-ycsb [--key value]...
-  --system <cmvbt|chain|frugal|vweaver|skiplist>                         [cmvbt]
+  --system <cmvbt|chain|frugal|vweaver|skiplist|mdbx>                    [cmvbt]
   --experiment <label>                                                   [paper]
   --repeat <n>                                                           [1]
   --records <n>             initial insertions                         [2000000]
@@ -25,7 +25,7 @@ usage: paper-ycsb [--key value]...
   --writers <n>                                                          [32]
   --readers <n>             concurrent fresh-snapshot scanners           [16]
   --historical-scans <n>    scans after writes, uniformly over versions  [0]
-  --scan-range <n>          consecutive keys selected by each scan        [1000]
+  --scan-range <n>          consecutive keys selected by each scan      [100000]
   --scan-threads <n>        threads used for historical scans             [1]
   --gc <bool>                                                            [false]
   --root-index <fg|ll|sk|bt>                                             [fg]
@@ -117,15 +117,20 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         writers: get(&values, "writers", 32)?,
         readers: get(&values, "readers", 16)?,
         historical_scans: get(&values, "historical-scans", 0)?,
-        scan_range: get(&values, "scan-range", 1_000)?,
+        scan_range: get(&values, "scan-range", 100_000)?,
         scan_threads: get(&values, "scan-threads", 1)?,
         gc: get(&values, "gc", false)?,
         root_index: get(&values, "root-index", "fg".to_string())?,
         seed: get(&values, "seed", 42)?,
         csv: get(&values, "csv", "paper.csv".to_string())?,
     };
-    if cfg.records == 0 || cfg.operations == 0 || cfg.writers == 0 || cfg.scan_threads == 0
-        || cfg.scan_range == 0 || cfg.scan_range > cfg.records {
+    if cfg.records == 0
+        || cfg.operations == 0
+        || cfg.writers == 0
+        || cfg.scan_threads == 0
+        || cfg.scan_range == 0
+        || cfg.scan_range > cfg.records
+    {
         return Err("records, operations, writers, scan-threads and scan-range must be positive; scan-range must not exceed records".into());
     }
     if cfg.update_rate > 100 {
@@ -142,7 +147,10 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         );
     }
     if cfg.historical_scans > 0 && cfg.writers != 1 {
-        return Err("historical scans require one writer so versions map exactly to workload positions".into());
+        return Err(
+            "historical scans require one writer so versions map exactly to workload positions"
+                .into(),
+        );
     }
     Ok(cfg)
 }
@@ -311,9 +319,7 @@ struct HistoricalPlan {
 impl HistoricalPlan {
     fn new(scans: u64, operations: u64, seed: u64) -> Self {
         let mut rng = Rng::new(seed.wrapping_add(0x5CA9));
-        let completed: Vec<u64> = (0..scans)
-            .map(|_| 1 + rng.below(operations))
-            .collect();
+        let completed: Vec<u64> = (0..scans).map(|_| 1 + rng.below(operations)).collect();
         let mut ordered: Vec<(u64, usize)> = completed
             .iter()
             .copied()
@@ -322,7 +328,11 @@ impl HistoricalPlan {
             .collect();
         ordered.sort_unstable();
         let versions = (0..scans).map(|_| AtomicU64::new(0)).collect();
-        Self { completed, versions, ordered }
+        Self {
+            completed,
+            versions,
+            ordered,
+        }
     }
 
     fn record(&self, cursor: &mut usize, completed: u64, version: u64) {
@@ -387,11 +397,19 @@ impl OnlineKeys {
     fn sample_scan_start(&self, range: u64, rng: &mut Rng) -> u64 {
         let lo = self.expired.load(Acquire);
         let hi = self.published.load(Acquire);
-        lo + rng.below(hi.saturating_sub(lo).saturating_sub(range).saturating_add(1).max(1))
+        lo + rng.below(
+            hi.saturating_sub(lo)
+                .saturating_sub(range)
+                .saturating_add(1)
+                .max(1),
+        )
     }
 }
 
 fn load(index: &dyn PaperIndex, records: u64) -> Result<(), String> {
+    if let Some(result) = index.bulk_load(records) {
+        return result;
+    }
     for key in 0..records {
         if !index.apply(FileOp::Insert(key)) {
             return Err(format!("initial insert({key}) failed"));
@@ -411,8 +429,8 @@ fn writer(
     seed: u64,
 ) -> WriterStats {
     let mut rng = Rng::new(seed);
-    let dist = Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9)
-        .expect("validated paper distribution");
+    let dist =
+        Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9).expect("validated paper distribution");
     let chooser = KeyChooser::new(dist, cfg.records, cfg.scramble);
     let mut stats = WriterStats::new();
     let mut historical_cursor = 0;
@@ -427,7 +445,8 @@ fn writer(
         let version = match kind {
             WriteKind::Insert => {
                 let key = keys.reserve_insert();
-                let version = index.apply_versioned(FileOp::Insert(key))
+                let version = index
+                    .apply_versioned(FileOp::Insert(key))
                     .unwrap_or_else(|| panic!("fresh insert({key}) failed"));
                 keys.publish_insert(key);
                 stats.insert.record(started.elapsed().as_nanos() as u64);
@@ -435,7 +454,8 @@ fn writer(
             }
             WriteKind::Delete => {
                 let key = keys.reserve_delete();
-                let version = index.apply_versioned(FileOp::Delete(key))
+                let version = index
+                    .apply_versioned(FileOp::Delete(key))
                     .unwrap_or_else(|| panic!("live delete({key}) failed"));
                 stats.delete.record(started.elapsed().as_nanos() as u64);
                 version
@@ -490,8 +510,7 @@ fn historical_scans(
     let started = Instant::now();
     let workers: Vec<_> = (0..cfg.scan_threads)
         .map(|worker| {
-            let (index, next, cfg, plan) =
-                (index.clone(), next.clone(), cfg.clone(), plan.clone());
+            let (index, next, cfg, plan) = (index.clone(), next.clone(), cfg.clone(), plan.clone());
             thread::spawn(move || {
                 let mut rng = Rng::new(cfg.seed.wrapping_add(0x5CA9 + worker as u64));
                 let mut latency = Latency::new();
@@ -503,17 +522,27 @@ fn historical_scans(
                     }
                     let completed = plan.completed[scan as usize];
                     let version = plan.versions[scan as usize].load(Acquire);
-                    assert!(version > 0, "historical version for scan {scan} was not recorded");
-                    let (inserts, deletes) =
-                        structural_counts_before(completed, cfg.update_rate, cfg.seed);
-                    let lo = deletes;
-                    let hi = cfg.records + inserts;
-                    let start = lo + rng.below(
-                        hi.saturating_sub(lo)
-                            .saturating_sub(cfg.scan_range)
-                            .saturating_add(1)
-                            .max(1),
+                    assert!(
+                        version > 0,
+                        "historical version for scan {scan} was not recorded"
                     );
+                    let (lo, hi) = if index.historical_scan_mode() == "pinned_initial" {
+                        // libmdbx can preserve the beginning snapshot only by
+                        // retaining its read transaction. Keep every range in
+                        // that snapshot's original key domain.
+                        (0, cfg.records)
+                    } else {
+                        let (inserts, deletes) =
+                            structural_counts_before(completed, cfg.update_rate, cfg.seed);
+                        (deletes, cfg.records + inserts)
+                    };
+                    let start = lo
+                        + rng.below(
+                            hi.saturating_sub(lo)
+                                .saturating_sub(cfg.scan_range)
+                                .saturating_add(1)
+                                .max(1),
+                        );
                     let t = Instant::now();
                     records += index.scan_at_range(start, cfg.scan_range, version) as u64;
                     latency.record(t.elapsed().as_nanos() as u64);
@@ -543,6 +572,7 @@ fn append_csv(
     scan_ns: u128,
     allocated: u64,
     reused: u64,
+    scan_mode: &str,
 ) -> Result<(), String> {
     let latency = |name: &str| {
         LATENCY_COLUMNS
@@ -602,7 +632,7 @@ oltp_time_ns,oltp_ops_per_s,scan_time_ns,scan_ops_per_s,scan_records,internal_wr
         cfg.writers,
         cfg.readers,
         if cfg.historical_scans > 0 {
-            "historical"
+            scan_mode
         } else if cfg.readers > 0 {
             "fresh"
         } else {
@@ -635,7 +665,11 @@ fn run(cfg: Config) -> Result<(), String> {
         "# online paper workload: system={} distribution={} theta={} update={}%, records={}, operations={}, writers={}, readers={}, historical_scans={}, scan_range={}, gc={}",
         cfg.system,
         cfg.distribution,
-        if cfg.distribution == "uniform" { 0.0 } else { cfg.theta },
+        if cfg.distribution == "uniform" {
+            0.0
+        } else {
+            cfg.theta
+        },
         cfg.update_rate,
         cfg.records,
         cfg.operations,
@@ -663,16 +697,15 @@ fn run(cfg: Config) -> Result<(), String> {
             cfg.seed,
         ))
     });
+    if historical.is_some() {
+        index.prepare_historical_snapshot()?;
+    }
     let done = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(cfg.writers + cfg.readers + 1));
     let readers: Vec<_> = (0..cfg.readers)
         .map(|worker| {
-            let (index, keys, done, barrier) = (
-                index.clone(),
-                keys.clone(),
-                done.clone(),
-                barrier.clone(),
-            );
+            let (index, keys, done, barrier) =
+                (index.clone(), keys.clone(), done.clone(), barrier.clone());
             let scan_range = cfg.scan_range;
             let seed = cfg.seed.wrapping_add(0x0A1A + worker as u64);
             thread::spawn(move || fresh_reader(index, keys, scan_range, seed, done, barrier))
@@ -739,6 +772,7 @@ fn run(cfg: Config) -> Result<(), String> {
         scan_ns,
         allocated,
         reused,
+        index.historical_scan_mode(),
     )?;
     println!(
         "# OLTP {:.0} ops/s; scans {:.1}/s; scan p50 {:.3} ms p99 {:.3} ms; internal write retries {}",
@@ -857,5 +891,4 @@ mod tests {
             );
         }
     }
-
 }

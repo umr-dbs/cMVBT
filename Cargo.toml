@@ -36,10 +36,12 @@ overflow-checks = false
 rustflags = ["-C", "target-cpu=native"]
 
 [features]
-default = ["dexa"]
+default = ["dexa", "mdbx"]
 hardware-lock-elision = []
 # Version-list baselines (Version Chains, Frugal Lists, vWeaver, skip lists) in the same binary
 dexa = ["dep:serde"]
+# Copy-on-write B+Tree baseline used in paper Figures 5, 6, and 8.
+mdbx = ["dep:libmdbx"]
 
 [lib]
 name = "cmvbt"
@@ -61,6 +63,7 @@ arc-swap = "1.9.1"
 dashmap = "6.2.1"
 triomphe = "0.1"
 serde = { version = "1.0", features = ["derive"], optional = true }
+libmdbx = { version = "0.6.6", optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.186"
 num_cpus = "1.17"

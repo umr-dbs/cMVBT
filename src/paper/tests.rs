@@ -1,12 +1,12 @@
 //! Tests of the experiment drivers: workload generation + replay, snapshot stability, CSV output, retry statistics.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::Arc;
 
-use super::systems::{make_system, PaperIndex};
-use super::{apply_all, load_workload, run_concurrent, FileOp};
+use super::systems::{PaperIndex, make_system};
+use super::{FileOp, apply_all, load_workload, run_concurrent};
 use crate::mv_utils::retry_stats;
 
 use crate::mv_sync::TEST_SERIAL as SERIAL;
@@ -18,11 +18,31 @@ fn temp(name: &str) -> std::path::PathBuf {
 }
 
 /// `generate <file> <init> <blocks> <ins> <upd> <del> <skew>` and returns the workload.
-fn generated_workload(name: &str, init: usize, blocks: usize, ins: usize, upd: usize, del: usize, skew: &str) -> (std::path::PathBuf, Vec<FileOp>) {
+fn generated_workload(
+    name: &str,
+    init: usize,
+    blocks: usize,
+    ins: usize,
+    upd: usize,
+    del: usize,
+    skew: &str,
+) -> (std::path::PathBuf, Vec<FileOp>) {
     let path = temp(name);
     let _ = std::fs::remove_file(&path);
-    let parms: Vec<String> = ["cMVBT", "generate", path.to_str().unwrap(), &init.to_string(), &blocks.to_string(),
-        &ins.to_string(), &upd.to_string(), &del.to_string(), skew].iter().map(|s| s.to_string()).collect();
+    let parms: Vec<String> = [
+        "cMVBT",
+        "generate",
+        path.to_str().unwrap(),
+        &init.to_string(),
+        &blocks.to_string(),
+        &ins.to_string(),
+        &upd.to_string(),
+        &del.to_string(),
+        skew,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
     crate::mv_test::main_generate(parms);
     let ops = load_workload(path.to_str().unwrap());
     (path, ops)
@@ -45,7 +65,10 @@ fn generated_workload_is_serially_valid_and_has_the_requested_shape() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (path, ops) = generated_workload("shape.dat", 500, 40, 20, 50, 30, "0");
     assert_eq!(ops.len(), 500 + 40 * 100);
-    assert!(ops[..500].iter().all(|o| matches!(o, FileOp::Insert(_))), "the first operations are the initial insertions");
+    assert!(
+        ops[..500].iter().all(|o| matches!(o, FileOp::Insert(_))),
+        "the first operations are the initial insertions"
+    );
     let count = |f: fn(&FileOp) -> bool| ops[500..].iter().filter(|o| f(o)).count();
     assert_eq!(count(|o| matches!(o, FileOp::Insert(_))), 40 * 20);
     assert_eq!(count(|o| matches!(o, FileOp::Update(_))), 40 * 50);
@@ -65,9 +88,21 @@ fn serial_replay_succeeds_everywhere_and_leaves_the_expected_data() {
         for gc in [false, true] {
             let index = make_system(name, "fg", gc).unwrap();
             let counts = apply_all(index.as_ref(), &ops);
-            assert_eq!((counts.executed, counts.failed), (ops.len() as u64, 0), "{name} gc={gc}: replay");
-            assert_eq!(index.scan_at(index.newest_version()), expected, "{name} gc={gc}: final data set");
-            assert_eq!(index.scan_fresh(), expected, "{name} gc={gc}: freshest snapshot");
+            assert_eq!(
+                (counts.executed, counts.failed),
+                (ops.len() as u64, 0),
+                "{name} gc={gc}: replay"
+            );
+            assert_eq!(
+                index.scan_at(index.newest_version()),
+                expected,
+                "{name} gc={gc}: final data set"
+            );
+            assert_eq!(
+                index.scan_fresh(),
+                expected,
+                "{name} gc={gc}: freshest snapshot"
+            );
         }
     }
     let _ = std::fs::remove_file(path);
@@ -85,12 +120,23 @@ fn old_versions_stay_scannable_without_gc() {
         let mut versions = vec![];
         for op in &ops {
             versions.push(index.apply_versioned(*op).expect("serial replay succeeds"));
-            live = match op { FileOp::Insert(_) => live + 1, FileOp::Delete(_) => live - 1, _ => live };
+            live = match op {
+                FileOp::Insert(_) => live + 1,
+                FileOp::Delete(_) => live - 1,
+                _ => live,
+            };
             sizes.push(live);
         }
-        assert!(versions.windows(2).all(|w| w[0] < w[1]), "{name}: versions increase with every operation");
+        assert!(
+            versions.windows(2).all(|w| w[0] < w[1]),
+            "{name}: versions increase with every operation"
+        );
         for i in (0..ops.len()).step_by(37) {
-            assert_eq!(index.scan_at(versions[i]), sizes[i], "{name}: scan at the version after operation {i}");
+            assert_eq!(
+                index.scan_at(versions[i]),
+                sizes[i],
+                "{name}: scan at the version after operation {i}"
+            );
         }
     }
     let _ = std::fs::remove_file(path);
@@ -103,8 +149,15 @@ fn historical_snapshots_are_stable_under_concurrent_writes() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for name in ALL {
         let index: Arc<dyn PaperIndex> = make_system(name, "fg", false).unwrap();
-        let version = (0..N).map(|k| index.apply_versioned(FileOp::Insert(k)).unwrap()).last().unwrap();
-        assert_eq!(index.scan_at(version), N as usize, "{name}: baseline snapshot");
+        let version = (0..N)
+            .map(|k| index.apply_versioned(FileOp::Insert(k)).unwrap())
+            .last()
+            .unwrap();
+        assert_eq!(
+            index.scan_at(version),
+            N as usize,
+            "{name}: baseline snapshot"
+        );
 
         let stop = AtomicBool::new(false);
         std::thread::scope(|s| {
@@ -116,7 +169,9 @@ fn historical_snapshots_are_stable_under_concurrent_writes() {
                     while !stop.load(Relaxed) {
                         let k = (i * 7 + t * 1013) % N;
                         index.apply(FileOp::Update(k));
-                        if i % 5 == 0 { index.apply(FileOp::Delete(k)); }
+                        if i % 5 == 0 {
+                            index.apply(FileOp::Delete(k));
+                        }
                         index.apply(FileOp::Insert(N + t * 1_000_000 + i));
                         i += 1;
                     }
@@ -125,14 +180,59 @@ fn historical_snapshots_are_stable_under_concurrent_writes() {
             let checker = s.spawn(|| {
                 let started = std::time::Instant::now();
                 while started.elapsed().as_millis() < 500 {
-                    assert_eq!(index.scan_at(version), N as usize, "{name}: a historical snapshot changed while writers ran");
+                    assert_eq!(
+                        index.scan_at(version),
+                        N as usize,
+                        "{name}: a historical snapshot changed while writers ran"
+                    );
                 }
             });
             checker.join().unwrap();
             stop.store(true, Relaxed);
         });
-        assert_eq!(index.scan_at(version), N as usize, "{name}: snapshot after the writers");
+        assert_eq!(
+            index.scan_at(version),
+            N as usize,
+            "{name}: snapshot after the writers"
+        );
     }
+}
+
+#[cfg(feature = "mdbx")]
+#[test]
+fn mdbx_reuses_one_pinned_initial_snapshot_for_figure5() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let index = make_system("mdbx", "fg", false).unwrap();
+    index
+        .bulk_load(100)
+        .expect("mdbx supports bulk loading")
+        .unwrap();
+    index.prepare_historical_snapshot().unwrap();
+
+    assert!(index.apply(FileOp::Delete(0)));
+    assert!(index.apply(FileOp::Insert(100)));
+
+    assert_eq!(
+        index.scan_at_range(0, 1, 1),
+        1,
+        "pinned snapshot still contains key 0"
+    );
+    assert_eq!(
+        index.scan_fresh_range(0, 1),
+        0,
+        "fresh snapshot observes deletion of key 0"
+    );
+    assert_eq!(
+        index.scan_at_range(100, 1, 1),
+        0,
+        "pinned snapshot predates key 100"
+    );
+    assert_eq!(
+        index.scan_fresh_range(100, 1),
+        1,
+        "fresh snapshot observes key 100"
+    );
+    assert_eq!(index.historical_scan_mode(), "pinned_initial");
 }
 
 #[test]
@@ -145,14 +245,22 @@ fn concurrent_replay_executes_everything_and_keeps_the_data_consistent() {
             let index = make_system(name, "fg", gc).unwrap();
             let init: Vec<FileOp> = ops[..1000].to_vec();
             assert_eq!(apply_all(index.as_ref(), &init).failed, 0);
-            let (counts, oltp_ns, scans, olap_ns) = run_concurrent(&index, ops[1000..].to_vec(), 8, 2);
+            let (counts, oltp_ns, scans, olap_ns) =
+                run_concurrent(&index, ops[1000..].to_vec(), 8, 2);
             assert_eq!(counts.executed as usize, total, "{name} gc={gc}: executed");
             assert!(counts.failed as usize <= total, "{name} gc={gc}: failed");
             assert!(oltp_ns > 0 && olap_ns >= oltp_ns, "{name} gc={gc}: timings");
             // every insertion has a fresh key and thus succeeds: at least that many records can exist, at most all of them
             let live = index.scan_fresh();
-            assert!(live <= 1000 + total, "{name} gc={gc}: more records than ever inserted");
-            assert_eq!(live, index.scan_at(index.newest_version()), "{name} gc={gc}: fresh snapshot vs. newest version");
+            assert!(
+                live <= 1000 + total,
+                "{name} gc={gc}: more records than ever inserted"
+            );
+            assert_eq!(
+                live,
+                index.scan_at(index.newest_version()),
+                "{name} gc={gc}: fresh snapshot vs. newest version"
+            );
             let _ = scans;
         }
     }
@@ -185,13 +293,29 @@ fn load_command_appends_a_csv_row_per_run() {
     }
 
     let load = |concurrent: &str, olaps: &str, threads: &str, gc: &str, system: &str| {
-        let parms: Vec<String> = ["cMVBT", "load", path.to_str().unwrap(), concurrent, olaps, threads, "0", "max", "fg", gc, "false", "500", system]
-            .iter().map(|s| s.to_string()).collect();
+        let parms: Vec<String> = [
+            "cMVBT",
+            "load",
+            path.to_str().unwrap(),
+            concurrent,
+            olaps,
+            threads,
+            "0",
+            "max",
+            "fg",
+            gc,
+            "false",
+            "500",
+            system,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         super::main_load(parms);
     };
     for system in ALL {
         load("false", "1", "50", "false", system); // sequential: 50 scans at random versions
-        load("true", "2", "4", "true", system);    // concurrent with GC
+        load("true", "2", "4", "true", system); // concurrent with GC
     }
     unsafe {
         std::env::remove_var("RESULTS_CSV");
@@ -202,7 +326,12 @@ fn load_command_appends_a_csv_row_per_run() {
     let text = std::fs::read_to_string(&csv).unwrap();
     let mut lines = text.lines();
     let header: Vec<&str> = lines.next().unwrap().split(',').collect();
-    let col = |name: &str| header.iter().position(|h| *h == name).unwrap_or_else(|| panic!("column {name}"));
+    let col = |name: &str| {
+        header
+            .iter()
+            .position(|h| *h == name)
+            .unwrap_or_else(|| panic!("column {name}"))
+    };
     let rows: Vec<Vec<&str>> = lines.map(|l| l.split(',').collect()).collect();
     assert_eq!(rows.len(), 10);
     for (i, row) in rows.iter().enumerate() {
@@ -210,9 +339,13 @@ fn load_command_appends_a_csv_row_per_run() {
         assert_eq!(row[col("experiment")], "test");
         assert_eq!(row[col("repeat")], "3");
         assert_eq!(row[col("system")], ALL[i / 2]);
-        assert_eq!(row[col("oltp_ops")].parse::<usize>().unwrap(), ops.len() - 500);
+        assert_eq!(
+            row[col("oltp_ops")].parse::<usize>().unwrap(),
+            ops.len() - 500
+        );
         assert!(row[col("oltp_time_ns")].parse::<u64>().unwrap() > 0);
-        if i % 2 == 0 { // sequential run
+        if i % 2 == 0 {
+            // sequential run
             assert_eq!(row[col("concurrent")], "false");
             assert_eq!(row[col("oltp_failed")], "0", "a serial replay never fails");
             assert_eq!(row[col("scans")], "50");
@@ -230,20 +363,37 @@ fn retry_experiment_accounts_for_every_insertion() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let csv = temp("retries.csv");
     let _ = std::fs::remove_file(&csv);
-    unsafe { std::env::set_var("RESULTS_CSV", &csv); }
+    unsafe {
+        std::env::set_var("RESULTS_CSV", &csv);
+    }
     retry_stats::take(); // forget what earlier tests recorded
     for alpha in ["0", "0.8", "1.4"] {
-        super::main_retry_exp(["cMVBT", "retry-exp", "4", "20000", alpha].iter().map(|s| s.to_string()).collect());
+        super::main_retry_exp(
+            ["cMVBT", "retry-exp", "4", "20000", alpha]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
     }
-    unsafe { std::env::remove_var("RESULTS_CSV"); }
+    unsafe {
+        std::env::remove_var("RESULTS_CSV");
+    }
 
     let text = std::fs::read_to_string(&csv).unwrap();
-    let rows: Vec<Vec<&str>> = text.lines().skip(1).map(|l| l.split(',').collect()).collect();
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').collect())
+        .collect();
     assert_eq!(rows.len(), 3);
     for row in rows {
         let groups: Vec<u64> = row[6..11].iter().map(|g| g.parse().unwrap()).collect();
         let total: u64 = row[11].parse().unwrap();
-        assert_eq!(groups.iter().sum::<u64>(), total, "groups add up to the total");
+        assert_eq!(
+            groups.iter().sum::<u64>(),
+            total,
+            "groups add up to the total"
+        );
         assert_eq!(total, 20_000, "one traversal per insertion");
     }
     let _ = std::fs::remove_file(&csv);
@@ -254,7 +404,9 @@ fn node_counters_distinguish_fresh_allocations_from_reuse() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     // a sliding window: constant live set, continuous splits and merges
     let churn = |index: &dyn PaperIndex| {
-        (0..2000u64).for_each(|k| { index.apply(FileOp::Insert(k)); });
+        (0..2000u64).for_each(|k| {
+            index.apply(FileOp::Insert(k));
+        });
         index.reset_alloc_counts();
         for k in 2000..60_000u64 {
             index.apply(FileOp::Insert(k));
@@ -265,11 +417,17 @@ fn node_counters_distinguish_fresh_allocations_from_reuse() {
     let off = make_system("cmvbt", "fg", false).unwrap();
     churn(off.as_ref());
     let (alloc, reuse) = off.alloc_counts();
-    assert!(alloc > 100 && reuse == 0, "without GC every node is allocated: {alloc} allocated, {reuse} reused");
+    assert!(
+        alloc > 100 && reuse == 0,
+        "without GC every node is allocated: {alloc} allocated, {reuse} reused"
+    );
 
     let on = make_system("cmvbt", "fg", true).unwrap();
     churn(on.as_ref());
     let (alloc, reuse) = on.alloc_counts();
-    assert!(reuse > 20 * alloc, "with GC nearly all nodes come from the graveyard: {alloc} allocated, {reuse} reused");
+    assert!(
+        reuse > 20 * alloc,
+        "with GC nearly all nodes come from the graveyard: {alloc} allocated, {reuse} reused"
+    );
     assert_eq!(on.scan_fresh(), 2000);
 }

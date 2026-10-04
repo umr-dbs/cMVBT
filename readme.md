@@ -2,7 +2,7 @@
 
 Research implementation of the concurrent Multiversion B-tree described in *Multiversion Concurrency Control for Multiversion B-Trees* (EDBT 2027). The cMVBT keeps committed pages immutable for latch-free point and range reads. Writers use optimistic latch coupling and copy-on-write page reorganizations. Optional on-demand garbage collection reuses pages that are no longer reachable by an active snapshot.
 
-This repository also contains the four B+-tree/version-list baselines and drives all five systems through the same benchmark interface:
+This repository also contains the B+-tree/version-list baselines and a libmdbx copy-on-write baseline, driving all six systems through the same benchmark interface:
 
 | `--system` | Index |
 | --- | --- |
@@ -11,6 +11,7 @@ This repository also contains the four B+-tree/version-list baselines and drives
 | `frugal` | OLC B+-tree with frugal lists |
 | `vweaver` | OLC B+-tree with vWeaver lists |
 | `skiplist` | OLC B+-tree with skip-list version indexes |
+| `mdbx` | libmdbx copy-on-write B+-tree |
 
 The current crate version is **0.0.110**. The baseline implementations are enabled by the default `dexa` feature.
 
@@ -175,16 +176,16 @@ The groups correspond to the submitted paper:
 
 | Group | Paper protocol |
 | --- | --- |
-| `latency` | Figure 5: 2M initial inserts, 10M online writes, 10K scans of 1K-record ranges sampled uniformly from measured historical versions |
-| `concurrent` | Figure 6: 1M writes, 32 writers and 16 concurrent 1K-record range readers, without GC |
+| `latency` | Figure 5: 2M initial inserts, 10M online writes, 1K scans of 100K-record ranges sampled uniformly from measured historical versions |
+| `concurrent` | Figure 6: 1M writes, 32 writers and 16 concurrent 100K-record range readers, without GC |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
 | `retries` | Figure 9: retry groups for 1M inserts under the paper's Zipf alphas |
 | `allocations` | Figure 10: nodes allocated and reused by cMVBT with GC |
 
-The integrated binary does not contain libmdbx, so the CoW curves from Figures 6 and 8 are not generated. All cMVBT, Version Chains, Frugal Lists, and vWeaver measurements supported by the corresponding paper figure are included.
+The integrated binary includes libmdbx for the CoW curves in Figures 5, 6, and 8. Figure 5 opens a read-only transaction immediately after the initial load and keeps that initial snapshot pinned while writes run; all repeated libmdbx range scans use that transaction. Figures 6 and 8 open fresh read transactions, matching their fresh-snapshot protocol. Figure 7 does not include libmdbx, matching the paper.
 
-The unified `paper.csv` records the key distribution and Zipfian theta, throughput and node counters, plus count, average, p50, p95, p99, p99.9, and maximum latency for updates, inserts, deletes, and scans. The plotting script creates separate Figures 5-10 and additional operation- and scan-latency figures for every distribution. `retries.csv` contains the Figure 9 retry groups, including uniform and all five requested Zipfian skews.
+The unified `paper.csv` records the key distribution and Zipfian theta, throughput and node counters, plus count, average, p50, p95, p99, p99.9, and maximum latency for updates, inserts, deletes, and scans. The plotting script uses the uniform online-YCSB rows to create only Figures 5-8 and 10 with the same colors, markers, legends, and panel layouts as `EDBT_2027-1.pdf`; it does not create the former extra or record-size plots. `retries.csv` supplies the five distributions shown in Figure 9.
 
 All experiment commands, including the general YCSB sweep, run through:
 

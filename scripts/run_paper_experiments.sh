@@ -5,23 +5,24 @@
 #   scripts/run_paper_experiments.sh [latency|concurrent|gc|scalability|retries|allocations|all ...]
 #
 # Current reproduction defaults:
-#   Figure 5: 2M initial inserts, 10M writes, 10K historical 1K-record scans, no GC.
-#   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh 1K-record readers.
+#   Figure 5: 2M initial inserts, 10M writes, 1K historical 100K-record scans, no GC.
+#   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh 100K-record readers.
 #   Figure 8: 60% updates; independent OLAP and OLTP thread scalability sweeps.
 #   Figure 9: 1M insertions with uniform access and Zipf alphas 0.1, 0.4, 0.8, 0.99, 1.4.
 #   Figure 10: cMVBT node allocation/reuse under the OLTP workload with GC.
 #
 # All online rows also contain update/insert/delete/scan count, average, p50, p95, p99,
-# p99.9 and maximum latency. The integrated systems do not include libmdbx, so the CoW
-# curves from Figures 6 and 8 cannot be reproduced by this binary.
+# p99.9 and maximum latency. libmdbx pins its initial read transaction for Figure 5;
+# Figures 6 and 8 use fresh read transactions. Figure 7 does not include libmdbx.
 #
 # Environment overrides:
 #   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
 #   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 WRITERS=32 READERS=16
 #   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
-#   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=10000 SCAN_RANGE=1000
-#   FIG5_SYSTEMS="cmvbt chain frugal vweaver" FIG6_SYSTEMS="cmvbt chain frugal"
-#   SCALE_SYSTEMS="cmvbt chain frugal" OLAP_LEVELS="1 2 4 6 8 16 32"
+#   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=1000 SCAN_RANGE=100000
+#   FIG5_SYSTEMS="cmvbt mdbx chain frugal vweaver" FIG6_SYSTEMS="cmvbt mdbx chain frugal"
+#   FIG7_SYSTEMS="cmvbt chain frugal" SCALE_SYSTEMS="cmvbt mdbx chain frugal"
+#   OLAP_LEVELS="1 2 4 6 8 16 32"
 #   OLTP_LEVELS="2 4 8 16 32 64" ZIPF_ALPHAS="0 0.1 0.4 0.8 0.99 1.4"
 #   NUMACTL=numactl QUICK=1 (small smoke-test sizes)
 set -uo pipefail
@@ -40,14 +41,15 @@ DISTRIBUTIONS=${DISTRIBUTIONS:-"uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zip
 INIT=${INIT:-2000000}
 WRITERS=${WRITERS:-32}
 READERS=${READERS:-16}
-SCANS=${SCANS:-10000}
-SCAN_RANGE=${SCAN_RANGE:-1000}
+SCANS=${SCANS:-1000}
+SCAN_RANGE=${SCAN_RANGE:-100000}
 LATENCY_OPERATIONS=${LATENCY_OPERATIONS:-10000000}
 THROUGHPUT_OPERATIONS=${THROUGHPUT_OPERATIONS:-1000000}
 RETRY_INSERTIONS=${RETRY_INSERTIONS:-1000000}
-FIG5_SYSTEMS=${FIG5_SYSTEMS:-"cmvbt chain frugal vweaver"}
-FIG6_SYSTEMS=${FIG6_SYSTEMS:-"cmvbt chain frugal"}
-SCALE_SYSTEMS=${SCALE_SYSTEMS:-"cmvbt chain frugal"}
+FIG5_SYSTEMS=${FIG5_SYSTEMS:-"cmvbt mdbx chain frugal vweaver"}
+FIG6_SYSTEMS=${FIG6_SYSTEMS:-"cmvbt mdbx chain frugal"}
+FIG7_SYSTEMS=${FIG7_SYSTEMS:-"cmvbt chain frugal"}
+SCALE_SYSTEMS=${SCALE_SYSTEMS:-"cmvbt mdbx chain frugal"}
 OLAP_LEVELS=${OLAP_LEVELS:-"1 2 4 6 8 16 32"}
 OLTP_LEVELS=${OLTP_LEVELS:-"2 4 8 16 32 64"}
 
@@ -58,6 +60,7 @@ if [ "$QUICK" = 1 ]; then
   LATENCY_OPERATIONS=10000
   THROUGHPUT_OPERATIONS=10000
   SCANS=100
+  SCAN_RANGE=1000
   RETRY_INSERTIONS=10000
   UPDATE_RATES="10 60 100"
   OLAP_LEVELS="1 2"
@@ -166,9 +169,11 @@ exp_latency() {
 
 exp_concurrent() { # gc experiment
   local gc=$1 experiment=$2
+  local systems=$FIG6_SYSTEMS
+  [ "$gc" = true ] && systems=$FIG7_SYSTEMS
   for rep in $(seq 1 "$REPEATS"); do
     for rate in $UPDATE_RATES; do
-      for system in $FIG6_SYSTEMS; do
+      for system in $systems; do
         for_distribution concurrent_distribution "$rep" "$rate" "$system" "$gc" "$experiment"
       done
     done
