@@ -37,6 +37,8 @@ pub trait YcsbIndex: Send + Sync {
     /// scans and reads of such keys are not verified; only used by tests on dedicated indexes).
     fn update_value(&self, key: Key, value: u64) -> bool;
     fn read_value(&self, key: Key) -> Option<u64>;
+    /// Releases this worker's final committed version before its result is joined.
+    fn finish_thread(&self) {}
 }
 
 pub const SYSTEMS: &str = "cmvbt|chain|frugal|vweaver|skiplist";
@@ -92,6 +94,10 @@ fn make_typed<V: Value>(name: &str, opts: SystemOptions) -> Result<Arc<dyn YcsbI
 struct CMvbt<V: Value>(MVBTSt<FAN_OUT, NUM_RECORDS, Key, V>);
 
 impl<V: Value> YcsbIndex for CMvbt<V> {
+    fn finish_thread(&self) {
+        crate::mv_sync::clock::release_thread_commit();
+    }
+
     fn read(&self, key: Key) -> ReadOutcome {
         let (snapshot, _pin) = self.0.pinned_reader_snapshot();
         match self.0.dispatch_crud(CRUDOperation::Point(key, snapshot)) {
@@ -181,6 +187,9 @@ mod dexa_system {
     }
 
     impl<V: Value> YcsbIndex for VersionLists<V> {
+        fn finish_thread(&self) {
+            crate::dexa::mvb_tree::clock::release_thread_commit();
+        }
         fn read(&self, key: Key) -> ReadOutcome {
             match self.0.dispatch(DexaOp::Point(key, self.0.current_version_for_reader())) {
                 (.., DexaResult::MatchedRecord(Some(r))) if r.payload.check(key) => ReadOutcome::Hit,
@@ -376,6 +385,7 @@ mod concurrent_model_tests {
                             }
                         }
                     }
+                    index.finish_thread();
                     present
                 })
             }).collect();

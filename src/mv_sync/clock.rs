@@ -1,6 +1,6 @@
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Relaxed, Release};
+use std::sync::atomic::{AtomicU8, AtomicUsize};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use std::sync::OnceLock;
 use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
@@ -22,8 +22,12 @@ pub fn __tid() -> Tid {
 static GLOBAL_MIN: PaddedAtomicVersion
     = PaddedAtomicVersion(AtomicVersion::new(version_handle::START_VERSION));
 
-static GLOBAL_DIRTY: PaddedAtomicBool
-    = PaddedAtomicBool(AtomicBool::new(false));
+const CLEAN: u8 = 0;
+const DIRTY: u8 = 1;
+const SCANNING: u8 = 2;
+
+static GLOBAL_DIRTY: PaddedAtomicU8
+    = PaddedAtomicU8(AtomicU8::new(CLEAN));
 
 const MAX_READS_IN_ROW_EPSILON: usize
     = 100;
@@ -55,10 +59,10 @@ impl Deref for PaddedAtomicVersion {
 }
 
 #[repr(align(64))]
-struct PaddedAtomicBool(AtomicBool);
-impl Deref for PaddedAtomicBool {
-    type Target = AtomicBool;
-    fn deref(&self) -> &AtomicBool { &self.0 }
+struct PaddedAtomicU8(AtomicU8);
+impl Deref for PaddedAtomicU8 {
+    type Target = AtomicU8;
+    fn deref(&self) -> &AtomicU8 { &self.0 }
 }
 
 struct ThreadState {
@@ -158,10 +162,16 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
 /// a reader obtains afterwards. Pass `Version::MAX` when no clock reading is at hand.
 #[inline]
 pub(crate) fn committed_snapshot(clock_time: Version) -> Version {
-    if !GLOBAL_DIRTY.load(Relaxed) {
+    let dirty = GLOBAL_DIRTY.load(Acquire);
+    if dirty == CLEAN {
         GLOBAL_MIN.load(Relaxed)
     }
     else {
+        // One reader owns the clean transition. Other readers remain latch-free: they aggregate
+        // independently rather than waiting for the owner. A concurrent commit changes SCANNING
+        // back to DIRTY, so the owner's final compare-exchange cannot erase its notification.
+        let owns_scan = dirty == DIRTY
+            && GLOBAL_DIRTY.compare_exchange(DIRTY, SCANNING, AcqRel, Acquire).is_ok();
         let agg_min_commit = committed()
             .iter()
             .take(THREAD_ID.load(Relaxed))
@@ -171,7 +181,9 @@ pub(crate) fn committed_snapshot(clock_time: Version) -> Version {
         let oo_min
             = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
 
-        GLOBAL_DIRTY.store(false, Relaxed);
+        if owns_scan {
+            let _ = GLOBAL_DIRTY.compare_exchange(SCANNING, CLEAN, Release, Relaxed);
+        }
         agg_min_commit.max(oo_min)
     }
 }
@@ -185,8 +197,16 @@ fn thread_local_commit_inactive(id: usize) {
 fn thread_local_commit(id: usize, version: Version) {
     unsafe {
         committed().get_unchecked(id).store(version, Release);
-        GLOBAL_DIRTY.store(true, Release);
+        GLOBAL_DIRTY.store(DIRTY, Release);
     }
+}
+
+/// Explicitly publishes worker completion. Joining a Rust thread waits for its closure, but its
+/// native thread-local destructors may run slightly later, so phase boundaries must not rely on
+/// `ThreadState::drop` to release the last committed version.
+#[inline]
+pub(crate) fn release_thread_commit() {
+    let _ = STATE.try_with(|state| state.set_inactive_commit());
 }
 
 pub(crate) struct GlobalClock(pub(crate) AtomicVersion);
@@ -218,10 +238,26 @@ impl GlobalClock {
 
 #[cfg(test)]
 mod tests {
-    use super::{GlobalClock, Version};
+    use super::{committed, GlobalClock, Version, INACTIVE_COMMIT_VERSION_MAX};
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[test]
+    fn explicit_worker_finish_releases_commit_slot_before_join() {
+        let clock = Arc::new(GlobalClock::new());
+        let worker_clock = Arc::clone(&clock);
+        let tid = thread::spawn(move || {
+            let version = worker_clock.start_commit();
+            worker_clock.end_commit(version);
+            let tid = super::__tid();
+            super::release_thread_commit();
+            tid
+        })
+        .join()
+        .unwrap();
+        assert_eq!(committed()[tid].load(std::sync::atomic::Ordering::Relaxed), INACTIVE_COMMIT_VERSION_MAX);
+    }
 
     #[test]
     fn relaxed_clock_allocates_unique_contiguous_versions_concurrently() {

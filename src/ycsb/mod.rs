@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! cMVBT ycsb --system cmvbt --workload a --records 10000000 --threads 32 --secs 20
-//! cMVBT ycsb --system vweaver --workload churn --theta 0.99 --olap-threads 16 --olap-range 10000
+//! cMVBT ycsb --system vweaver --workload churn --theta 0.99 --olap-threads 16 --olap-range 1000
 //! ```
 
 mod stats;
@@ -47,7 +47,7 @@ usage: ycsb [--key value]...
   --delete <oldest|dist>   key choice of deletes: FIFO expiry of the oldest key or the
                            key distribution (preset default). Inserts always use fresh keys.
   --olap-threads <n>       dedicated long-range scan threads                     [0]
-  --olap-range <n>         keys per OLAP scan                                    [10000]
+  --olap-range <n>         keys per OLAP scan                                     [1000]
   --root-index <fg|ll|sk|bt>  cMVBT root* index                                  [fg]
   --gc <bool>              garbage collection (cMVBT only, see notes)            [false]
   --seed <n>               base seed                                             [42]
@@ -131,7 +131,7 @@ fn parse_args(parms: &[String]) -> Result<Config, String> {
         warmup: get(&kv, "warmup", 2.0)?,
         scan_len: get(&kv, "scan-len", 100)?,
         olap_threads: get(&kv, "olap-threads", 0)?,
-        olap_range: get(&kv, "olap-range", 10_000)?,
+        olap_range: get(&kv, "olap-range", 1_000)?,
         root_index: get(&kv, "root-index", "fg".to_string())?,
         value: ValueKind::parse(&get(&kv, "value-size", "1024".to_string())?)?,
         gc: get(&kv, "gc", false)?,
@@ -178,6 +178,7 @@ fn load(index: &Arc<dyn YcsbIndex>, records: u64, threads: usize) -> Duration {
                 for key in (t * chunk)..((t + 1) * chunk).min(records) {
                     assert!(index.insert(key), "initial load: insert({key}) failed");
                 }
+                index.finish_thread();
             });
         }
     });
@@ -236,6 +237,7 @@ fn oltp_worker(
             stats.record(op, ok, ns);
         }
     }
+    index.finish_thread();
     stats
 }
 
@@ -264,6 +266,7 @@ fn olap_worker(index: &dyn YcsbIndex, cfg: &Config, next_fresh: &AtomicU64, next
             latency.record(ns);
         }
     }
+    index.finish_thread();
     (scans, records, violations, latency)
 }
 

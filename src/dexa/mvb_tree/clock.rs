@@ -1,8 +1,8 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
-use std::sync::atomic::Ordering::{Relaxed, Release};
+use std::sync::atomic::{AtomicU8, AtomicUsize};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use std::sync::OnceLock;
 use std::thread::{spawn, yield_now, JoinHandle};
 use parking_lot::Mutex;
@@ -20,8 +20,12 @@ thread_local! {
 static GLOBAL_MIN: PaddedAtomicVersion
     = PaddedAtomicVersion(AtomicVersion::new(START_VERSION));
 
-static GLOBAL_DIRTY: PaddedAtomicBool
-    = PaddedAtomicBool(AtomicBool::new(false));
+const CLEAN: u8 = 0;
+const DIRTY: u8 = 1;
+const SCANNING: u8 = 2;
+
+static GLOBAL_DIRTY: PaddedAtomicU8
+    = PaddedAtomicU8(AtomicU8::new(CLEAN));
 
 const MAX_READS_IN_ROW_EPSILON: usize
     = 100;
@@ -53,10 +57,10 @@ impl Deref for PaddedAtomicVersion {
 }
 
 #[repr(align(64))]
-struct PaddedAtomicBool(AtomicBool);
-impl Deref for PaddedAtomicBool {
-    type Target = AtomicBool;
-    fn deref(&self) -> &AtomicBool { &self.0 }
+struct PaddedAtomicU8(AtomicU8);
+impl Deref for PaddedAtomicU8 {
+    type Target = AtomicU8;
+    fn deref(&self) -> &AtomicU8 { &self.0 }
 }
 
 struct ThreadState {
@@ -148,10 +152,13 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
         }
     });
 
-    if !GLOBAL_DIRTY.load(Relaxed) {
+    let dirty = GLOBAL_DIRTY.load(Acquire);
+    if dirty == CLEAN {
         GLOBAL_MIN.load(Relaxed)
     }
     else {
+        let owns_scan = dirty == DIRTY
+            && GLOBAL_DIRTY.compare_exchange(DIRTY, SCANNING, AcqRel, Acquire).is_ok();
         let agg_min_commit = committed()
             .iter()
             .take(THREAD_ID.load(Relaxed))
@@ -161,7 +168,9 @@ pub(crate) fn committed_read(clock_time: Version) -> Version {
         let oo_min
             = GLOBAL_MIN.fetch_max(agg_min_commit, Relaxed);
 
-        GLOBAL_DIRTY.store(false, Relaxed);
+        if owns_scan {
+            let _ = GLOBAL_DIRTY.compare_exchange(SCANNING, CLEAN, Release, Relaxed);
+        }
         agg_min_commit.max(oo_min)
     }
 }
@@ -176,8 +185,13 @@ fn thread_local_commit(id: usize, version: Version) {
     unsafe {
         debug_assert!(committed().len() > id, "committed.len()={}, id={}", committed().len(), id);
         committed().get_unchecked(id).store(version, Release);
-        GLOBAL_DIRTY.store(true, Release);
+        GLOBAL_DIRTY.store(DIRTY, Release);
     }
+}
+
+#[inline]
+pub(crate) fn release_thread_commit() {
+    let _ = STATE.try_with(|state| state.set_inactive_commit());
 }
 
 pub(crate) struct GlobalClock(pub(crate) AtomicVersion);

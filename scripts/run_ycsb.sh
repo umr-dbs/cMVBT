@@ -8,7 +8,7 @@
 # Environment (defaults):
 #   SYSTEMS="cmvbt chain frugal vweaver skiplist"   WORKLOADS="a b c d e f churn"
 #   THETAS="0 0.5 0.8 0.99 1.2 1.4"   (0 = uniform; alpha above 1 is supported)   VALUE_SIZES="1024 8"
-#   RECORDS=10000000 THREADS=32 OLAP_THREADS=16 OLAP_RANGE=10000 SECS=20 WARMUP=2 GC=false REPEATS=1
+#   RECORDS=10000000 THREADS=32 OLAP_THREADS=16 OLAP_RANGE=1000 SECS=20 WARMUP=2 GC=false REPEATS=1
 #   RUN_TIMEOUT=3600   OUT=results/ycsb-<timestamp>   BIN=target/paper/cMVBT   QUICK=1 (tiny scale for a smoke test)
 # Every measured process is restricted to NUMA node 0 with `numactl --cpunodebind=0 --membind=0`.
 # Workload D reads the latest records (zipfian distance from the newest), E scans, churn is not YCSB (see readme); for
@@ -23,7 +23,7 @@ THETAS=${THETAS:-"0 0.5 0.8 0.99 1.2 1.4"}
 VALUE_SIZES=${VALUE_SIZES:-"1024 8"}
 THREADS=${THREADS:-32}
 OLAP_THREADS=${OLAP_THREADS:-16}
-OLAP_RANGE=${OLAP_RANGE:-10000}
+OLAP_RANGE=${OLAP_RANGE:-1000}
 WARMUP=${WARMUP:-2}
 GC=${GC:-false}
 REPEATS=${REPEATS:-1}

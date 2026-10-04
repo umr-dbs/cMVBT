@@ -20,8 +20,14 @@ pub trait PaperIndex: Send + Sync {
     fn scan_fresh(&self) -> usize;
     /// Scans the entire data set of `version`.
     fn scan_at(&self, version: u64) -> usize;
+    /// Scans at most `len` consecutive keys of the freshest visible snapshot.
+    fn scan_fresh_range(&self, start: Key, len: u64) -> usize;
+    /// Scans at most `len` consecutive keys at `version`.
+    fn scan_at_range(&self, start: Key, len: u64, version: u64) -> usize;
     /// The newest version a scan may ask for.
     fn newest_version(&self) -> u64;
+    /// Releases this worker's final committed version before its result is joined.
+    fn finish_thread(&self) {}
     fn reset_alloc_counts(&self);
     /// (nodes from the memory manager, nodes reused by the GC); (0, 0) for systems without node recycling.
     fn alloc_counts(&self) -> (u64, u64);
@@ -48,6 +54,10 @@ pub fn make_system(name: &str, root_index: &str, gc: bool) -> Result<Arc<dyn Pap
 struct CMvbt(MVBTSt<FAN_OUT, NUM_RECORDS, Key, u64>);
 
 impl PaperIndex for CMvbt {
+    fn finish_thread(&self) {
+        crate::mv_sync::clock::release_thread_commit();
+    }
+
     fn apply(&self, op: FileOp) -> bool {
         self.apply_versioned(op).is_some()
     }
@@ -71,6 +81,19 @@ impl PaperIndex for CMvbt {
 
     fn scan_at(&self, version: u64) -> usize {
         match self.0.dispatch_crud(CRUDOperation::Range(Interval::new(Key::MIN, Key::MAX), version)) {
+            CRUDOperationResult::MatchedRecords(found) => found.len(),
+            _ => 0,
+        }
+    }
+
+    fn scan_fresh_range(&self, start: Key, len: u64) -> usize {
+        let (snapshot, _pin) = self.0.pinned_reader_snapshot();
+        self.scan_at_range(start, len, snapshot)
+    }
+
+    fn scan_at_range(&self, start: Key, len: u64, version: u64) -> usize {
+        let end = start.saturating_add(len.saturating_sub(1));
+        match self.0.dispatch_crud(CRUDOperation::Range(Interval::new(start, end), version)) {
             CRUDOperationResult::MatchedRecords(found) => found.len(),
             _ => 0,
         }
@@ -116,6 +139,10 @@ mod dexa_system {
     }
 
     impl PaperIndex for VersionLists {
+        fn finish_thread(&self) {
+            crate::dexa::mvb_tree::clock::release_thread_commit();
+        }
+
         fn apply(&self, op: FileOp) -> bool {
             self.apply_versioned(op).is_some()
         }
@@ -138,6 +165,19 @@ mod dexa_system {
 
         fn scan_at(&self, version: u64) -> usize {
             match self.0.dispatch(DexaOp::Range(DexaInterval::new(Key::MIN, Key::MAX), version)).1 {
+                DexaResult::MatchedRecords(found) => found.len(),
+                _ => 0,
+            }
+        }
+
+
+        fn scan_fresh_range(&self, start: Key, len: u64) -> usize {
+            self.scan_at_range(start, len, self.0.current_version_for_reader())
+        }
+
+        fn scan_at_range(&self, start: Key, len: u64, version: u64) -> usize {
+            let end = start.saturating_add(len.saturating_sub(1));
+            match self.0.dispatch(DexaOp::Range(DexaInterval::new(start, end), version)).1 {
                 DexaResult::MatchedRecords(found) => found.len(),
                 _ => 0,
             }

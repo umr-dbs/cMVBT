@@ -72,6 +72,7 @@ pub(crate) fn apply_all(index: &dyn PaperIndex, ops: &[FileOp]) -> OltpCounts {
         counts.executed += 1;
         counts.failed += !index.apply(*op) as u64;
     }
+    index.finish_thread();
     counts
 }
 
@@ -287,6 +288,7 @@ pub fn main_retry_exp(parms: Vec<String>) {
                 };
                 index.apply(FileOp::Insert(key));
             }
+            index.finish_thread();
             retry_stats::flush_current_thread();
         })
     }).collect();

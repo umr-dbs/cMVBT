@@ -67,7 +67,7 @@ target/paper/cMVBT ycsb \
   --records 10000000 \
   --threads 32 \
   --olap-threads 16 \
-  --olap-range 10000 \
+  --olap-range 1000 \
   --secs 20 \
   --warmup 2 \
   --theta 0.99 \
@@ -147,7 +147,7 @@ The plotting script writes PDF and PNG figures for OLTP throughput, p99 latency,
 
 ## Reproduce the paper experiments
 
-The paper runner uses the online `paper-ycsb` driver: operations are generated when workers request them, not replayed from a workload file. It loads 2,000,000 records by default, then runs every applicable experiment with uniform access and each scrambled Zipfian skew `0.1`, `0.4`, `0.8`, `0.99`, and `1.4`. Every 1,000-operation block has the exact requested update percentage, with the remainder divided equally between fresh inserts and deletes. Deletes expire live keys and transient update/delete races are retried internally, so the reported paper operations all take effect.
+The paper runner uses the online `paper-ycsb` driver: operations are generated when workers request them, not replayed from a workload file. It loads 2,000,000 records by default, then runs every applicable experiment with uniform access and each scrambled Zipfian skew `0.1`, `0.4`, `0.8`, `0.99`, and `1.4`. OLAP operations select a 1,000-record range rather than scanning all 2,000,000 records; Figure 5 performs 10,000 such historical scans in total. The concurrent Figures 6-8 instead keep their scan workers active until the measured writers finish, matching their throughput/scalability protocol. Every 1,000-operation block has the exact requested update percentage, with the remainder divided equally between fresh inserts and deletes. Deletes expire live keys and transient update/delete races are retried internally, so the reported paper operations all take effect.
 
 ```bash
 scripts/run_paper_experiments.sh all
@@ -175,8 +175,8 @@ The groups correspond to the submitted paper:
 
 | Group | Paper protocol |
 | --- | --- |
-| `latency` | Figure 5: 2M initial inserts, 10M online writes, 10K full scans sampled uniformly from historical versions |
-| `concurrent` | Figure 6: 1M writes, 32 writers and 16 full-scan readers, without GC |
+| `latency` | Figure 5: 2M initial inserts, 10M online writes, 10K scans of 1K-record ranges sampled uniformly from measured historical versions |
+| `concurrent` | Figure 6: 1M writes, 32 writers and 16 concurrent 1K-record range readers, without GC |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
 | `retries` | Figure 9: retry groups for 1M inserts under the paper's Zipf alphas |

@@ -12,7 +12,18 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Updated all scripts">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/readme.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/run_paper_experiments.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/run_paper_experiments.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/run_ycsb.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/run_ycsb.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/dexa/mvb_tree/clock.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/dexa/mvb_tree/clock.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/mv_sync/clock.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/mv_sync/clock.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/mv_tree/smo.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/mv_tree/smo.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/paper/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/paper/online.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/online.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/paper/systems.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/systems.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ycsb/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/ycsb/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ycsb/systems.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/ycsb/systems.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ycsb/tests.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/ycsb/tests.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -322,6 +333,7 @@
       <workItem from="1791019180112" duration="273000" />
       <workItem from="1791019472047" duration="638000" />
       <workItem from="1791020117014" duration="201000" />
+      <workItem from="1791108108982" duration="662000" />
     </task>
     <task id="LOCAL-00001" summary="TxManager draft">
       <option name="closed" value="true" />

@@ -25,15 +25,16 @@ usage: paper-ycsb [--key value]...
   --writers <n>                                                          [32]
   --readers <n>             concurrent fresh-snapshot scanners           [16]
   --historical-scans <n>    scans after writes, uniformly over versions  [0]
+  --scan-range <n>          consecutive keys selected by each scan        [1000]
   --scan-threads <n>        threads used for historical scans             [1]
   --gc <bool>                                                            [false]
   --root-index <fg|ll|sk|bt>                                             [fg]
   --seed <n>                                                             [42]
   --csv <file>                                                           [paper.csv]
 
-The write mix is generated online in exact blocks of 1000 operations. Scans always cover the
-entire key space, as in the paper. Concurrent readers query the freshest visible snapshot;
-historical scans run after the writes and sample uniformly from every created version.";
+The write mix is generated online in exact blocks of 1000 operations. Scans select a bounded
+key range. Concurrent readers query the freshest visible snapshot;
+historical scans run after the writes and sample uniformly from versions created by the measured workload.";
 
 #[derive(Clone)]
 struct Config {
@@ -49,6 +50,7 @@ struct Config {
     writers: usize,
     readers: usize,
     historical_scans: u64,
+    scan_range: u64,
     scan_threads: usize,
     gc: bool,
     root_index: String,
@@ -79,7 +81,7 @@ fn parse(parms: &[String]) -> Result<Config, String> {
                 .map_err(|_| format!("bad value '{value}' for --{name}"))
         })
     }
-    const FLAGS: [&str; 17] = [
+    const FLAGS: [&str; 18] = [
         "system",
         "experiment",
         "repeat",
@@ -92,6 +94,7 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         "writers",
         "readers",
         "historical-scans",
+        "scan-range",
         "scan-threads",
         "gc",
         "root-index",
@@ -114,19 +117,19 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         writers: get(&values, "writers", 32)?,
         readers: get(&values, "readers", 16)?,
         historical_scans: get(&values, "historical-scans", 0)?,
+        scan_range: get(&values, "scan-range", 1_000)?,
         scan_threads: get(&values, "scan-threads", 1)?,
         gc: get(&values, "gc", false)?,
         root_index: get(&values, "root-index", "fg".to_string())?,
         seed: get(&values, "seed", 42)?,
         csv: get(&values, "csv", "paper.csv".to_string())?,
     };
-    if cfg.records == 0 || cfg.operations == 0 || cfg.writers == 0 || cfg.scan_threads == 0 {
-        return Err("records, operations, writers and scan-threads must be positive".into());
+    if cfg.records == 0 || cfg.operations == 0 || cfg.writers == 0 || cfg.scan_threads == 0
+        || cfg.scan_range == 0 || cfg.scan_range > cfg.records {
+        return Err("records, operations, writers, scan-threads and scan-range must be positive; scan-range must not exceed records".into());
     }
-    if cfg.update_rate > 100 || (100 - cfg.update_rate) % 2 != 0 {
-        return Err(
-            "update-rate must be in 0..=100 and leave an even remainder for insert/delete".into(),
-        );
+    if cfg.update_rate > 100 {
+        return Err("update-rate must be in 0..=100".into());
     }
     Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9).and_then(|dist| match dist {
         Dist::Uniform | Dist::Zipfian(_) => Ok(()),
@@ -137,6 +140,9 @@ fn parse(parms: &[String]) -> Result<Config, String> {
             "historical scans and concurrent readers are separate paper protocols; choose one"
                 .into(),
         );
+    }
+    if cfg.historical_scans > 0 && cfg.writers != 1 {
+        return Err("historical scans require one writer so versions map exactly to workload positions".into());
     }
     Ok(cfg)
 }
@@ -270,12 +276,64 @@ fn write_kind(operation: u64, update_rate: u64, seed: u64) -> WriteKind {
     }
 }
 
+/// Insert/delete counts in the exact prefix of the deterministic online mix.
+fn structural_counts_before(operations: u64, update_rate: u64, seed: u64) -> (u64, u64) {
+    let per_kind = (100 - update_rate) * 5;
+    let full_blocks = operations / 1000;
+    let (mut inserts, mut deletes) = (full_blocks * per_kind, full_blocks * per_kind);
+    for operation in full_blocks * 1000..operations {
+        match write_kind(operation, update_rate, seed) {
+            WriteKind::Insert => inserts += 1,
+            WriteKind::Delete => deletes += 1,
+            WriteKind::Update => {}
+        }
+    }
+    (inserts, deletes)
+}
+
 struct OnlineKeys {
     initial: u64,
     reserved: AtomicU64,
     published: AtomicU64,
     expired: AtomicU64,
     inserted: Box<[AtomicBool]>,
+}
+
+/// Exact workload commit versions for the historical snapshots that will actually be measured.
+/// Structural modifications may consume extra clock versions, so operation number cannot be
+/// reconstructed from the raw clock value.
+struct HistoricalPlan {
+    completed: Vec<u64>,
+    versions: Vec<AtomicU64>,
+    ordered: Vec<(u64, usize)>,
+}
+
+impl HistoricalPlan {
+    fn new(scans: u64, operations: u64, seed: u64) -> Self {
+        let mut rng = Rng::new(seed.wrapping_add(0x5CA9));
+        let completed: Vec<u64> = (0..scans)
+            .map(|_| 1 + rng.below(operations))
+            .collect();
+        let mut ordered: Vec<(u64, usize)> = completed
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(scan, operation)| (operation, scan))
+            .collect();
+        ordered.sort_unstable();
+        let versions = (0..scans).map(|_| AtomicU64::new(0)).collect();
+        Self { completed, versions, ordered }
+    }
+
+    fn record(&self, cursor: &mut usize, completed: u64, version: u64) {
+        while let Some(&(target, scan)) = self.ordered.get(*cursor) {
+            if target != completed {
+                break;
+            }
+            self.versions[scan].store(version, Release);
+            *cursor += 1;
+        }
+    }
 }
 
 impl OnlineKeys {
@@ -325,6 +383,12 @@ impl OnlineKeys {
         let hi = self.published.load(Acquire);
         chooser.next(rng, lo, hi.saturating_sub(1).max(lo))
     }
+
+    fn sample_scan_start(&self, range: u64, rng: &mut Rng) -> u64 {
+        let lo = self.expired.load(Acquire);
+        let hi = self.published.load(Acquire);
+        lo + rng.below(hi.saturating_sub(lo).saturating_sub(range).saturating_add(1).max(1))
+    }
 }
 
 fn load(index: &dyn PaperIndex, records: u64) -> Result<(), String> {
@@ -333,6 +397,7 @@ fn load(index: &dyn PaperIndex, records: u64) -> Result<(), String> {
             return Err(format!("initial insert({key}) failed"));
         }
     }
+    index.finish_thread();
     Ok(())
 }
 
@@ -341,6 +406,7 @@ fn writer(
     cfg: Config,
     next: Arc<AtomicU64>,
     keys: Arc<OnlineKeys>,
+    historical: Option<Arc<HistoricalPlan>>,
     barrier: Arc<Barrier>,
     seed: u64,
 ) -> WriterStats {
@@ -349,6 +415,7 @@ fn writer(
         .expect("validated paper distribution");
     let chooser = KeyChooser::new(dist, cfg.records, cfg.scramble);
     let mut stats = WriterStats::new();
+    let mut historical_cursor = 0;
     barrier.wait();
     loop {
         let operation = next.fetch_add(1, Relaxed);
@@ -357,63 +424,74 @@ fn writer(
         }
         let kind = write_kind(operation, cfg.update_rate, cfg.seed);
         let started = Instant::now();
-        match kind {
+        let version = match kind {
             WriteKind::Insert => {
                 let key = keys.reserve_insert();
-                assert!(
-                    index.apply(FileOp::Insert(key)),
-                    "fresh insert({key}) failed"
-                );
+                let version = index.apply_versioned(FileOp::Insert(key))
+                    .unwrap_or_else(|| panic!("fresh insert({key}) failed"));
                 keys.publish_insert(key);
                 stats.insert.record(started.elapsed().as_nanos() as u64);
+                version
             }
             WriteKind::Delete => {
                 let key = keys.reserve_delete();
-                assert!(
-                    index.apply(FileOp::Delete(key)),
-                    "live delete({key}) failed"
-                );
+                let version = index.apply_versioned(FileOp::Delete(key))
+                    .unwrap_or_else(|| panic!("live delete({key}) failed"));
                 stats.delete.record(started.elapsed().as_nanos() as u64);
+                version
             }
             WriteKind::Update => loop {
                 let key = keys.sample_live(&chooser, &mut rng);
-                if index.apply(FileOp::Update(key)) {
+                if let Some(version) = index.apply_versioned(FileOp::Update(key)) {
                     stats.update.record(started.elapsed().as_nanos() as u64);
-                    break;
+                    break version;
                 }
                 stats.internal_retries += 1;
             },
+        };
+        if let Some(plan) = &historical {
+            plan.record(&mut historical_cursor, operation + 1, version);
         }
     }
+    index.finish_thread();
     stats
 }
 
 fn fresh_reader(
     index: Arc<dyn PaperIndex>,
+    keys: Arc<OnlineKeys>,
+    scan_range: u64,
+    seed: u64,
     done: Arc<AtomicBool>,
     barrier: Arc<Barrier>,
 ) -> (Latency, u64) {
+    let mut rng = Rng::new(seed);
     let mut latency = Latency::new();
     let mut records = 0;
     barrier.wait();
     while !done.load(Acquire) {
+        let start = keys.sample_scan_start(scan_range, &mut rng);
         let started = Instant::now();
-        records += index.scan_fresh() as u64;
+        records += index.scan_fresh_range(start, scan_range) as u64;
         latency.record(started.elapsed().as_nanos() as u64);
     }
     (latency, records)
 }
 
-fn historical_scans(index: &Arc<dyn PaperIndex>, cfg: &Config) -> (Latency, u64, u128) {
+fn historical_scans(
+    index: &Arc<dyn PaperIndex>,
+    cfg: &Config,
+    plan: &Arc<HistoricalPlan>,
+) -> (Latency, u64, u128) {
     if cfg.historical_scans == 0 {
         return (Latency::new(), 0, 0);
     }
     let next = Arc::new(AtomicU64::new(0));
-    let newest = index.newest_version();
     let started = Instant::now();
     let workers: Vec<_> = (0..cfg.scan_threads)
         .map(|worker| {
-            let (index, next, cfg) = (index.clone(), next.clone(), cfg.clone());
+            let (index, next, cfg, plan) =
+                (index.clone(), next.clone(), cfg.clone(), plan.clone());
             thread::spawn(move || {
                 let mut rng = Rng::new(cfg.seed.wrapping_add(0x5CA9 + worker as u64));
                 let mut latency = Latency::new();
@@ -423,9 +501,21 @@ fn historical_scans(index: &Arc<dyn PaperIndex>, cfg: &Config) -> (Latency, u64,
                     if scan >= cfg.historical_scans {
                         break;
                     }
-                    let version = 1 + rng.below(newest.max(1));
+                    let completed = plan.completed[scan as usize];
+                    let version = plan.versions[scan as usize].load(Acquire);
+                    assert!(version > 0, "historical version for scan {scan} was not recorded");
+                    let (inserts, deletes) =
+                        structural_counts_before(completed, cfg.update_rate, cfg.seed);
+                    let lo = deletes;
+                    let hi = cfg.records + inserts;
+                    let start = lo + rng.below(
+                        hi.saturating_sub(lo)
+                            .saturating_sub(cfg.scan_range)
+                            .saturating_add(1)
+                            .max(1),
+                    );
                     let t = Instant::now();
-                    records += index.scan_at(version) as u64;
+                    records += index.scan_at_range(start, cfg.scan_range, version) as u64;
                     latency.record(t.elapsed().as_nanos() as u64);
                 }
                 (latency, records)
@@ -462,7 +552,7 @@ fn append_csv(
             .join(",")
     };
     let header = format!(
-        "experiment,repeat,system,root_index,seed,distribution,theta,scramble,update_rate,gc,records,operations,writers,readers,scan_mode,historical_scans,scan_threads,\
+        "experiment,repeat,system,root_index,seed,distribution,theta,scramble,update_rate,gc,records,operations,writers,readers,scan_mode,historical_scans,scan_range,scan_threads,\
 oltp_time_ns,oltp_ops_per_s,scan_time_ns,scan_ops_per_s,scan_records,internal_write_retries,blocks_allocated,blocks_reused,{},{},{},{}",
         latency("update"),
         latency("insert"),
@@ -496,7 +586,7 @@ oltp_time_ns,oltp_ops_per_s,scan_time_ns,scan_ops_per_s,scan_records,internal_wr
     };
     writeln!(
         file,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.3},{},{:.3},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.3},{},{:.3},{},{},{},{},{},{},{},{}",
         cfg.experiment,
         cfg.repeat,
         cfg.system,
@@ -519,6 +609,7 @@ oltp_time_ns,oltp_ops_per_s,scan_time_ns,scan_ops_per_s,scan_records,internal_wr
             "none"
         },
         cfg.historical_scans,
+        cfg.scan_range,
         cfg.scan_threads,
         oltp_ns,
         throughput,
@@ -541,7 +632,7 @@ fn run(cfg: Config) -> Result<(), String> {
     let index = make_system(&cfg.system, &cfg.root_index, cfg.gc)
         .map_err(|e| format!("{e} (systems: {SYSTEMS})"))?;
     println!(
-        "# online paper workload: system={} distribution={} theta={} update={}%, records={}, operations={}, writers={}, readers={}, historical_scans={}, gc={}",
+        "# online paper workload: system={} distribution={} theta={} update={}%, records={}, operations={}, writers={}, readers={}, historical_scans={}, scan_range={}, gc={}",
         cfg.system,
         cfg.distribution,
         if cfg.distribution == "uniform" { 0.0 } else { cfg.theta },
@@ -551,28 +642,50 @@ fn run(cfg: Config) -> Result<(), String> {
         cfg.writers,
         cfg.readers,
         cfg.historical_scans,
+        cfg.scan_range,
         cfg.gc
     );
-    load(index.as_ref(), cfg.records)?;
+    // Keep loading separate from the measurement workers; `load` explicitly releases its commit
+    // slot before this join boundary.
+    let loader = index.clone();
+    let records = cfg.records;
+    thread::spawn(move || load(loader.as_ref(), records))
+        .join()
+        .map_err(|_| "initial-load thread panicked".to_string())??;
     index.reset_alloc_counts();
 
     let next = Arc::new(AtomicU64::new(0));
     let keys = Arc::new(OnlineKeys::new(cfg.records, cfg.operations));
+    let historical = (cfg.historical_scans > 0).then(|| {
+        Arc::new(HistoricalPlan::new(
+            cfg.historical_scans,
+            cfg.operations,
+            cfg.seed,
+        ))
+    });
     let done = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(cfg.writers + cfg.readers + 1));
     let readers: Vec<_> = (0..cfg.readers)
-        .map(|_| {
-            let (index, done, barrier) = (index.clone(), done.clone(), barrier.clone());
-            thread::spawn(move || fresh_reader(index, done, barrier))
+        .map(|worker| {
+            let (index, keys, done, barrier) = (
+                index.clone(),
+                keys.clone(),
+                done.clone(),
+                barrier.clone(),
+            );
+            let scan_range = cfg.scan_range;
+            let seed = cfg.seed.wrapping_add(0x0A1A + worker as u64);
+            thread::spawn(move || fresh_reader(index, keys, scan_range, seed, done, barrier))
         })
         .collect();
     let writers: Vec<_> = (0..cfg.writers)
         .map(|worker| {
-            let (index, cfg, next, keys, barrier) = (
+            let (index, cfg, next, keys, historical, barrier) = (
                 index.clone(),
                 cfg.clone(),
                 next.clone(),
                 keys.clone(),
+                historical.clone(),
                 barrier.clone(),
             );
             thread::spawn(move || {
@@ -581,6 +694,7 @@ fn run(cfg: Config) -> Result<(), String> {
                     cfg.clone(),
                     next,
                     keys,
+                    historical,
                     barrier,
                     cfg.seed.wrapping_add(worker as u64 * 7919 + 1),
                 )
@@ -605,8 +719,11 @@ fn run(cfg: Config) -> Result<(), String> {
         scan_records += records;
     }
     let mut scan_ns = if cfg.readers > 0 { oltp_ns } else { 0 };
-    let (historical, historical_records, historical_ns) = historical_scans(&index, &cfg);
-    scan.merge(&historical);
+    let (historical_latency, historical_records, historical_ns) = match &historical {
+        Some(plan) => historical_scans(&index, &cfg, plan),
+        None => (Latency::new(), 0, 0),
+    };
+    scan.merge(&historical_latency);
     scan_records += historical_records;
     if historical_ns > 0 {
         scan_ns = historical_ns;
@@ -681,9 +798,16 @@ mod tests {
     fn paper_defaults_to_two_million_uniform_records() {
         let cfg = parse(&[]).unwrap();
         assert_eq!(cfg.records, 2_000_000);
+        assert_eq!(cfg.scan_range, 1_000);
         assert_eq!(cfg.distribution, "uniform");
         assert_eq!(cfg.theta, 0.99);
         assert!(cfg.scramble);
+    }
+
+    #[test]
+    fn paper_update_rates_allow_the_75_percent_figure() {
+        let cfg = parse(&["--update-rate".into(), "75".into()]).unwrap();
+        assert_eq!(cfg.update_rate, 75);
     }
 
     #[test]
@@ -700,4 +824,38 @@ mod tests {
             assert_eq!(cfg.theta, theta);
         }
     }
+
+    #[test]
+    fn structural_prefix_counts_match_the_generated_mix() {
+        for rate in [10, 60, 75, 100] {
+            for operations in [0, 1, 17, 999, 1000, 1731, 10_000] {
+                let mut expected = (0, 0);
+                for operation in 0..operations {
+                    match write_kind(operation, rate, 42) {
+                        WriteKind::Insert => expected.0 += 1,
+                        WriteKind::Delete => expected.1 += 1,
+                        WriteKind::Update => {}
+                    }
+                }
+                assert_eq!(structural_counts_before(operations, rate, 42), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn historical_plan_records_exact_versions_for_sampled_operations() {
+        let plan = HistoricalPlan::new(500, 10_000, 42);
+        let mut cursor = 0;
+        for completed in 1..=10_000 {
+            plan.record(&mut cursor, completed, 1_000_000 + completed);
+        }
+        assert_eq!(cursor, plan.ordered.len());
+        for scan in 0..plan.completed.len() {
+            assert_eq!(
+                plan.versions[scan].load(Relaxed),
+                1_000_000 + plan.completed[scan]
+            );
+        }
+    }
+
 }

@@ -19,6 +19,17 @@ fn system(name: &str, gc: bool) -> std::sync::Arc<dyn YcsbIndex> {
     make_system(name, SystemOptions::new(gc, KIND.get())).unwrap()
 }
 
+/// Preload on a short-lived writer, matching the production YCSB loader. The worker explicitly
+/// releases its last completed-version slot before the join boundary.
+fn preload(index: &std::sync::Arc<dyn YcsbIndex>, keys: u64) {
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            (0..keys).for_each(|key| assert!(index.insert(key)));
+            index.finish_thread();
+        });
+    });
+}
+
 /// Runs `f` for every system, with GC off and on, with 8-byte inline values and with 1 KB records.
 fn for_each_system(mut f: impl FnMut(&str, bool)) {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -89,7 +100,7 @@ fn no_lost_updates() {
     const KEYS: u64 = 4000;
     for_each_system(|name, gc| {
         let index = system(name, gc);
-        (0..KEYS).for_each(|k| assert!(index.insert(k)));
+        preload(&index, KEYS);
         std::thread::scope(|s| {
             for t in 0..THREADS {
                 let index = &index;
@@ -99,6 +110,7 @@ fn no_lost_updates() {
                             assert!(index.update_value(k, round * 1_000_000 + k), "{name} gc={gc}: update {k}");
                         }
                     }
+                    index.finish_thread();
                 });
             }
         });
@@ -117,7 +129,7 @@ fn contended_updates_and_deletes_on_shared_keys() {
     const HOT: u64 = 96;
     for_each_system(|name, gc| {
         let index = system(name, gc);
-        (0..HOT).for_each(|k| assert!(index.insert(k)));
+        preload(&index, HOT);
         let deleted: Vec<AtomicU64> = (0..HOT).map(|_| AtomicU64::new(0)).collect();
         let updates_after_delete = AtomicU64::new(0);
 
@@ -137,10 +149,10 @@ fn contended_updates_and_deletes_on_shared_keys() {
                             updates_after_delete.fetch_add(1, Relaxed);
                         }
                     }
+                    index.finish_thread();
                 });
             }
         });
-
         let mut live = 0;
         for k in 0..HOT {
             let deletes = deleted[k as usize].load(Relaxed);
@@ -166,7 +178,10 @@ fn racing_inserts_of_the_same_key_have_one_winner() {
         std::thread::scope(|s| {
             for _ in 0..8 {
                 let (index, wins) = (&index, &wins);
-                s.spawn(move || (0..KEYS).for_each(|k| { if index.insert(k) { wins.fetch_add(1, Relaxed); } }));
+                s.spawn(move || {
+                    (0..KEYS).for_each(|k| { if index.insert(k) { wins.fetch_add(1, Relaxed); } });
+                    index.finish_thread();
+                });
             }
         });
         assert_eq!(wins.load(Relaxed), KEYS, "gc={gc}: every key must be inserted exactly once");
@@ -284,4 +299,10 @@ fn driver_rejects_bad_arguments() {
     assert!(bad(&["--warmup", "-1"]));
     assert!(bad(&["--unknown", "value"]));
     assert!(bad(&["records", "5"]));
+}
+
+#[test]
+fn driver_defaults_to_1000_record_olap_scans() {
+    let cfg = super::parse_args(&[]).unwrap();
+    assert_eq!(cfg.olap_range, 1_000);
 }
