@@ -80,14 +80,22 @@ def add_panel_border(fig, bounds=(0.025, 0.045, 0.95, 0.92)):
     ))
 
 
-def draw_line(ax, data, system, x, y, label=None):
+def categorical_axis(values):
+    """Return sorted values and evenly spaced plotting positions."""
+    categories = sorted(values.dropna().unique())
+    return categories, {value: position for position, value in enumerate(categories)}
+
+
+def draw_line(ax, data, system, x, y, label=None, positions=None):
     rows = data[data["system"] == system]
     if rows.empty:
         return
     values = rows.groupby(x, sort=True)[y].mean()
     color, marker, linestyle = STYLE[system]
+    plot_x = ([positions[value] for value in values.index]
+              if positions is not None else values.index)
     ax.plot(
-        values.index,
+        plot_x,
         values.values,
         color=color,
         marker=marker,
@@ -109,15 +117,19 @@ def stacked_panels():
     fig = plt.figure(figsize=(4.65, 5.05))
     top = fig.add_axes([0.18, 0.62, 0.75, 0.31])
     bottom = fig.add_axes([0.18, 0.14, 0.75, 0.31])
-    add_panel_border(fig, (0.035, 0.505, 0.93, 0.47))
-    add_panel_border(fig, (0.035, 0.015, 0.93, 0.47))
+    # Keep the frame outside the long, rotated throughput labels.
+    add_panel_border(fig, (0.01, 0.505, 0.98, 0.47))
+    add_panel_border(fig, (0.01, 0.015, 0.98, 0.47))
     return fig, (top, bottom)
 
 
-def percent_ticks(ax, values):
-    ticks = sorted(values.unique())
-    ax.set_xticks(ticks)
-    ax.set_xticklabels([f"{value:g}%" for value in ticks])
+def categorical_ticks(ax, categories, formatter=str):
+    ax.set_xticks(range(len(categories)))
+    ax.set_xticklabels([formatter(value) for value in categories])
+
+
+def percent_ticks(ax, categories):
+    categorical_ticks(ax, categories, lambda value: f"{value:g}%")
 
 
 def save(fig, out: Path, name: str, formats):
@@ -132,10 +144,12 @@ def figure5(data, out, formats):
     if part.empty:
         return
     part["scan_avg_ms"] = part["scan_avg_ns"] / 1e6
+    updates, positions = categorical_axis(part["update_rate"])
     fig, ax = single_panel()
     for system in ("mdbx", "frugal", "chain", "vweaver", "cmvbt"):
-        draw_line(ax, part, system, "update_rate", "scan_avg_ms")
-    percent_ticks(ax, part["update_rate"])
+        draw_line(ax, part, system, "update_rate", "scan_avg_ms",
+                  positions=positions)
+    percent_ticks(ax, updates)
     ax.set_xlabel("Update Percentage")
     ax.set_ylabel("Average Latency (ms)")
     ax.set_ylim(bottom=0)
@@ -149,15 +163,18 @@ def throughput(data, experiment, number, gc, out, formats):
         return
     fig, (scan_ax, oltp_ax) = stacked_panels()
     suffix = " GC" if gc else ""
+    updates, positions = categorical_axis(part["update_rate"])
 
     for system in ("mdbx", "frugal", "chain", "cmvbt"):
         label = f"{LABELS[system]}{suffix}"
-        draw_line(scan_ax, part, system, "update_rate", "scan_ops_per_s", label)
-        draw_line(oltp_ax, part, system, "update_rate", "oltp_ops_per_s", label)
+        draw_line(scan_ax, part, system, "update_rate", "scan_ops_per_s", label,
+                  positions)
+        draw_line(oltp_ax, part, system, "update_rate", "oltp_ops_per_s", label,
+                  positions)
 
     for ax in (scan_ax, oltp_ax):
         ax.set_yscale("log")
-        percent_ticks(ax, part["update_rate"])
+        percent_ticks(ax, updates)
         ax.set_xlabel("Update Percentage")
     scan_ax.set_ylabel("Scans Throughput (tx/s)")
     oltp_ax.set_ylabel("OLTP Throughput (tx/s)")
@@ -172,17 +189,21 @@ def figure8(data, out, formats):
     if olap.empty and oltp.empty:
         return
     fig, (scan_ax, oltp_ax) = stacked_panels()
+    readers, reader_positions = categorical_axis(olap["readers"])
+    writers, writer_positions = categorical_axis(oltp["writers"])
     for system in ("mdbx", "frugal", "chain", "cmvbt"):
-        draw_line(scan_ax, olap, system, "readers", "scan_ops_per_s")
-        draw_line(oltp_ax, oltp, system, "writers", "oltp_ops_per_s")
+        draw_line(scan_ax, olap, system, "readers", "scan_ops_per_s",
+                  positions=reader_positions)
+        draw_line(oltp_ax, oltp, system, "writers", "oltp_ops_per_s",
+                  positions=writer_positions)
 
     scan_ax.set_yscale("log")
-    scan_ax.set_xticks(sorted(olap["readers"].unique()))
+    categorical_ticks(scan_ax, readers, lambda value: f"{value:g}")
     scan_ax.set_xlabel("Concurrency Level (OLAP Threads)")
     scan_ax.set_ylabel("Scan Throughput (tx/s)")
 
     oltp_ax.set_yscale("log")
-    oltp_ax.set_xticks(sorted(oltp["writers"].unique()))
+    categorical_ticks(oltp_ax, writers, lambda value: f"{value:g}")
     oltp_ax.set_xlabel("Concurrency Level (OLTP Threads)")
     oltp_ax.set_ylabel("OLTP Throughput (tx/s)")
     oltp_ax.legend(loc="center right", fontsize=8)
@@ -225,20 +246,26 @@ def figure10(data, out, formats):
     if part.empty:
         return
     fig, ax = single_panel()
-    for column, label, linestyle, marker in (
-        ("blocks_reused", "Nodes Reused", "-", "P"),
-        ("blocks_allocated", "Nodes Allocated", "--", "*"),
+    updates, positions = categorical_axis(part["update_rate"])
+    for column, label, linestyle, marker, zero_offset in (
+        ("blocks_reused", "Nodes Reused", "-", "P", -0.025),
+        ("blocks_allocated", "Nodes Allocated", "--", "*", 0.025),
     ):
         values = part.groupby("update_rate", sort=True)[column].mean()
-        # Zero is a valid measurement but has no position on the paper's log
-        # axis. Mask it instead of drawing a false off-axis vertical segment.
-        values = values.where(values > 0)
-        ax.plot(values.index, values.values, color="#8b0000", marker=marker,
+        plot_x = [positions[value] + (zero_offset if count == 0 else 0)
+                  for value, count in values.items()]
+        # The two series are both zero at 100%. Give coincident zero markers a
+        # tiny horizontal dodge so neither valid measurement hides the other.
+        ax.plot(plot_x, values.values,
+                color="#8b0000", marker=marker,
                 linestyle=linestyle, markersize=5, markeredgewidth=1.0, label=label)
-    ax.set_xticks(sorted(part["update_rate"].unique()))
+    percent_ticks(ax, updates)
     ax.set_xlabel("Update Percentage")
     ax.set_ylabel("Total Nodes")
-    ax.set_yscale("log")
+    # A symmetric-log axis preserves the paper's logarithmic presentation for
+    # positive counts while giving the valid zero measurements a visible home.
+    ax.set_yscale("symlog", linthresh=1)
+    ax.set_ylim(bottom=0)
     ax.legend(loc="center right", fontsize=8)
     save(fig, out, "fig10_node_reuse", formats)
 
@@ -246,6 +273,8 @@ def figure10(data, out, formats):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("run", type=Path)
+    parser.add_argument("--fig5-run", type=Path,
+                        help="optional run whose paper.csv supplies Figure 5")
     parser.add_argument("--out", type=Path,
                         help="output directory (default: RUN/paper-figures)")
     parser.add_argument("--formats", default="pdf,png")
@@ -255,11 +284,17 @@ def main():
     if data is None:
         sys.exit(1)
     data = paper_rows(data)
+    fig5_data = data
+    if args.fig5_run:
+        fig5_data = read_csv(args.fig5_run / "paper.csv")
+        if fig5_data is None:
+            sys.exit(1)
+        fig5_data = paper_rows(fig5_data)
     out = args.out or args.run / "paper-figures"
     out.mkdir(parents=True, exist_ok=True)
     formats = [extension.strip() for extension in args.formats.split(",") if extension.strip()]
 
-    figure5(data, out, formats)
+    figure5(fig5_data, out, formats)
     throughput(data, "fig6_throughput_nogc", 6, False, out, formats)
     throughput(data, "fig7_throughput_gc", 7, True, out, formats)
     figure8(data, out, formats)

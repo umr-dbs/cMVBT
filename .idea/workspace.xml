@@ -11,8 +11,12 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Updated all scripts">
+    <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Updated all scripts; latency here">
+      <change afterPath="$PROJECT_DIR$/scripts/run_fig6_perf.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/readme.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/plot_paper_results.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/plot_paper_results.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/paper/online.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/online.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -20,7 +24,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="253" />
+    <option name="cachedIndexableFilesCount" value="147" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
@@ -58,23 +62,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.019166187476725" />
-      <entry key="MS500" value="1.6830016043711031" />
-      <entry key="S2" value="3.101720901185398" />
-      <entry key="S5" value="4.01655093832281" />
-      <entry key="S10" value="4.458745012900433" />
-      <entry key="S30" value="4.8071067693109955" />
-      <entry key="S60" value="4.901891797116896" />
-      <entry key="M2" value="4.9505224045580825" />
-      <entry key="M5" value="4.980106267945051" />
-      <entry key="M10" value="4.990035929583749" />
-      <entry key="M15" value="4.993353456589425" />
-      <entry key="M30" value="4.996674811741511" />
-      <entry key="H1" value="4.998336926422196" />
-      <entry key="H2" value="4.999168343310153" />
-      <entry key="H4" value="4.999584141674989" />
-      <entry key="D1" value="4.999930686114851" />
-      <entry key="W1" value="4.999990097914419" />
+      <entry key="MS100" value="1.0073919304826822" />
+      <entry key="MS500" value="2.046472209257456" />
+      <entry key="S2" value="4.685565648397435" />
+      <entry key="S5" value="6.274641217366812" />
+      <entry key="S10" value="7.045678318502661" />
+      <entry key="S30" value="7.658338380826994" />
+      <entry key="S60" value="7.825997370244431" />
+      <entry key="M2" value="7.912187480567698" />
+      <entry key="M5" value="7.964677914534786" />
+      <entry key="M10" value="7.9823059096980575" />
+      <entry key="M15" value="7.988196580903676" />
+      <entry key="M30" value="7.994094607248856" />
+      <entry key="H1" value="7.9970463821188025" />
+      <entry key="H2" value="7.99852296059482" />
+      <entry key="H4" value="7.99926142267024" />
+      <entry key="D1" value="7.999876895773665" />
+      <entry key="W1" value="7.999982413485907" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -96,23 +100,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="0.9844527065582743" />
-      <entry key="MS500" value="1.6703365239980636" />
-      <entry key="S2" value="3.08038539843823" />
-      <entry key="S5" value="3.999732647611058" />
-      <entry key="S10" value="4.448079338007022" />
-      <entry key="S30" value="4.802930931992834" />
-      <entry key="S60" value="4.89971759495231" />
-      <entry key="M2" value="4.949413026191423" />
-      <entry key="M5" value="4.979657077249601" />
-      <entry key="M10" value="4.989810419843266" />
-      <entry key="M15" value="4.993202912980055" />
-      <entry key="M30" value="4.996599437899286" />
-      <entry key="H1" value="4.998299213964224" />
-      <entry key="H2" value="4.999149480693514" />
-      <entry key="H4" value="4.999574708769327" />
-      <entry key="D1" value="4.999929113742018" />
-      <entry key="W1" value="4.999989873284295" />
+      <entry key="MS100" value="0.9649895441644604" />
+      <entry key="MS500" value="1.9822739042228015" />
+      <entry key="S2" value="4.633795358742933" />
+      <entry key="S5" value="6.242367981500069" />
+      <entry key="S10" value="7.026348230220722" />
+      <entry key="S30" value="7.650999337324717" />
+      <entry key="S60" value="7.8222018190534355" />
+      <entry key="M2" value="7.910257035627237" />
+      <entry key="M5" value="7.9638977423447095" />
+      <entry key="M10" value="7.981914478229609" />
+      <entry key="M15" value="7.987935326648745" />
+      <entry key="M30" value="7.993963829906662" />
+      <entry key="H1" value="7.996980955848315" />
+      <entry key="H2" value="7.998490238054009" />
+      <entry key="H4" value="7.999245059047727" />
+      <entry key="D1" value="7.999874168176503" />
+      <entry key="W1" value="7.9999820238211665" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
@@ -326,6 +330,10 @@
       <workItem from="1791141219345" duration="340000" />
       <workItem from="1791184633750" duration="1069000" />
       <workItem from="1791219575719" duration="1064000" />
+      <workItem from="1791267987360" duration="3383000" />
+      <workItem from="1791285150135" duration="364000" />
+      <workItem from="1791290849581" duration="1976000" />
+      <workItem from="1791303909811" duration="1457000" />
     </task>
     <task id="LOCAL-00001" summary="TxManager draft">
       <option name="closed" value="true" />
@@ -375,7 +383,15 @@
       <option name="project" value="LOCAL" />
       <updated>1791141378416</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="Updated all scripts; latency here">
+      <option name="closed" value="true" />
+      <created>1791268009653</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1791268009653</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -397,7 +413,8 @@
     <MESSAGE value="Thanks Marius for bugfix!" />
     <MESSAGE value="Cleaned the treeroot wrapper." />
     <MESSAGE value="Updated all scripts" />
-    <option name="LAST_COMMIT_MESSAGE" value="Updated all scripts" />
+    <MESSAGE value="Updated all scripts; latency here" />
+    <option name="LAST_COMMIT_MESSAGE" value="Updated all scripts; latency here" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

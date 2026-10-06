@@ -187,6 +187,14 @@ The integrated binary includes libmdbx for the CoW curves in Figures 5, 6, and 8
 
 The unified `paper.csv` records the key distribution and Zipfian theta, throughput and node counters, plus count, average, p50, p95, p99, p99.9, and maximum latency for updates, inserts, deletes, and scans. The plotting script uses the uniform online-YCSB rows to create only Figures 5-8 and 10 with the same colors, markers, legends, and panel layouts as `EDBT_2027-1.pdf`; it does not create the former extra or record-size plots. `retries.csv` supplies the five distributions shown in Figure 9.
 
+To profile the concurrent phase of Figure 6 with Linux hardware counters, run
+`scripts/run_fig6_perf.sh`. The script excludes initial loading from the counters,
+runs separate core, cache, and memory/TLB event groups to limit multiplexing, and
+writes both raw `perf stat` files and a combined long-form `perf-events.csv`.
+`PROTOCOL=pdf` (the default) uses 10K-record full scans as described in the
+submitted PDF; `PROTOCOL=current` uses the current 2M-record/100K-range protocol.
+Use `QUICK=1` for a short setup check before collecting full measurements.
+
 All experiment commands, including the general YCSB sweep, run through:
 
 ```bash

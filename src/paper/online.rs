@@ -1,10 +1,10 @@
 //! Online (non-trace-replay) implementation of the workloads used by Section 8 of the paper.
 
-use super::systems::{make_system, PaperIndex, SYSTEMS};
+use super::systems::{PaperIndex, SYSTEMS, make_system};
 use super::{FileOp, Key};
 use crate::ycsb::{Dist, KeyChooser, Rng};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Barrier};
@@ -182,6 +182,65 @@ struct Latency {
     count: u64,
     total_ns: u128,
     max_ns: u64,
+}
+
+/// Optional synchronization with `perf stat --control`. The FIFOs are opened
+/// only after the initial load, so hardware counters cover the concurrent
+/// Figure 6 phase rather than database construction.
+struct PerfControl {
+    control: std::fs::File,
+    ack: BufReader<std::fs::File>,
+}
+
+impl PerfControl {
+    fn from_env() -> Result<Option<Self>, String> {
+        let control_path = std::env::var_os("CMVBT_PERF_CONTROL_FIFO");
+        let ack_path = std::env::var_os("CMVBT_PERF_ACK_FIFO");
+        match (control_path, ack_path) {
+            (None, None) => Ok(None),
+            (Some(control_path), Some(ack_path)) => {
+                let control = OpenOptions::new()
+                    .write(true)
+                    .open(&control_path)
+                    .map_err(|e| {
+                        format!(
+                            "open perf control FIFO {}: {e}",
+                            std::path::Path::new(&control_path).display()
+                        )
+                    })?;
+                let ack = OpenOptions::new().read(true).open(&ack_path).map_err(|e| {
+                    format!(
+                        "open perf acknowledgement FIFO {}: {e}",
+                        std::path::Path::new(&ack_path).display()
+                    )
+                })?;
+                Ok(Some(Self {
+                    control,
+                    ack: BufReader::new(ack),
+                }))
+            }
+            _ => Err("CMVBT_PERF_CONTROL_FIFO and CMVBT_PERF_ACK_FIFO must be set together".into()),
+        }
+    }
+
+    fn command(&mut self, command: &str) -> Result<(), String> {
+        writeln!(self.control, "{command}")
+            .and_then(|_| self.control.flush())
+            .map_err(|e| format!("send perf command '{command}': {e}"))?;
+        let mut acknowledgement = String::new();
+        self.ack
+            .read_line(&mut acknowledgement)
+            .map_err(|e| format!("read perf acknowledgement for '{command}': {e}"))?;
+        let acknowledgement =
+            acknowledgement.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+        if acknowledgement != "ack" {
+            return Err(format!(
+                "unexpected perf acknowledgement for '{command}': {:?}",
+                acknowledgement
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Latency {
@@ -839,6 +898,10 @@ fn run(cfg: Config) -> Result<(), String> {
         })
         .collect();
 
+    let mut perf_control = PerfControl::from_env()?;
+    if let Some(control) = perf_control.as_mut() {
+        control.command("enable")?;
+    }
     let started = Instant::now();
     barrier.wait();
     let mut stats = WriterStats::new();
@@ -854,6 +917,9 @@ fn run(cfg: Config) -> Result<(), String> {
         let (part, records) = reader.join().expect("paper reader panicked");
         scan.merge(&part);
         scan_records += records;
+    }
+    if let Some(control) = perf_control.as_mut() {
+        control.command("disable")?;
     }
     let mut scan_ns = if cfg.readers > 0 { oltp_ns } else { 0 };
     let (historical_latency, historical_records, historical_ns) = match &historical {
