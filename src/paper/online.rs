@@ -1,7 +1,7 @@
 //! Online (non-trace-replay) implementation of the workloads used by Section 8 of the paper.
 
-use super::FileOp;
-use super::systems::{PaperIndex, SYSTEMS, make_system};
+use super::systems::{make_system, PaperIndex, SYSTEMS};
+use super::{FileOp, Key};
 use crate::ycsb::{Dist, KeyChooser, Rng};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -26,14 +26,16 @@ usage: paper-ycsb [--key value]...
   --readers <n>             concurrent fresh-snapshot scanners           [16]
   --historical-scans <n>    scans after writes, uniformly over versions  [0]
   --scan-range <n>          consecutive keys selected by each scan      [100000]
+  --scan-mode <range|full>  bounded ranges or the entire version          [range]
+  --key-mode <sliding|random> dense FIFO keys or paper-style random keys [sliding]
   --scan-threads <n>        threads used for historical scans             [1]
   --gc <bool>                                                            [false]
   --root-index <fg|ll|sk|bt>                                             [fg]
   --seed <n>                                                             [42]
   --csv <file>                                                           [paper.csv]
 
-The write mix is generated online in exact blocks of 1000 operations. Scans select a bounded
-key range. Concurrent readers query the freshest visible snapshot;
+The write mix is generated online in exact blocks of 1000 operations. Concurrent readers query
+the freshest visible snapshot. Full scans and random keys reproduce the Figure 5 protocol;
 historical scans run after the writes and sample uniformly from versions created by the measured workload.";
 
 #[derive(Clone)]
@@ -51,6 +53,8 @@ struct Config {
     readers: usize,
     historical_scans: u64,
     scan_range: u64,
+    scan_mode: String,
+    key_mode: String,
     scan_threads: usize,
     gc: bool,
     root_index: String,
@@ -81,7 +85,7 @@ fn parse(parms: &[String]) -> Result<Config, String> {
                 .map_err(|_| format!("bad value '{value}' for --{name}"))
         })
     }
-    const FLAGS: [&str; 18] = [
+    const FLAGS: [&str; 20] = [
         "system",
         "experiment",
         "repeat",
@@ -95,6 +99,8 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         "readers",
         "historical-scans",
         "scan-range",
+        "scan-mode",
+        "key-mode",
         "scan-threads",
         "gc",
         "root-index",
@@ -118,6 +124,8 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         readers: get(&values, "readers", 16)?,
         historical_scans: get(&values, "historical-scans", 0)?,
         scan_range: get(&values, "scan-range", 100_000)?,
+        scan_mode: get(&values, "scan-mode", "range".to_string())?,
+        key_mode: get(&values, "key-mode", "sliding".to_string())?,
         scan_threads: get(&values, "scan-threads", 1)?,
         gc: get(&values, "gc", false)?,
         root_index: get(&values, "root-index", "fg".to_string())?,
@@ -129,12 +137,25 @@ fn parse(parms: &[String]) -> Result<Config, String> {
         || cfg.writers == 0
         || cfg.scan_threads == 0
         || cfg.scan_range == 0
-        || cfg.scan_range > cfg.records
     {
-        return Err("records, operations, writers, scan-threads and scan-range must be positive; scan-range must not exceed records".into());
+        return Err(
+            "records, operations, writers, scan-threads and scan-range must be positive".into(),
+        );
+    }
+    if cfg.scan_mode == "range" && cfg.scan_range > cfg.records {
+        return Err("scan-range must not exceed records in range mode".into());
     }
     if cfg.update_rate > 100 {
         return Err("update-rate must be in 0..=100".into());
+    }
+    if !matches!(cfg.scan_mode.as_str(), "range" | "full") {
+        return Err("scan-mode must be 'range' or 'full'".into());
+    }
+    if !matches!(cfg.key_mode.as_str(), "sliding" | "random") {
+        return Err("key-mode must be 'sliding' or 'random'".into());
+    }
+    if cfg.key_mode == "random" && cfg.writers != 1 {
+        return Err("paper-style random keys require exactly one writer".into());
     }
     Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9).and_then(|dist| match dist {
         Dist::Uniform | Dist::Zipfian(_) => Ok(()),
@@ -406,17 +427,91 @@ impl OnlineKeys {
     }
 }
 
-fn load(index: &dyn PaperIndex, records: u64) -> Result<(), String> {
-    if let Some(result) = index.bulk_load(records) {
-        return result;
+/// A seeded permutation of the u64 key space. Consecutive logical record IDs
+/// become unique, randomly distributed physical keys like the paper's trace generator.
+fn paper_key(id: u64, seed: u64) -> u64 {
+    let mut key = id.wrapping_add(seed).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    key = (key ^ (key >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    key = (key ^ (key >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    key ^ (key >> 31)
+}
+
+fn load(index: &dyn PaperIndex, cfg: &Config) -> Result<(), String> {
+    if cfg.key_mode == "sliding" {
+        if let Some(result) = index.bulk_load(cfg.records) {
+            return result;
+        }
     }
-    for key in 0..records {
+    for id in 0..cfg.records {
+        let key = if cfg.key_mode == "random" {
+            paper_key(id, cfg.seed)
+        } else {
+            id
+        };
         if !index.apply(FileOp::Insert(key)) {
             return Err(format!("initial insert({key}) failed"));
         }
     }
     index.finish_thread();
     Ok(())
+}
+
+fn random_key_writer(
+    index: Arc<dyn PaperIndex>,
+    cfg: Config,
+    historical: Option<Arc<HistoricalPlan>>,
+    barrier: Arc<Barrier>,
+    seed: u64,
+) -> WriterStats {
+    let mut rng = Rng::new(seed);
+    let dist =
+        Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9).expect("validated paper distribution");
+    let chooser = KeyChooser::new(dist, cfg.records, cfg.scramble);
+    let mut live: Vec<Key> = (0..cfg.records).map(|id| paper_key(id, cfg.seed)).collect();
+    let mut next_id = cfg.records;
+    let mut stats = WriterStats::new();
+    let mut historical_cursor = 0;
+    barrier.wait();
+
+    for operation in 0..cfg.operations {
+        let kind = write_kind(operation, cfg.update_rate, cfg.seed);
+        let started = Instant::now();
+        let version = match kind {
+            WriteKind::Insert => {
+                let key = paper_key(next_id, cfg.seed);
+                next_id += 1;
+                let version = index
+                    .apply_versioned(FileOp::Insert(key))
+                    .unwrap_or_else(|| panic!("fresh random insert({key}) failed"));
+                live.push(key);
+                stats.insert.record(started.elapsed().as_nanos() as u64);
+                version
+            }
+            WriteKind::Delete => {
+                let rank = chooser.next(&mut rng, 0, live.len() as u64 - 1) as usize;
+                let key = live.swap_remove(rank);
+                let version = index
+                    .apply_versioned(FileOp::Delete(key))
+                    .unwrap_or_else(|| panic!("random live delete({key}) failed"));
+                stats.delete.record(started.elapsed().as_nanos() as u64);
+                version
+            }
+            WriteKind::Update => loop {
+                let rank = chooser.next(&mut rng, 0, live.len() as u64 - 1) as usize;
+                let key = live[rank];
+                if let Some(version) = index.apply_versioned(FileOp::Update(key)) {
+                    stats.update.record(started.elapsed().as_nanos() as u64);
+                    break version;
+                }
+                stats.internal_retries += 1;
+            },
+        };
+        if let Some(plan) = &historical {
+            plan.record(&mut historical_cursor, operation + 1, version);
+        }
+    }
+    index.finish_thread();
+    stats
 }
 
 fn writer(
@@ -428,6 +523,9 @@ fn writer(
     barrier: Arc<Barrier>,
     seed: u64,
 ) -> WriterStats {
+    if cfg.key_mode == "random" {
+        return random_key_writer(index, cfg, historical, barrier, seed);
+    }
     let mut rng = Rng::new(seed);
     let dist =
         Dist::parse(&cfg.distribution, cfg.theta, 0.01, 0.9).expect("validated paper distribution");
@@ -526,25 +624,29 @@ fn historical_scans(
                         version > 0,
                         "historical version for scan {scan} was not recorded"
                     );
-                    let (lo, hi) = if index.historical_scan_mode() == "pinned_initial" {
-                        // libmdbx can preserve the beginning snapshot only by
-                        // retaining its read transaction. Keep every range in
-                        // that snapshot's original key domain.
-                        (0, cfg.records)
-                    } else {
-                        let (inserts, deletes) =
-                            structural_counts_before(completed, cfg.update_rate, cfg.seed);
-                        (deletes, cfg.records + inserts)
-                    };
-                    let start = lo
-                        + rng.below(
-                            hi.saturating_sub(lo)
-                                .saturating_sub(cfg.scan_range)
-                                .saturating_add(1)
-                                .max(1),
-                        );
                     let t = Instant::now();
-                    records += index.scan_at_range(start, cfg.scan_range, version) as u64;
+                    records += if cfg.scan_mode == "full" {
+                        index.scan_at(version) as u64
+                    } else {
+                        let (lo, hi) = if index.historical_scan_mode() == "pinned_initial" {
+                            // libmdbx can preserve the beginning snapshot only by
+                            // retaining its read transaction. Keep every range in
+                            // that snapshot's original key domain.
+                            (0, cfg.records)
+                        } else {
+                            let (inserts, deletes) =
+                                structural_counts_before(completed, cfg.update_rate, cfg.seed);
+                            (deletes, cfg.records + inserts)
+                        };
+                        let start = lo
+                            + rng.below(
+                                hi.saturating_sub(lo)
+                                    .saturating_sub(cfg.scan_range)
+                                    .saturating_add(1)
+                                    .max(1),
+                            );
+                        index.scan_at_range(start, cfg.scan_range, version) as u64
+                    };
                     latency.record(t.elapsed().as_nanos() as u64);
                 }
                 (latency, records)
@@ -662,7 +764,7 @@ fn run(cfg: Config) -> Result<(), String> {
     let index = make_system(&cfg.system, &cfg.root_index, cfg.gc)
         .map_err(|e| format!("{e} (systems: {SYSTEMS})"))?;
     println!(
-        "# online paper workload: system={} distribution={} theta={} update={}%, records={}, operations={}, writers={}, readers={}, historical_scans={}, scan_range={}, gc={}",
+        "# online paper workload: system={} distribution={} theta={} update={}%, records={}, operations={}, writers={}, readers={}, historical_scans={}, scan_mode={}, scan_range={}, key_mode={}, gc={}",
         cfg.system,
         cfg.distribution,
         if cfg.distribution == "uniform" {
@@ -676,14 +778,16 @@ fn run(cfg: Config) -> Result<(), String> {
         cfg.writers,
         cfg.readers,
         cfg.historical_scans,
+        cfg.scan_mode,
         cfg.scan_range,
+        cfg.key_mode,
         cfg.gc
     );
     // Keep loading separate from the measurement workers; `load` explicitly releases its commit
     // slot before this join boundary.
     let loader = index.clone();
-    let records = cfg.records;
-    thread::spawn(move || load(loader.as_ref(), records))
+    let load_cfg = cfg.clone();
+    thread::spawn(move || load(loader.as_ref(), &load_cfg))
         .join()
         .map_err(|_| "initial-load thread panicked".to_string())??;
     index.reset_alloc_counts();
@@ -763,6 +867,11 @@ fn run(cfg: Config) -> Result<(), String> {
     }
 
     let (allocated, reused) = index.alloc_counts();
+    let scan_mode = if cfg.historical_scans > 0 && cfg.scan_mode == "full" {
+        format!("{}_full", index.historical_scan_mode())
+    } else {
+        index.historical_scan_mode().to_string()
+    };
     append_csv(
         &cfg,
         oltp_ns,
@@ -772,7 +881,7 @@ fn run(cfg: Config) -> Result<(), String> {
         scan_ns,
         allocated,
         reused,
-        index.historical_scan_mode(),
+        &scan_mode,
     )?;
     println!(
         "# OLTP {:.0} ops/s; scans {:.1}/s; scan p50 {:.3} ms p99 {:.3} ms; internal write retries {}",
@@ -832,10 +941,39 @@ mod tests {
     fn paper_defaults_to_two_million_uniform_records() {
         let cfg = parse(&[]).unwrap();
         assert_eq!(cfg.records, 2_000_000);
-        assert_eq!(cfg.scan_range, 1_000);
+        assert_eq!(cfg.scan_range, 100_000);
+        assert_eq!(cfg.scan_mode, "range");
+        assert_eq!(cfg.key_mode, "sliding");
         assert_eq!(cfg.distribution, "uniform");
         assert_eq!(cfg.theta, 0.99);
         assert!(cfg.scramble);
+    }
+
+    #[test]
+    fn full_scan_random_key_mode_accepts_the_figure5_shape() {
+        let cfg = parse(&[
+            "--records".into(),
+            "10000".into(),
+            "--scan-range".into(),
+            "10000".into(),
+            "--scan-mode".into(),
+            "full".into(),
+            "--key-mode".into(),
+            "random".into(),
+            "--writers".into(),
+            "1".into(),
+        ])
+        .unwrap();
+        assert_eq!(cfg.scan_mode, "full");
+        assert_eq!(cfg.key_mode, "random");
+        assert_eq!(cfg.records, 10_000);
+    }
+
+    #[test]
+    fn paper_key_permutation_has_no_duplicates() {
+        let mut keys: Vec<_> = (0..100_000).map(|id| paper_key(id, 42)).collect();
+        keys.sort_unstable();
+        assert!(keys.windows(2).all(|pair| pair[0] != pair[1]));
     }
 
     #[test]

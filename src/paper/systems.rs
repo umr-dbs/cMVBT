@@ -6,7 +6,7 @@ use super::{FileOp, Key};
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
 use crate::mv_crud_model::crud_operation_result::CRUDOperationResult;
-use crate::mv_tree::mvbt::{FAN_OUT, MVBTSt, NUM_RECORDS};
+use crate::mv_tree::mvbt::{MVBTSt, FAN_OUT, NUM_RECORDS};
 use crate::mv_utils::interval::Interval;
 
 pub const SYSTEMS: &str = "cmvbt|chain|frugal|vweaver|skiplist|mdbx";
@@ -144,13 +144,13 @@ impl PaperIndex for CMvbt {
 mod mdbx_system {
     use super::*;
     use libmdbx::{
-        Database, DatabaseOptions, Mode, RO, ReadWriteOptions, SyncMode, TableFlags, Transaction,
-        WriteFlags, WriteMap,
+        Database, DatabaseOptions, Mode, ReadWriteOptions, SyncMode, TableFlags, Transaction,
+        WriteFlags, WriteMap, RO,
     };
     use std::borrow::Cow;
     use std::path::PathBuf;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::sync::Mutex;
 
     static NEXT_DATABASE: AtomicU64 = AtomicU64::new(0);
     const LOAD_BATCH_SIZE: u64 = 10_000;
@@ -218,7 +218,11 @@ mod mdbx_system {
         fn scan_txn(txn: &Transaction<'_, RO, WriteMap>, start: Key, len: u64) -> usize {
             let table = txn.open_table(None).expect("libmdbx open table for scan");
             let mut cursor = txn.cursor(&table).expect("libmdbx cursor");
-            let end = start.saturating_add(len.saturating_sub(1));
+            let end = if start == Key::MIN && len == u64::MAX {
+                Key::MAX
+            } else {
+                start.saturating_add(len.saturating_sub(1))
+            };
             let mut item = cursor
                 .set_range::<Cow<'_, [u8]>, ()>(&start.to_be_bytes())
                 .expect("libmdbx cursor set_range");

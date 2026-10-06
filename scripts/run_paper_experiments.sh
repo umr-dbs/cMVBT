@@ -5,7 +5,7 @@
 #   scripts/run_paper_experiments.sh [latency|concurrent|gc|scalability|retries|allocations|all ...]
 #
 # Current reproduction defaults:
-#   Figure 5: 2M initial inserts, 10M writes, 1K historical 100K-record scans, no GC.
+#   Figure 5: 10K random initial inserts, 10M random-key writes, 1K whole-version scans, no GC.
 #   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh 100K-record readers.
 #   Figure 8: 60% updates; independent OLAP and OLTP thread scalability sweeps.
 #   Figure 9: 1M insertions with uniform access and Zipf alphas 0.1, 0.4, 0.8, 0.99, 1.4.
@@ -17,11 +17,12 @@
 #
 # Environment overrides:
 #   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
-#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 WRITERS=32 READERS=16
+#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 FIG5_INIT=10000 WRITERS=32 READERS=16
 #   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
 #   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=1000 SCAN_RANGE=100000
 #   FIG5_SYSTEMS="cmvbt mdbx chain frugal vweaver" FIG6_SYSTEMS="cmvbt mdbx chain frugal"
 #   FIG7_SYSTEMS="cmvbt chain frugal" SCALE_SYSTEMS="cmvbt mdbx chain frugal"
+#   FIG5_DISTRIBUTIONS="uniform" (the workload used by the paper's Figure 5)
 #   OLAP_LEVELS="1 2 4 6 8 16 32"
 #   OLTP_LEVELS="2 4 8 16 32 64" ZIPF_ALPHAS="0 0.1 0.4 0.8 0.99 1.4"
 #   NUMACTL=numactl QUICK=1 (small smoke-test sizes)
@@ -38,7 +39,9 @@ SLEEP=${SLEEP:-2}
 UPDATE_RATES=${UPDATE_RATES:-"10 20 50 75 90 100"}
 ZIPF_ALPHAS=${ZIPF_ALPHAS:-"0 0.1 0.4 0.8 0.99 1.4"}
 DISTRIBUTIONS=${DISTRIBUTIONS:-"uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"}
+FIG5_DISTRIBUTIONS=${FIG5_DISTRIBUTIONS:-"uniform"}
 INIT=${INIT:-2000000}
+FIG5_INIT=${FIG5_INIT:-10000}
 WRITERS=${WRITERS:-32}
 READERS=${READERS:-16}
 SCANS=${SCANS:-1000}
@@ -57,6 +60,7 @@ if [ "$QUICK" = 1 ]; then
   # Keep enough headroom for temporary insert/delete imbalance inside a 1,000-op block,
   # so every bounded historical range can still return SCAN_RANGE records.
   INIT=2000
+  FIG5_INIT=2000
   LATENCY_OPERATIONS=10000
   THROUGHPUT_OPERATIONS=10000
   SCANS=100
@@ -95,7 +99,7 @@ FAILS="$OUT/failures.txt"
   echo "git: $(git rev-parse HEAD 2>/dev/null) ($(git status --porcelain 2>/dev/null | wc -l) uncommitted files)"
   echo "binary: $BIN"
   echo "numa: $NUMACTL --cpunodebind=0 --membind=0"
-  echo "INIT=$INIT DISTRIBUTIONS=$DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
+  echo "INIT=$INIT FIG5_INIT=$FIG5_INIT DISTRIBUTIONS=$DISTRIBUTIONS FIG5_DISTRIBUTIONS=$FIG5_DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
   lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|NUMA node|Thread|Core|Socket"
   free -g 2>/dev/null | head -2
   echo "$NUMA_HARDWARE"
@@ -119,16 +123,20 @@ run() { # run <label> <expected-csv> <command...>
   sleep "$SLEEP"
 }
 
-online() { # label experiment repeat system distribution theta rate gc operations writers readers historical-scans scan-threads
+online() { # label experiment repeat system distribution theta rate gc operations writers readers historical-scans scan-threads [records key-mode scan-mode]
   local label=$1 experiment=$2 rep=$3 system=$4
   local distribution=$5 theta=$6 rate=$7 gc=$8 operations=$9
   shift 9
   local writers=$1 readers=$2 historical=$3 scan_threads=$4
+  local records=${5:-$INIT} key_mode=${6:-sliding} scan_mode=${7:-range}
+  local effective_scan_range=$SCAN_RANGE
+  [ "$scan_mode" = full ] && effective_scan_range=$records
   run "$label" "$CSV" "$BIN" paper-ycsb --experiment "$experiment" --repeat "$rep" \
     --system "$system" --distribution "$distribution" --theta "$theta" --scramble true \
-    --update-rate "$rate" --gc "$gc" --records "$INIT" \
+    --update-rate "$rate" --gc "$gc" --records "$records" --key-mode "$key_mode" \
     --operations "$operations" --writers "$writers" --readers "$readers" \
-    --historical-scans "$historical" --scan-range "$SCAN_RANGE" --scan-threads "$scan_threads" \
+    --historical-scans "$historical" --scan-mode "$scan_mode" \
+    --scan-range "$effective_scan_range" --scan-threads "$scan_threads" \
     --seed "$((41 + rep))" --csv "$CSV"
 }
 
@@ -154,10 +162,13 @@ for_distribution() { # callback remaining-args...
 latency_distribution() {
   local distribution=$1 theta=$2 rep=$3 rate=$4 system=$5
   online "fig5/$system/$distribution$theta/u$rate/#$rep" fig5_scan_latency "$rep" "$system" \
-    "$distribution" "$theta" "$rate" false "$LATENCY_OPERATIONS" 1 0 "$SCANS" 1
+    "$distribution" "$theta" "$rate" false "$LATENCY_OPERATIONS" 1 0 "$SCANS" 1 \
+    "$FIG5_INIT" random full
 }
 
 exp_latency() {
+  local saved_distributions=$DISTRIBUTIONS
+  DISTRIBUTIONS=$FIG5_DISTRIBUTIONS
   for rep in $(seq 1 "$REPEATS"); do
     for rate in $UPDATE_RATES; do
       for system in $FIG5_SYSTEMS; do
@@ -165,6 +176,7 @@ exp_latency() {
       done
     done
   done
+  DISTRIBUTIONS=$saved_distributions
 }
 
 exp_concurrent() { # gc experiment

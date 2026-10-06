@@ -20,7 +20,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="126" />
+    <option name="cachedIndexableFilesCount" value="253" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
@@ -323,6 +323,9 @@
       <workItem from="1791019472047" duration="638000" />
       <workItem from="1791020117014" duration="201000" />
       <workItem from="1791108108982" duration="1152000" />
+      <workItem from="1791141219345" duration="340000" />
+      <workItem from="1791184633750" duration="1069000" />
+      <workItem from="1791219575719" duration="1064000" />
     </task>
     <task id="LOCAL-00001" summary="TxManager draft">
       <option name="closed" value="true" />
@@ -364,7 +367,15 @@
       <option name="project" value="LOCAL" />
       <updated>1791111406961</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="Updated all scripts">
+      <option name="closed" value="true" />
+      <created>1791141378416</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1791141378416</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

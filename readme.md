@@ -176,7 +176,7 @@ The groups correspond to the submitted paper:
 
 | Group | Paper protocol |
 | --- | --- |
-| `latency` | Figure 5: 2M initial inserts, 10M online writes, 1K scans of 100K-record ranges sampled uniformly from measured historical versions |
+| `latency` | Figure 5: 10K random initial inserts, 10M random-key online writes, and 1K whole-version scans sampled uniformly from measured historical versions |
 | `concurrent` | Figure 6: 1M writes, 32 writers and 16 concurrent 100K-record range readers, without GC |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
