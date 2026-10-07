@@ -32,9 +32,6 @@ debug = 0
 incremental = false
 overflow-checks = false
 
-[build]
-rustflags = ["-C", "target-cpu=native"]
-
 [features]
 default = ["dexa", "mdbx"]
 hardware-lock-elision = []

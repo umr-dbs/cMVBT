@@ -39,13 +39,17 @@ git clone https://github.com/umr-dbs/cMVBT.git
 cd cMVBT
 ```
 
-Build the optimized paper binary:
+Build the optimized paper binary from source (recommended for measurements):
 
 ```bash
 cargo build --profile paper
 ```
 
 The resulting executable is `target/paper/cMVBT`.
+
+This build uses `target-cpu=native`, so compile it on the machine that will run
+the experiments. This enables the CPU-specific optimizations intended by the
+paper configuration.
 
 Run the correctness tests:
 
@@ -58,6 +62,35 @@ Install the plotting dependencies if needed:
 ```bash
 python3 -m pip install matplotlib pandas
 ```
+
+## Prebuilt binary
+
+A prebuilt executable is included for artifact inspection and smoke tests:
+
+```text
+artifacts/bin/cMVBT-v0.0.110-linux-x86_64-glibc238
+```
+
+It targets x86-64 Linux and requires glibc 2.38 or newer. Verify the file before
+running it:
+
+```bash
+sha256sum --check artifacts/SHA256SUMS
+artifacts/bin/cMVBT-v0.0.110-linux-x86_64-glibc238 ycsb --help
+```
+
+To use it with the experiment runner, set `BIN`:
+
+```bash
+BIN=artifacts/bin/cMVBT-v0.0.110-linux-x86_64-glibc238 \
+OUT=results/paper-smoke QUICK=1 \
+  scripts/run_paper_load_experiments.sh all
+```
+
+The prebuilt executable favors portability and is not the reference binary for
+performance measurements. Build from source on the evaluation machine for
+paper-result comparisons. Build provenance and compatibility details are in
+[`artifacts/README.md`](artifacts/README.md).
 
 ## Reproduce the paper experiments
 
