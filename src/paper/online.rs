@@ -1,5 +1,6 @@
 //! Online (non-trace-replay) implementation of the workloads used by Section 8 of the paper.
 
+use super::reader_perf::{ReaderPerf, ReaderPerfValue};
 use super::systems::{PaperIndex, SYSTEMS, make_system};
 use super::{FileOp, Key};
 use crate::ycsb::{Dist, KeyChooser, Rng};
@@ -638,21 +639,28 @@ fn fresh_reader(
     index: Arc<dyn PaperIndex>,
     keys: Arc<OnlineKeys>,
     scan_range: u64,
+    full_scan: bool,
     seed: u64,
     done: Arc<AtomicBool>,
     barrier: Arc<Barrier>,
-) -> (Latency, u64) {
+) -> (Latency, u64, Vec<ReaderPerfValue>) {
     let mut rng = Rng::new(seed);
     let mut latency = Latency::new();
     let mut records = 0;
+    let mut perf = ReaderPerf::prepare();
     barrier.wait();
+    perf.start();
     while !done.load(Acquire) {
-        let start = keys.sample_scan_start(scan_range, &mut rng);
         let started = Instant::now();
-        records += index.scan_fresh_range(start, scan_range) as u64;
+        records += if full_scan {
+            index.scan_fresh() as u64
+        } else {
+            let start = keys.sample_scan_start(scan_range, &mut rng);
+            index.scan_fresh_range(start, scan_range) as u64
+        };
         latency.record(started.elapsed().as_nanos() as u64);
     }
-    (latency, records)
+    (latency, records, perf.finish())
 }
 
 fn historical_scans(
@@ -723,6 +731,67 @@ fn historical_scans(
 }
 
 const LATENCY_COLUMNS: &str = "count,avg_ns,p50_ns,p95_ns,p99_ns,p999_ns,max_ns";
+
+fn append_reader_perf(
+    cfg: &Config,
+    reader: usize,
+    scan_count: u64,
+    scan_records: u64,
+    values: &[ReaderPerfValue],
+) -> Result<(), String> {
+    let Some(path) = std::env::var_os("CMVBT_READER_PERF_CSV") else {
+        return Ok(());
+    };
+    if values.is_empty() {
+        return Ok(());
+    }
+    let group = std::env::var("CMVBT_READER_PERF_GROUP").unwrap_or_default();
+    let path = std::path::Path::new(&path);
+    let existed = path.exists();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    if !existed {
+        writeln!(
+            file,
+            "experiment,repeat,system,update_rate,event_group,reader,event,value,raw_value,time_enabled_ns,time_running_ns,enabled_fraction,scan_count,scan_records,error"
+        )
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    }
+    let clean = |text: &str| text.replace([',', '\n', '\r'], ";");
+    for value in values {
+        let display = |number: Option<u64>| number.map(|n| n.to_string()).unwrap_or_default();
+        let enabled_fraction = match (value.time_enabled_ns, value.time_running_ns) {
+            (Some(enabled), Some(running)) if enabled > 0 => {
+                format!("{:.6}", running as f64 / enabled as f64)
+            }
+            _ => String::new(),
+        };
+        writeln!(
+            file,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            clean(&cfg.experiment),
+            cfg.repeat,
+            clean(&cfg.system),
+            cfg.update_rate,
+            clean(&group),
+            reader,
+            value.event,
+            display(value.value),
+            display(value.raw_value),
+            display(value.time_enabled_ns),
+            display(value.time_running_ns),
+            enabled_fraction,
+            scan_count,
+            scan_records,
+            clean(value.error.as_deref().unwrap_or_default()),
+        )
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
 
 fn append_csv(
     cfg: &Config,
@@ -870,8 +939,11 @@ fn run(cfg: Config) -> Result<(), String> {
             let (index, keys, done, barrier) =
                 (index.clone(), keys.clone(), done.clone(), barrier.clone());
             let scan_range = cfg.scan_range;
+            let full_scan = cfg.scan_mode == "full";
             let seed = cfg.seed.wrapping_add(0x0A1A + worker as u64);
-            thread::spawn(move || fresh_reader(index, keys, scan_range, seed, done, barrier))
+            thread::spawn(move || {
+                fresh_reader(index, keys, scan_range, full_scan, seed, done, barrier)
+            })
         })
         .collect();
     let writers: Vec<_> = (0..cfg.writers)
@@ -913,8 +985,9 @@ fn run(cfg: Config) -> Result<(), String> {
 
     let mut scan = Latency::new();
     let mut scan_records = 0;
-    for reader in readers {
-        let (part, records) = reader.join().expect("paper reader panicked");
+    for (reader_id, reader) in readers.into_iter().enumerate() {
+        let (part, records, perf) = reader.join().expect("paper reader panicked");
+        append_reader_perf(&cfg, reader_id, part.count, records, &perf)?;
         scan.merge(&part);
         scan_records += records;
     }

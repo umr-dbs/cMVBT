@@ -6,7 +6,8 @@
 #
 # Current reproduction defaults:
 #   Figure 5: 10K random initial inserts, 10M random-key writes, 1K whole-version scans, no GC.
-#   Figures 6/7: 2M initial inserts, 1M writes, 32 writers, 16 fresh 100K-record readers.
+#   Figure 6: 2M initial inserts, 1M writes, 1 writer, 16 fresh 100K-record readers.
+#   Figure 7: the same workload with 32 writers and GC enabled.
 #   Figure 8: 60% updates; independent OLAP and OLTP thread scalability sweeps.
 #   Figure 9: 1M insertions with uniform access and Zipf alphas 0.1, 0.4, 0.8, 0.99, 1.4.
 #   Figure 10: cMVBT node allocation/reuse under the OLTP workload with GC.
@@ -17,7 +18,7 @@
 #
 # Environment overrides:
 #   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
-#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 FIG5_INIT=10000 WRITERS=32 READERS=16
+#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 FIG5_INIT=10000 FIG6_WRITERS=1 WRITERS=32 READERS=16
 #   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
 #   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=1000 SCAN_RANGE=100000
 #   FIG5_SYSTEMS="cmvbt mdbx chain frugal vweaver" FIG6_SYSTEMS="cmvbt mdbx chain frugal"
@@ -43,6 +44,7 @@ FIG5_DISTRIBUTIONS=${FIG5_DISTRIBUTIONS:-"uniform"}
 INIT=${INIT:-2000000}
 FIG5_INIT=${FIG5_INIT:-10000}
 WRITERS=${WRITERS:-32}
+FIG6_WRITERS=${FIG6_WRITERS:-1}
 READERS=${READERS:-16}
 SCANS=${SCANS:-1000}
 SCAN_RANGE=${SCAN_RANGE:-100000}
@@ -99,7 +101,7 @@ FAILS="$OUT/failures.txt"
   echo "git: $(git rev-parse HEAD 2>/dev/null) ($(git status --porcelain 2>/dev/null | wc -l) uncommitted files)"
   echo "binary: $BIN"
   echo "numa: $NUMACTL --cpunodebind=0 --membind=0"
-  echo "INIT=$INIT FIG5_INIT=$FIG5_INIT DISTRIBUTIONS=$DISTRIBUTIONS FIG5_DISTRIBUTIONS=$FIG5_DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
+  echo "INIT=$INIT FIG5_INIT=$FIG5_INIT DISTRIBUTIONS=$DISTRIBUTIONS FIG5_DISTRIBUTIONS=$FIG5_DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES FIG6_WRITERS=$FIG6_WRITERS WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
   lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|NUMA node|Thread|Core|Socket"
   free -g 2>/dev/null | head -2
   echo "$NUMA_HARDWARE"
@@ -194,8 +196,10 @@ exp_concurrent() { # gc experiment
 
 concurrent_distribution() {
   local distribution=$1 theta=$2 rep=$3 rate=$4 system=$5 gc=$6 experiment=$7
+  local writers=$WRITERS
+  [ "$experiment" = fig6_throughput_nogc ] && writers=$FIG6_WRITERS
   online "$experiment/$system/$distribution$theta/u$rate/#$rep" "$experiment" "$rep" "$system" \
-    "$distribution" "$theta" "$rate" "$gc" "$THROUGHPUT_OPERATIONS" "$WRITERS" "$READERS" 0 1
+    "$distribution" "$theta" "$rate" "$gc" "$THROUGHPUT_OPERATIONS" "$writers" "$READERS" 0 1
 }
 
 scalability_distribution() {

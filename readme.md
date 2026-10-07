@@ -177,7 +177,7 @@ The groups correspond to the submitted paper:
 | Group | Paper protocol |
 | --- | --- |
 | `latency` | Figure 5: 10K random initial inserts, 10M random-key online writes, and 1K whole-version scans sampled uniformly from measured historical versions |
-| `concurrent` | Figure 6: 1M writes, 32 writers and 16 concurrent 100K-record range readers, without GC |
+| `concurrent` | Figure 6: 1M writes, 1 writer and 16 concurrent 100K-record range readers, without GC |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
 | `retries` | Figure 9: retry groups for 1M inserts under the paper's Zipf alphas |
@@ -193,7 +193,17 @@ runs separate core, cache, and memory/TLB event groups to limit multiplexing, an
 writes both raw `perf stat` files and a combined long-form `perf-events.csv`.
 `PROTOCOL=pdf` (the default) uses 10K-record full scans as described in the
 submitted PDF; `PROTOCOL=current` uses the current 2M-record/100K-range protocol.
-Use `QUICK=1` for a short setup check before collecting full measurements.
+Use `QUICK=1` for a short setup check before collecting full measurements. Runs
+are stored below `scripts/perf/` and include normalized `analysis-runs.csv`,
+aggregated `analysis-summary.csv`, and a concise `analysis.md` assessment.
+
+For the targeted cache-miss test, use `scripts/run_fig6_reader_perf.sh` instead.
+It opens counters separately in each scan thread before the start barrier, then
+enables them only for that thread's scan loop. Loading, writers, and coordination
+code are therefore excluded. Results go to `scripts/perf/fig6-reader-perf-<timestamp>/`
+and include `reader-analysis.md` plus normalized run and summary CSV files. This
+is the appropriate runner for testing whether MDBX writer activity causes cache
+misses that are observable specifically in readers.
 
 All experiment commands, including the general YCSB sweep, run through:
 
@@ -202,6 +212,12 @@ numactl --cpunodebind=0 --membind=0 target/paper/cMVBT ...
 ```
 
 Important environment overrides are documented at the top of `scripts/run_paper_experiments.sh`. The script validates that each successful process appended a CSV row, records failures in `failures.txt`, and exits nonzero if any run fails or times out.
+
+Figure 6 uses `FIG6_WRITERS=1` by default. It still uses the same `paper-ycsb`
+online operation generator, initial-load phase, distributions, update rates, and
+reader protocol as before. `WRITERS=32` remains the default for the other paper
+experiments; set `FIG6_WRITERS` explicitly to run a comparison at another writer
+count.
 
 The former `generate` and `load` trace-replay commands remain available for compatibility and tests, but are no longer used by the reproduction script.
 

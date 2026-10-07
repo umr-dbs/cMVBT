@@ -11,11 +11,11 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Updated all scripts; latency here">
-      <change afterPath="$PROJECT_DIR$/scripts/run_fig6_perf.sh" afterDir="false" />
+    <list default="true" id="4bfda5a8-21d3-41c7-907f-e6a69c64beda" name="Changes" comment="Updated scripts">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/readme.md" beforeDir="false" afterPath="$PROJECT_DIR$/readme.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/scripts/plot_paper_results.py" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/plot_paper_results.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/scripts/run_fig6_perf.sh" beforeDir="false" afterPath="$PROJECT_DIR$/scripts/run_fig6_perf.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/paper/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/paper/online.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/paper/online.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -24,7 +24,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="147" />
+    <option name="cachedIndexableFilesCount" value="333" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
@@ -333,7 +333,8 @@
       <workItem from="1791267987360" duration="3383000" />
       <workItem from="1791285150135" duration="364000" />
       <workItem from="1791290849581" duration="1976000" />
-      <workItem from="1791303909811" duration="1457000" />
+      <workItem from="1791303909811" duration="2093000" />
+      <workItem from="1791358563295" duration="1076000" />
     </task>
     <task id="LOCAL-00001" summary="TxManager draft">
       <option name="closed" value="true" />
@@ -391,7 +392,15 @@
       <option name="project" value="LOCAL" />
       <updated>1791268009653</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Updated scripts">
+      <option name="closed" value="true" />
+      <created>1791314317356</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1791314317356</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -414,7 +423,8 @@
     <MESSAGE value="Cleaned the treeroot wrapper." />
     <MESSAGE value="Updated all scripts" />
     <MESSAGE value="Updated all scripts; latency here" />
-    <option name="LAST_COMMIT_MESSAGE" value="Updated all scripts; latency here" />
+    <MESSAGE value="Updated scripts" />
+    <option name="LAST_COMMIT_MESSAGE" value="Updated scripts" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

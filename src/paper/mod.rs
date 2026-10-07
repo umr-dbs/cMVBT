@@ -13,6 +13,7 @@
 
 mod systems;
 mod online;
+mod reader_perf;
 #[cfg(test)]
 mod tests;
 
