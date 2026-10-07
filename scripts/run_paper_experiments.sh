@@ -2,7 +2,7 @@
 # Reproduce Section 8 / Figures 5-10 with operations generated online at execution time.
 # Every measured process is restricted to NUMA node 0 for CPUs and memory.
 #
-#   scripts/run_paper_experiments.sh [latency|concurrent|gc|scalability|retries|allocations|all ...]
+#   scripts/run_paper_experiments.sh [latency|concurrent|concurrent-mdbx|gc|scalability|retries|allocations|all ...]
 #
 # Current reproduction defaults:
 #   Figure 5: 10K random initial inserts, 10M random-key writes, 1K whole-version scans, no GC.
@@ -181,9 +181,9 @@ exp_latency() {
   DISTRIBUTIONS=$saved_distributions
 }
 
-exp_concurrent() { # gc experiment
+exp_concurrent() { # gc experiment [systems]
   local gc=$1 experiment=$2
-  local systems=$FIG6_SYSTEMS
+  local systems=${3:-$FIG6_SYSTEMS}
   [ "$gc" = true ] && systems=$FIG7_SYSTEMS
   for rep in $(seq 1 "$REPEATS"); do
     for rate in $UPDATE_RATES; do
@@ -255,6 +255,7 @@ for experiment in "$@"; do
   case "$experiment" in
     latency) exp_latency ;;
     concurrent) exp_concurrent false fig6_throughput_nogc ;;
+    concurrent-mdbx) exp_concurrent false fig6_throughput_nogc mdbx ;;
     gc) exp_concurrent true fig7_throughput_gc ;;
     scalability) exp_scalability ;;
     retries) exp_retries ;;

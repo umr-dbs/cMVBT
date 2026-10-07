@@ -160,6 +160,7 @@ Run one experiment group with:
 ```bash
 scripts/run_paper_experiments.sh latency
 scripts/run_paper_experiments.sh concurrent
+scripts/run_paper_experiments.sh concurrent-mdbx
 scripts/run_paper_experiments.sh gc
 scripts/run_paper_experiments.sh scalability
 scripts/run_paper_experiments.sh retries
@@ -178,6 +179,7 @@ The groups correspond to the submitted paper:
 | --- | --- |
 | `latency` | Figure 5: 10K random initial inserts, 10M random-key online writes, and 1K whole-version scans sampled uniformly from measured historical versions |
 | `concurrent` | Figure 6: 1M writes, 1 writer and 16 concurrent 100K-record range readers, without GC |
+| `concurrent-mdbx` | Figure 6 rerun for libmdbx only, using the same generation and load protocol as `concurrent` |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
 | `retries` | Figure 9: retry groups for 1M inserts under the paper's Zipf alphas |
