@@ -18,7 +18,7 @@
 #
 # Environment overrides:
 #   OUT=results/paper-<timestamp> REPEATS=1 BIN=target/paper/cMVBT RUN_TIMEOUT=7200 SLEEP=2
-#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 FIG5_INIT=10000 FIG6_WRITERS=1 WRITERS=32 READERS=16
+#   UPDATE_RATES="10 20 50 75 90 100" INIT=2000000 FIG5_INIT=10000 FIG6_MDBX_INIT=10000 FIG6_WRITERS=1 WRITERS=32 READERS=16
 #   DISTRIBUTIONS="uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zipf:1.4"
 #   LATENCY_OPERATIONS=10000000 THROUGHPUT_OPERATIONS=1000000 SCANS=1000 SCAN_RANGE=100000
 #   FIG5_SYSTEMS="cmvbt mdbx chain frugal vweaver" FIG6_SYSTEMS="cmvbt mdbx chain frugal"
@@ -43,6 +43,7 @@ DISTRIBUTIONS=${DISTRIBUTIONS:-"uniform zipf:0.1 zipf:0.4 zipf:0.8 zipf:0.99 zip
 FIG5_DISTRIBUTIONS=${FIG5_DISTRIBUTIONS:-"uniform"}
 INIT=${INIT:-2000000}
 FIG5_INIT=${FIG5_INIT:-10000}
+FIG6_MDBX_INIT=${FIG6_MDBX_INIT:-10000}
 WRITERS=${WRITERS:-32}
 FIG6_WRITERS=${FIG6_WRITERS:-1}
 READERS=${READERS:-16}
@@ -92,6 +93,7 @@ BIN=$(realpath "$BIN")
 mkdir -p "$OUT"
 OUT=$(realpath "$OUT")
 CSV="$OUT/paper.csv"
+LEGACY_FIG6_CSV="$OUT/concurrent_nogc.csv"
 RETRY_CSV="$OUT/retries.csv"
 LOG="$OUT/log.txt"
 FAILS="$OUT/failures.txt"
@@ -101,7 +103,7 @@ FAILS="$OUT/failures.txt"
   echo "git: $(git rev-parse HEAD 2>/dev/null) ($(git status --porcelain 2>/dev/null | wc -l) uncommitted files)"
   echo "binary: $BIN"
   echo "numa: $NUMACTL --cpunodebind=0 --membind=0"
-  echo "INIT=$INIT FIG5_INIT=$FIG5_INIT DISTRIBUTIONS=$DISTRIBUTIONS FIG5_DISTRIBUTIONS=$FIG5_DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES FIG6_WRITERS=$FIG6_WRITERS WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
+  echo "INIT=$INIT FIG5_INIT=$FIG5_INIT FIG6_MDBX_INIT=$FIG6_MDBX_INIT DISTRIBUTIONS=$DISTRIBUTIONS FIG5_DISTRIBUTIONS=$FIG5_DISTRIBUTIONS UPDATE_RATES=$UPDATE_RATES FIG6_WRITERS=$FIG6_WRITERS WRITERS=$WRITERS READERS=$READERS LATENCY_OPERATIONS=$LATENCY_OPERATIONS THROUGHPUT_OPERATIONS=$THROUGHPUT_OPERATIONS SCANS=$SCANS SCAN_RANGE=$SCAN_RANGE REPEATS=$REPEATS"
   lscpu 2>/dev/null | grep -E "Model name|^CPU\(s\)|NUMA node|Thread|Core|Socket"
   free -g 2>/dev/null | head -2
   echo "$NUMA_HARDWARE"
@@ -181,14 +183,15 @@ exp_latency() {
   DISTRIBUTIONS=$saved_distributions
 }
 
-exp_concurrent() { # gc experiment [systems]
+exp_concurrent() { # gc experiment [systems records scan-mode]
   local gc=$1 experiment=$2
   local systems=${3:-$FIG6_SYSTEMS}
+  local records=${4:-$INIT} scan_mode=${5:-range}
   [ "$gc" = true ] && systems=$FIG7_SYSTEMS
   for rep in $(seq 1 "$REPEATS"); do
     for rate in $UPDATE_RATES; do
       for system in $systems; do
-        for_distribution concurrent_distribution "$rep" "$rate" "$system" "$gc" "$experiment"
+        for_distribution concurrent_distribution "$rep" "$rate" "$system" "$gc" "$experiment" "$records" "$scan_mode"
       done
     done
   done
@@ -196,10 +199,81 @@ exp_concurrent() { # gc experiment [systems]
 
 concurrent_distribution() {
   local distribution=$1 theta=$2 rep=$3 rate=$4 system=$5 gc=$6 experiment=$7
+  local records=${8:-$INIT} scan_mode=${9:-range}
   local writers=$WRITERS
   [ "$experiment" = fig6_throughput_nogc ] && writers=$FIG6_WRITERS
   online "$experiment/$system/$distribution$theta/u$rate/#$rep" "$experiment" "$rep" "$system" \
-    "$distribution" "$theta" "$rate" "$gc" "$THROUGHPUT_OPERATIONS" "$writers" "$READERS" 0 1
+    "$distribution" "$theta" "$rate" "$gc" "$THROUGHPUT_OPERATIONS" "$writers" "$READERS" 0 1 \
+    "$records" sliding "$scan_mode"
+}
+
+# Reuse the original paper protocol: generate one binary trace per update rate,
+# then replay that exact trace through `load`. A workload already present in OUT
+# is retained so an MDBX rerun can use byte-for-byte the same input as the other
+# systems measured in that directory.
+fig6_workload() {
+  local rate=$1 blocks expected file tmp updates remainder inserts deletes rc size
+  if [ $((THROUGHPUT_OPERATIONS % 1000)) -ne 0 ]; then
+    echo "error: legacy Figure 6 generation requires THROUGHPUT_OPERATIONS to be divisible by 1000" >&2
+    return 2
+  fi
+  blocks=$((THROUGHPUT_OPERATIONS / 1000))
+  expected=$(((FIG6_MDBX_INIT + THROUGHPUT_OPERATIONS) * 9))
+  file="$OUT/workloads/$rate.dat"
+  if [ -e "$file" ]; then
+    size=$(stat -c %s "$file") || return 1
+    if [ "$size" -ne "$expected" ]; then
+      echo "error: existing workload $file is $size bytes; expected $expected for $FIG6_MDBX_INIT initial and $THROUGHPUT_OPERATIONS measured operations" >&2
+      return 2
+    fi
+    echo "$file"
+    return
+  fi
+
+  updates=$((rate * 10))
+  remainder=$((1000 - updates))
+  inserts=$((remainder / 2))
+  deletes=$((remainder - inserts))
+  mkdir -p "$OUT/workloads"
+  tmp=$(mktemp "$OUT/workloads/.$rate.dat.XXXXXX") || return 1
+  echo ">> generating $file via generate ($FIG6_MDBX_INIT initial; $blocks blocks of $inserts inserts, $updates updates, $deletes deletes)" | tee -a "$LOG" >&2
+  timeout "$RUN_TIMEOUT" "$NUMACTL" --cpunodebind=0 --membind=0 \
+    "$BIN" generate "$tmp" "$FIG6_MDBX_INIT" "$blocks" "$inserts" "$updates" "$deletes" 0 \
+    >> "$LOG" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "generate Figure 6 update-rate $rate failed with rc=$rc (partial file: $tmp)" | tee -a "$FAILS" >&2
+    return 1
+  fi
+  size=$(stat -c %s "$tmp") || return 1
+  if [ "$size" -ne "$expected" ]; then
+    echo "generate Figure 6 update-rate $rate wrote $size bytes; expected $expected (file: $tmp)" | tee -a "$FAILS" >&2
+    return 1
+  fi
+  mv "$tmp" "$file"
+  echo "$file"
+}
+
+exp_concurrent_mdbx() {
+  local rep rate workload digest
+  for rep in $(seq 1 "$REPEATS"); do
+    for rate in $UPDATE_RATES; do
+      workload=$(fig6_workload "$rate") || {
+        failures=$((failures + 1))
+        continue
+      }
+      digest=$(sha256sum "$workload") || {
+        failures=$((failures + 1))
+        continue
+      }
+      digest=${digest%% *}
+      echo ">> Figure 6 workload u$rate sha256=$digest file=$workload" | tee -a "$LOG"
+      RESULTS_CSV="$LEGACY_FIG6_CSV" EXPERIMENT=fig6_throughput_nogc REPEAT="$rep" \
+        run "fig6-mdbx/load/u$rate/#$rep" "$LEGACY_FIG6_CSV" \
+        "$BIN" load "$workload" true "$READERS" "$FIG6_WRITERS" 0 max fg false false \
+        "$FIG6_MDBX_INIT" mdbx
+    done
+  done
 }
 
 scalability_distribution() {
@@ -255,7 +329,7 @@ for experiment in "$@"; do
   case "$experiment" in
     latency) exp_latency ;;
     concurrent) exp_concurrent false fig6_throughput_nogc ;;
-    concurrent-mdbx) exp_concurrent false fig6_throughput_nogc mdbx ;;
+    concurrent-mdbx) exp_concurrent_mdbx ;;
     gc) exp_concurrent true fig7_throughput_gc ;;
     scalability) exp_scalability ;;
     retries) exp_retries ;;

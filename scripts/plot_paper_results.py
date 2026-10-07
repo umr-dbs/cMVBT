@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Render online YCSB measurements like Figures 5-10 of EDBT_2027-1.pdf.
+"""Render paper measurements like Figures 5-10 of EDBT_2027-1.pdf.
 
     scripts/plot_paper_results.py scripts/results/paper-<timestamp>
 
 Figures 5-8 and 10 use the uniform rows from ``paper.csv``, matching the
-paper. Figure 9 uses the paper's five retry curves from ``retries.csv``.
+paper. A legacy ``concurrent_nogc.csv`` produced by the file-based Figure 6
+``generate``/``load`` protocol is merged into Figure 6, replacing matching
+systems from ``paper.csv``. Figure 9 uses the retry curves from ``retries.csv``.
 Repetitions are averaged. No error bars, box plots, or extra plots are made.
 """
 import argparse
@@ -71,6 +73,54 @@ def paper_rows(data: pd.DataFrame) -> pd.DataFrame:
     if rows.empty:
         sys.exit("paper.csv has no uniform rows required by paper Figures 5-8 and 10")
     return rows
+
+
+def legacy_figure6_rows(run: Path) -> pd.DataFrame | None:
+    """Normalize file-based generate/load results for the current Figure 6 plot."""
+    path = run / "concurrent_nogc.csv"
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    legacy = pd.read_csv(path)
+    required = {
+        "repeat", "system", "workload", "oltp_threads", "olap_threads",
+        "init_keys", "oltp_ops", "oltp_time_ns", "scans",
+    }
+    missing = required.difference(legacy.columns)
+    if missing:
+        sys.exit(f"{path} is missing required columns: {', '.join(sorted(missing))}")
+    # If the file also contains an older 32-writer MDBX run, retain the
+    # dedicated one-writer rerun so incompatible MDBX protocols are not averaged.
+    one_writer_mdbx = ((legacy["system"] == "mdbx")
+                       & (legacy["oltp_threads"] == 1))
+    if one_writer_mdbx.any():
+        legacy = legacy[(legacy["system"] != "mdbx") | one_writer_mdbx].copy()
+    seconds = legacy["oltp_time_ns"] / 1e9
+    if (seconds <= 0).any():
+        sys.exit(f"{path} contains a non-positive OLTP duration")
+    workload = legacy["workload"].astype(str).str.extract(r"(\d+)$", expand=False)
+    if workload.isna().any():
+        sys.exit(f"{path} has workload names without a trailing update percentage")
+    return pd.DataFrame({
+        "experiment": "fig6_throughput_nogc",
+        "repeat": legacy["repeat"],
+        "system": legacy["system"],
+        "distribution": "uniform",
+        "theta": 0.0,
+        "update_rate": workload.astype(int),
+        "gc": False,
+        "records": legacy["init_keys"],
+        "operations": legacy["oltp_ops"],
+        "writers": legacy["oltp_threads"],
+        "readers": legacy["olap_threads"],
+        "scan_mode": "fresh",
+        "scan_range": legacy["init_keys"],
+        "oltp_time_ns": legacy["oltp_time_ns"],
+        "oltp_ops_per_s": legacy["oltp_ops"] / seconds,
+        # Readers stop immediately after the writers, so the legacy plot and
+        # protocol normalize scan count by the measured writer interval.
+        "scan_time_ns": legacy["oltp_time_ns"],
+        "scan_ops_per_s": legacy["scans"] / seconds,
+    })
 
 
 def add_panel_border(fig, bounds=(0.025, 0.045, 0.95, 0.92)):
@@ -281,8 +331,16 @@ def main():
     args = parser.parse_args()
 
     data = read_csv(args.run / "paper.csv")
-    if data is None:
+    legacy_figure6 = legacy_figure6_rows(args.run)
+    if data is None and legacy_figure6 is None:
         sys.exit(1)
+    if data is None:
+        data = legacy_figure6
+    elif legacy_figure6 is not None:
+        systems = set(legacy_figure6["system"])
+        replace = ((data["experiment"] == "fig6_throughput_nogc")
+                   & data["system"].isin(systems))
+        data = pd.concat([data[~replace], legacy_figure6], ignore_index=True)
     data = paper_rows(data)
     fig5_data = data
     if args.fig5_run:

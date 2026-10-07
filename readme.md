@@ -179,7 +179,7 @@ The groups correspond to the submitted paper:
 | --- | --- |
 | `latency` | Figure 5: 10K random initial inserts, 10M random-key online writes, and 1K whole-version scans sampled uniformly from measured historical versions |
 | `concurrent` | Figure 6: 1M writes, 1 writer and 16 concurrent 100K-record range readers, without GC |
-| `concurrent-mdbx` | Figure 6 rerun for libmdbx only, using the same generation and load protocol as `concurrent` |
+| `concurrent-mdbx` | Submitted Figure 6 `generate`/`load` protocol for libmdbx only: 10K initial keys, 1 writer, 16 concurrent whole-version readers, and no GC |
 | `gc` | Figure 7: the same concurrent experiment with GC |
 | `scalability` | Figure 8: separate OLAP-thread and OLTP-thread sweeps at a 60% update rate |
 | `retries` | Figure 9: retry groups for 1M inserts under the paper's Zipf alphas |
@@ -215,13 +215,20 @@ numactl --cpunodebind=0 --membind=0 target/paper/cMVBT ...
 
 Important environment overrides are documented at the top of `scripts/run_paper_experiments.sh`. The script validates that each successful process appended a CSV row, records failures in `failures.txt`, and exits nonzero if any run fails or times out.
 
-Figure 6 uses `FIG6_WRITERS=1` by default. It still uses the same `paper-ycsb`
-online operation generator, initial-load phase, distributions, update rates, and
-reader protocol as before. `WRITERS=32` remains the default for the other paper
-experiments; set `FIG6_WRITERS` explicitly to run a comparison at another writer
-count.
+Figure 6 uses `FIG6_WRITERS=1` by default. The `concurrent-mdbx` target uses the
+original file-based protocol: it creates or reuses `workloads/<update-rate>.dat`
+with `generate`, then replays that exact file with `load`. Each file contains
+exactly 10,000 initial inserts followed by one million measured operations, and
+the readers perform whole-version scans. Existing correctly-sized workload files
+in `OUT` are reused byte-for-byte, which permits an MDBX rerun against the inputs
+used for other systems. Results are written to `concurrent_nogc.csv`; the plotting
+script automatically merges those rows into Figure 6 and replaces any older MDBX
+rows from `paper.csv`. `FIG6_MDBX_INIT` can override the initial size, while
+`WRITERS=32` remains the default for the other paper experiments.
 
-The former `generate` and `load` trace-replay commands remain available for compatibility and tests, but are no longer used by the reproduction script.
+The other reproduction targets use the online driver; `concurrent-mdbx` deliberately
+uses the original `generate` and `load` trace-replay commands for comparability
+with file-based Figure 6 measurements.
 
 ## Repository layout
 
