@@ -57,7 +57,67 @@ The suite covers:
 
 The process-global commit clock is shared by trees, so tree tests serialize their setup internally. `CT_THREADS` and `CT_SCANNERS` can override the writer and scanner counts in the concurrent model tests.
 
-## Online YCSB benchmark
+## Reproduce the paper experiments
+
+The canonical paper runner uses the original file-based protocol. For every
+update percentage, `generate` creates one binary workload containing 10,000
+initial random inserts followed by 1,000 blocks of 1,000 mixed operations. Each
+block has the exact requested update percentage; insertions and deletions split
+the remainder. Every applicable system then receives the same file through the
+`load` command, so initial data, operation types, keys, and ordering are
+byte-for-byte identical.
+
+```bash
+scripts/run_paper_load_experiments.sh all
+scripts/plot_paper_results.py results/paper-load-<timestamp>
+```
+
+The runner records machine details, Git state, commands, failures, and the
+SHA-256 digest of every workload. All measured commands use the same paper
+binary and NUMA placement:
+
+```bash
+numactl --cpunodebind=0 --membind=0 target/paper/cMVBT load ...
+```
+
+Run an individual group with:
+
+```bash
+scripts/run_paper_load_experiments.sh latency
+scripts/run_paper_load_experiments.sh concurrent
+scripts/run_paper_load_experiments.sh gc
+scripts/run_paper_load_experiments.sh scalability
+scripts/run_paper_load_experiments.sh retries
+```
+
+| Group | Output | Paper result |
+| --- | --- | --- |
+| `latency` | `latency.csv` | Figure 5 scan latency |
+| `concurrent` | `concurrent_nogc.csv` | Figure 6 concurrent throughput without GC |
+| `gc` | `concurrent_gc.csv` | Figure 7 throughput with GC and Figure 10 allocation/reuse |
+| `scalability` | `scalability.csv` | Figure 8 scalability |
+| `retries` | `retries.csv` | Figure 9 retry distribution |
+
+Figure 9 uses its specialized `retry-exp` command because it measures internal
+optimistic retries rather than replaying an OLTP/OLAP trace. All other paper
+groups use `generate` followed by `load`.
+
+For the one-writer libmdbx Figure 6 variant, append it to the same result
+directory. The existing workloads are validated and reused rather than
+regenerated:
+
+```bash
+OUT=results/paper-load-<timestamp> FIG6_MDBX_WRITERS=1 \
+  scripts/run_paper_load_experiments.sh concurrent-mdbx
+scripts/plot_paper_results.py results/paper-load-<timestamp>
+```
+
+The plotter uses the one-writer libmdbx rows when they are present and will not
+average them with older 32-writer libmdbx rows. Use `QUICK=1` for a reduced
+end-to-end setup check. The runner's header documents overrides for systems,
+thread counts, repetitions, workload size, scan count, and scalability pairs.
+
+## Additional capability: Online YCSB benchmark
 
 The `ycsb` command generates operations online in each worker. It does not pre-generate a trace or replay a file order. All systems receive the same workload implementation, value representation, timing, and correctness checks.
 
@@ -125,7 +185,7 @@ The cMVBT root-version index can be selected with `--root-index fg|ll|sk|bt`:
 - `sk`: skip list
 - `bt`: B+-tree
 
-## YCSB sweep and plots
+### YCSB sweep and plots
 
 The sweep script builds the paper-profile binary when necessary and runs workloads A-F plus churn across all systems, configured Zipf alphas, and both value sizes.
 
@@ -146,9 +206,13 @@ Important environment overrides are documented at the top of `scripts/run_ycsb.s
 
 The plotting script writes PDF and PNG figures for OLTP throughput, p99 latency, OLAP scan throughput, and the effect of record size.
 
-## Reproduce the paper experiments
+## Additional capability: online paper workloads
 
-The paper runner uses the online `paper-ycsb` driver: operations are generated when workers request them, not replayed from a workload file. It loads 2,000,000 records by default, then runs every applicable experiment with uniform access and each scrambled Zipfian skew `0.1`, `0.4`, `0.8`, `0.99`, and `1.4`. OLAP operations select a 1,000-record range rather than scanning all 2,000,000 records; Figure 5 performs 10,000 such historical scans in total. The concurrent Figures 6-8 instead keep their scan workers active until the measured writers finish, matching their throughput/scalability protocol. Every 1,000-operation block has the exact requested update percentage, with the remainder divided equally between fresh inserts and deletes. Deletes expire live keys and transient update/delete races are retried internally, so the reported paper operations all take effect.
+The separate `paper-ycsb` driver supports exploratory online variants; it is not
+the canonical paper-reproduction path above. Operations are generated when
+workers request them rather than replayed from a workload file. It supports
+larger initial populations, bounded range scans, scrambled Zipfian distributions,
+operation-level latency histograms, and targeted hardware-counter experiments.
 
 ```bash
 scripts/run_paper_experiments.sh all
@@ -173,7 +237,7 @@ For a short setup check:
 QUICK=1 scripts/run_paper_experiments.sh all
 ```
 
-The groups correspond to the submitted paper:
+These online groups mirror the paper figure layouts for exploratory comparisons:
 
 | Group | Paper protocol |
 | --- | --- |

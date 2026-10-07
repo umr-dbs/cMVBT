@@ -166,6 +166,11 @@ pub fn main_load(parms: Vec<String>) {
     };
     assert_eq!(init_counts.failed, 0, "initial insertions must all succeed");
     index.reset_alloc_counts();
+    if !concurrent {
+        index
+            .prepare_historical_snapshot()
+            .unwrap_or_else(|e| panic!("prepare historical snapshot: {e}"));
+    }
 
     let (oltp_threads, olap_threads_effective) = if concurrent { (oltp_threads_or_scans, olap_threads) } else { (1, olap_threads) };
     println!("- system={system} workload={file} concurrent={concurrent} oltp_threads={oltp_threads} \

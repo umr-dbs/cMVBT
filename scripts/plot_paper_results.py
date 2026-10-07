@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render paper measurements like Figures 5-10 of EDBT_2027-1.pdf.
 
-    scripts/plot_paper_results.py scripts/results/paper-<timestamp>
+    scripts/plot_paper_results.py results/paper-load-<timestamp>
 
-Figures 5-8 and 10 use the uniform rows from ``paper.csv``, matching the
-paper. A legacy ``concurrent_nogc.csv`` produced by the file-based Figure 6
-``generate``/``load`` protocol is merged into Figure 6, replacing matching
-systems from ``paper.csv``. Figure 9 uses the retry curves from ``retries.csv``.
+The canonical file-based runner writes ``latency.csv``, ``concurrent_nogc.csv``,
+``concurrent_gc.csv``, and ``scalability.csv``. These take precedence over
+matching online-driver rows in ``paper.csv`` when both are present. Figure 9
+uses the retry curves from ``retries.csv``.
 Repetitions are averaged. No error bars, box plots, or extra plots are made.
 """
 import argparse
@@ -75,25 +75,20 @@ def paper_rows(data: pd.DataFrame) -> pd.DataFrame:
     return rows
 
 
-def legacy_figure6_rows(run: Path) -> pd.DataFrame | None:
-    """Normalize file-based generate/load results for the current Figure 6 plot."""
-    path = run / "concurrent_nogc.csv"
+def normalize_load_rows(path: Path, experiment: str) -> pd.DataFrame | None:
+    """Normalize one CSV emitted by the file-based ``load`` command."""
     if not path.exists() or path.stat().st_size == 0:
         return None
     legacy = pd.read_csv(path)
     required = {
         "repeat", "system", "workload", "oltp_threads", "olap_threads",
-        "init_keys", "oltp_ops", "oltp_time_ns", "scans",
+        "gc", "init_keys", "oltp_ops", "oltp_time_ns", "scans",
+        "scanned_records", "avg_scan_ns", "p50_scan_ns", "p99_scan_ns",
+        "blocks_allocated", "blocks_reused",
     }
     missing = required.difference(legacy.columns)
     if missing:
         sys.exit(f"{path} is missing required columns: {', '.join(sorted(missing))}")
-    # If the file also contains an older 32-writer MDBX run, retain the
-    # dedicated one-writer rerun so incompatible MDBX protocols are not averaged.
-    one_writer_mdbx = ((legacy["system"] == "mdbx")
-                       & (legacy["oltp_threads"] == 1))
-    if one_writer_mdbx.any():
-        legacy = legacy[(legacy["system"] != "mdbx") | one_writer_mdbx].copy()
     seconds = legacy["oltp_time_ns"] / 1e9
     if (seconds <= 0).any():
         sys.exit(f"{path} contains a non-positive OLTP duration")
@@ -101,13 +96,13 @@ def legacy_figure6_rows(run: Path) -> pd.DataFrame | None:
     if workload.isna().any():
         sys.exit(f"{path} has workload names without a trailing update percentage")
     return pd.DataFrame({
-        "experiment": "fig6_throughput_nogc",
+        "experiment": experiment,
         "repeat": legacy["repeat"],
         "system": legacy["system"],
         "distribution": "uniform",
         "theta": 0.0,
         "update_rate": workload.astype(int),
-        "gc": False,
+        "gc": legacy["gc"],
         "records": legacy["init_keys"],
         "operations": legacy["oltp_ops"],
         "writers": legacy["oltp_threads"],
@@ -120,7 +115,50 @@ def legacy_figure6_rows(run: Path) -> pd.DataFrame | None:
         # protocol normalize scan count by the measured writer interval.
         "scan_time_ns": legacy["oltp_time_ns"],
         "scan_ops_per_s": legacy["scans"] / seconds,
+        "scan_records": legacy["scanned_records"],
+        "scan_avg_ns": legacy["avg_scan_ns"],
+        "scan_p50_ns": legacy["p50_scan_ns"],
+        "scan_p99_ns": legacy["p99_scan_ns"],
+        "blocks_allocated": legacy["blocks_allocated"],
+        "blocks_reused": legacy["blocks_reused"],
     })
+
+
+def legacy_paper_rows(run: Path) -> pd.DataFrame | None:
+    """Load every canonical generate/load result and map it to paper figures."""
+    frames = []
+    latency = normalize_load_rows(run / "latency.csv", "fig5_scan_latency")
+    if latency is not None:
+        frames.append(latency)
+
+    concurrent = normalize_load_rows(
+        run / "concurrent_nogc.csv", "fig6_throughput_nogc")
+    if concurrent is not None:
+        # A dedicated one-writer MDBX rerun supersedes any 32-writer MDBX rows
+        # in the same file; never average the two protocols into one curve.
+        one_writer_mdbx = ((concurrent["system"] == "mdbx")
+                           & (concurrent["writers"] == 1))
+        if one_writer_mdbx.any():
+            concurrent = concurrent[
+                (concurrent["system"] != "mdbx") | one_writer_mdbx].copy()
+        frames.append(concurrent)
+
+    gc = normalize_load_rows(run / "concurrent_gc.csv", "fig7_throughput_gc")
+    if gc is not None:
+        frames.append(gc)
+        allocation = gc.copy()
+        allocation["experiment"] = "fig10_node_reuse"
+        frames.append(allocation)
+
+    scalability = normalize_load_rows(run / "scalability.csv", "fig8_scalability")
+    if scalability is not None:
+        olap = scalability.copy()
+        olap["experiment"] = "fig8_olap_scalability"
+        oltp = scalability.copy()
+        oltp["experiment"] = "fig8_oltp_scalability"
+        frames.extend((olap, oltp))
+
+    return pd.concat(frames, ignore_index=True) if frames else None
 
 
 def add_panel_border(fig, bounds=(0.025, 0.045, 0.95, 0.92)):
@@ -331,16 +369,16 @@ def main():
     args = parser.parse_args()
 
     data = read_csv(args.run / "paper.csv")
-    legacy_figure6 = legacy_figure6_rows(args.run)
-    if data is None and legacy_figure6 is None:
+    legacy = legacy_paper_rows(args.run)
+    if data is None and legacy is None:
         sys.exit(1)
     if data is None:
-        data = legacy_figure6
-    elif legacy_figure6 is not None:
-        systems = set(legacy_figure6["system"])
-        replace = ((data["experiment"] == "fig6_throughput_nogc")
-                   & data["system"].isin(systems))
-        data = pd.concat([data[~replace], legacy_figure6], ignore_index=True)
+        data = legacy
+    elif legacy is not None:
+        for experiment, system in legacy[["experiment", "system"]].drop_duplicates().itertuples(index=False):
+            replace = ((data["experiment"] == experiment) & (data["system"] == system))
+            data = data[~replace]
+        data = pd.concat([data, legacy], ignore_index=True)
     data = paper_rows(data)
     fig5_data = data
     if args.fig5_run:
