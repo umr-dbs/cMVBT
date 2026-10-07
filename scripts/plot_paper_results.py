@@ -158,6 +158,20 @@ def legacy_paper_rows(run: Path) -> pd.DataFrame | None:
         oltp["experiment"] = "fig8_oltp_scalability"
         frames.extend((olap, oltp))
 
+    # A one-writer MDBX run contributes only to Figure 8's OLTP-thread sweep.
+    # It must not also become an OLAP point: that panel holds the writer count
+    # fixed while varying readers.
+    mdbx_one_writer = normalize_load_rows(
+        run / "scalability_mdbx_one_writer.csv", "fig8_oltp_scalability")
+    if mdbx_one_writer is not None:
+        invalid = ((mdbx_one_writer["system"] != "mdbx")
+                   | (mdbx_one_writer["writers"] != 1))
+        if invalid.any():
+            sys.exit("scalability_mdbx_one_writer.csv must contain only "
+                     "one-writer MDBX rows")
+        mdbx_one_writer["_point_overlay"] = True
+        frames.append(mdbx_one_writer)
+
     return pd.concat(frames, ignore_index=True) if frames else None
 
 
@@ -266,6 +280,10 @@ def throughput(data, experiment, number, gc, out, formats):
         ax.set_xlabel("Update Percentage")
     scan_ax.set_ylabel("Scans Throughput (tx/s)")
     oltp_ax.set_ylabel("OLTP Throughput (tx/s)")
+    if number == 6:
+        # Keep the upper 10^5 decade visible instead of ending below it.
+        lower, upper = scan_ax.get_ylim()
+        scan_ax.set_ylim(lower, max(upper, 1.2e5))
     # The paper puts the shared legend in the lower panel.
     oltp_ax.legend(loc="center right" if not gc else "lower left", fontsize=8)
     save(fig, out, f"fig{number}_throughput_{'gc' if gc else 'nogc'}", formats)
@@ -375,10 +393,22 @@ def main():
     if data is None:
         data = legacy
     elif legacy is not None:
-        for experiment, system in legacy[["experiment", "system"]].drop_duplicates().itertuples(index=False):
+        if "_point_overlay" in legacy.columns:
+            point_overlay = legacy[legacy["_point_overlay"].fillna(False)].copy()
+            replacement = legacy[~legacy["_point_overlay"].fillna(False)].copy()
+        else:
+            point_overlay = legacy.iloc[0:0]
+            replacement = legacy
+        for experiment, system in replacement[["experiment", "system"]].drop_duplicates().itertuples(index=False):
             replace = ((data["experiment"] == experiment) & (data["system"] == system))
             data = data[~replace]
-        data = pd.concat([data, legacy], ignore_index=True)
+        data = pd.concat([data, replacement], ignore_index=True)
+        for row in point_overlay.itertuples(index=False):
+            replace = ((data["experiment"] == row.experiment)
+                       & (data["system"] == row.system)
+                       & (data["writers"] == row.writers))
+            data = data[~replace]
+        data = pd.concat([data, point_overlay], ignore_index=True)
     data = paper_rows(data)
     fig5_data = data
     if args.fig5_run:

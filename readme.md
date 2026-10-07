@@ -87,6 +87,7 @@ scripts/run_paper_load_experiments.sh latency
 scripts/run_paper_load_experiments.sh concurrent
 scripts/run_paper_load_experiments.sh gc
 scripts/run_paper_load_experiments.sh scalability
+scripts/run_paper_load_experiments.sh scalability-mdbx-one-writer
 scripts/run_paper_load_experiments.sh retries
 ```
 
@@ -96,6 +97,7 @@ scripts/run_paper_load_experiments.sh retries
 | `concurrent` | `concurrent_nogc.csv` | Figure 6 concurrent throughput without GC |
 | `gc` | `concurrent_gc.csv` | Figure 7 throughput with GC and Figure 10 allocation/reuse |
 | `scalability` | `scalability.csv` | Figure 8 scalability |
+| `scalability-mdbx-one-writer` | `scalability_mdbx_one_writer.csv` | Figure 8 MDBX point at one OLTP thread |
 | `retries` | `retries.csv` | Figure 9 retry distribution |
 
 Figure 9 uses its specialized `retry-exp` command because it measures internal
