@@ -1,1 +1,18 @@
 /target
+/tmp/
+
+# scripts/: only the Python and shell scripts are tracked.
+# Everything else in there (results, plots, caches, archives) is generated output.
+/scripts/**
+!/scripts/**/
+!/scripts/**/*.py
+!/scripts/**/*.sh
+
+# Result and cache folders are ignored completely, including any scripts copied into them.
+# (These come after the re-includes above so they win.)
+/scripts/results*/
+/scripts/fig*new*/
+/scripts/perf/
+/scripts/concurrency/
+/scripts/oltp concurrent gc/
+__pycache__/
