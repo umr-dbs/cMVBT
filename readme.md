@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/cmvbt-logo.png" alt="cMVBT logo" width="200">
+</p>
+
 # cMVBT
 
 Research implementation for **“Multiversion Concurrency Control for Multiversion B-Trees” (EDBT 2027)**.
