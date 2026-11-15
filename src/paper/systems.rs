@@ -11,13 +11,32 @@ use crate::mv_utils::interval::Interval;
 
 pub const SYSTEMS: &str = "cmvbt|chain|frugal|vweaver|skiplist|mdbx";
 
+/// The one way every system's readers consume a scan result, so that all systems do the same work per scan.
+///
+/// The range APIs of the cMVBT and of the version-list baselines return the visible records of a version
+/// materialized as a `Vec` of `(key, payload)` records (16 bytes each), so libmdbx copies each `(key, payload)` out of
+/// its cursor into a `Vec` of the same shape too. Then every system folds all keys and payloads of that `Vec` into
+/// a checksum, which is passed through `black_box` so neither the materialization nor the fold can be optimized
+/// away. The scan returns the number of records consumed.
+#[inline]
+pub(crate) fn consume_scan(records: impl IntoIterator<Item = (Key, u64)>) -> usize {
+    let mut count = 0usize;
+    let mut checksum = 0u64;
+    for (key, payload) in records {
+        count += 1;
+        checksum = checksum.rotate_left(5) ^ key.wrapping_add(payload.rotate_left(17));
+    }
+    std::hint::black_box(checksum);
+    count
+}
+
 pub trait PaperIndex: Send + Sync {
     /// Lets engines with efficient bulk ingestion replace the generic one-transaction-per-key load.
     fn bulk_load(&self, _records: u64) -> Option<Result<(), String>> {
         None
     }
-    /// Pins the snapshot used by a post-workload historical scan, if the engine
-    /// cannot reopen arbitrary versions later (libmdbx/CoW).
+    /// Checks before the workload that the engine can answer the post-workload historical (time-travel)
+    /// scans of Figure 5; engines that cannot reopen arbitrary versions (libmdbx) refuse with an error.
     fn prepare_historical_snapshot(&self) -> Result<(), String> {
         Ok(())
     }
@@ -106,7 +125,9 @@ impl PaperIndex for CMvbt {
             Interval::new(Key::MIN, Key::MAX),
             version,
         )) {
-            CRUDOperationResult::MatchedRecords(found) => found.len(),
+            CRUDOperationResult::MatchedRecords(found) => {
+                consume_scan(found.iter().map(|r| (r.key, r.payload)))
+            }
             _ => 0,
         }
     }
@@ -122,7 +143,9 @@ impl PaperIndex for CMvbt {
             .0
             .dispatch_crud(CRUDOperation::Range(Interval::new(start, end), version))
         {
-            CRUDOperationResult::MatchedRecords(found) => found.len(),
+            CRUDOperationResult::MatchedRecords(found) => {
+                consume_scan(found.iter().map(|r| (r.key, r.payload)))
+            }
             _ => 0,
         }
     }
@@ -150,17 +173,17 @@ mod mdbx_system {
     use std::borrow::Cow;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-    use std::sync::Mutex;
 
     static NEXT_DATABASE: AtomicU64 = AtomicU64::new(0);
     const LOAD_BATCH_SIZE: u64 = 10_000;
 
-    /// libmdbx is a single-writer copy-on-write B+Tree. The pinned transaction
-    /// is used only for Figure 5: it is opened after loading and kept alive
-    /// while the measured writes create newer database snapshots.
+    /// libmdbx is a single-writer copy-on-write B+Tree. It keeps only the snapshots of open read
+    /// transactions, i.e., it cannot reopen an arbitrary older version: it does not support time-travel
+    /// queries and is therefore not part of Figure 5. Its readers always scan the freshest snapshot.
+    pub const NO_TIME_TRAVEL: &str = "libmdbx does not support time-travel queries (it cannot reopen an \
+arbitrary past version); the paper excludes it from Figure 5, so historical scans are refused";
+
     pub struct Mdbx {
-        // This field must be cleared before `db` is dropped (see Drop).
-        pinned: Mutex<Option<Transaction<'static, RO, WriteMap>>>,
         db: Option<Box<Database<WriteMap>>>,
         path: PathBuf,
     }
@@ -203,7 +226,6 @@ mod mdbx_system {
             txn.commit()
                 .map_err(|e| format!("libmdbx commit table: {e}"))?;
             Ok(Self {
-                pinned: Mutex::new(None),
                 db: Some(db),
                 path,
             })
@@ -224,26 +246,29 @@ mod mdbx_system {
                 start.saturating_add(len.saturating_sub(1))
             };
             let mut item = cursor
-                .set_range::<Cow<'_, [u8]>, ()>(&start.to_be_bytes())
+                .set_range::<Cow<'_, [u8]>, Cow<'_, [u8]>>(&start.to_be_bytes())
                 .expect("libmdbx cursor set_range");
-            let mut count = 0;
-            while let Some((key, ())) = item {
-                if key.len() != 8 {
-                    panic!("libmdbx paper key has {} bytes instead of 8", key.len());
-                }
-                let key = u64::from_be_bytes(key.as_ref().try_into().expect("checked key length"));
+            // Materialize the result like the other systems' range APIs do (see `consume_scan`).
+            let mut found: Vec<(Key, u64)> = Vec::new();
+            while let Some((key, payload)) = item {
+                let key = u64::from_be_bytes(key.as_ref().try_into().unwrap_or_else(|_| {
+                    panic!("libmdbx paper key has {} bytes instead of 8", key.len())
+                }));
                 if key > end {
                     break;
                 }
-                count += 1;
-                if count as u64 >= len {
+                let payload = u64::from_be_bytes(payload.as_ref().try_into().unwrap_or_else(|_| {
+                    panic!("libmdbx paper payload has {} bytes instead of 8", payload.len())
+                }));
+                found.push((key, payload));
+                if found.len() as u64 >= len {
                     break;
                 }
                 item = cursor
-                    .next::<Cow<'_, [u8]>, ()>()
+                    .next::<Cow<'_, [u8]>, Cow<'_, [u8]>>()
                     .expect("libmdbx cursor next");
             }
-            count
+            consume_scan(found)
         }
 
         fn fresh_scan(&self, start: Key, len: u64) -> usize {
@@ -257,10 +282,6 @@ mod mdbx_system {
 
     impl Drop for Mdbx {
         fn drop(&mut self) {
-            self.pinned
-                .get_mut()
-                .expect("libmdbx pinned mutex poisoned")
-                .take();
             self.db.take();
             let _ = std::fs::remove_dir_all(&self.path);
         }
@@ -298,23 +319,7 @@ mod mdbx_system {
         }
 
         fn prepare_historical_snapshot(&self) -> Result<(), String> {
-            let txn = self
-                .db()
-                .begin_ro_txn()
-                .map_err(|e| format!("libmdbx pin initial read transaction: {e}"))?;
-            // Mdbx owns the boxed Database at a stable address and Drop clears
-            // `pinned` before dropping it. Extend the borrow to encode that
-            // self-referential ownership invariant.
-            let txn: Transaction<'static, RO, WriteMap> = unsafe { std::mem::transmute(txn) };
-            *self
-                .pinned
-                .lock()
-                .map_err(|_| "libmdbx pinned transaction mutex poisoned")? = Some(txn);
-            Ok(())
-        }
-
-        fn historical_scan_mode(&self) -> &'static str {
-            "pinned_initial"
+            Err(NO_TIME_TRAVEL.into())
         }
 
         fn apply(&self, op: FileOp) -> bool {
@@ -370,29 +375,15 @@ mod mdbx_system {
         }
 
         fn scan_at(&self, _version: u64) -> usize {
-            let pinned = self
-                .pinned
-                .lock()
-                .expect("libmdbx pinned transaction mutex poisoned");
-            match pinned.as_ref() {
-                Some(txn) => Self::scan_txn(txn, Key::MIN, u64::MAX),
-                None => self.fresh_scan(Key::MIN, u64::MAX),
-            }
+            panic!("{NO_TIME_TRAVEL}")
         }
 
         fn scan_fresh_range(&self, start: Key, len: u64) -> usize {
             self.fresh_scan(start, len)
         }
 
-        fn scan_at_range(&self, start: Key, len: u64, _version: u64) -> usize {
-            let pinned = self
-                .pinned
-                .lock()
-                .expect("libmdbx pinned transaction mutex poisoned");
-            match pinned.as_ref() {
-                Some(txn) => Self::scan_txn(txn, start, len),
-                None => self.fresh_scan(start, len),
-            }
+        fn scan_at_range(&self, _start: Key, _len: u64, _version: u64) -> usize {
+            panic!("{NO_TIME_TRAVEL}")
         }
 
         fn newest_version(&self) -> u64 {
@@ -472,7 +463,9 @@ mod dexa_system {
                 ))
                 .1
             {
-                DexaResult::MatchedRecords(found) => found.len(),
+                DexaResult::MatchedRecords(found) => {
+                    consume_scan(found.iter().map(|r| (r.key, r.payload)))
+                }
                 _ => 0,
             }
         }
@@ -488,7 +481,9 @@ mod dexa_system {
                 .dispatch(DexaOp::Range(DexaInterval::new(start, end), version))
                 .1
             {
-                DexaResult::MatchedRecords(found) => found.len(),
+                DexaResult::MatchedRecords(found) => {
+                    consume_scan(found.iter().map(|r| (r.key, r.payload)))
+                }
                 _ => 0,
             }
         }

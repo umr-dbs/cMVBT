@@ -929,6 +929,17 @@ pub(crate) fn main_generate(parms: Vec<String>) {
     let block_deletes: usize = parms[7].parse().unwrap();
 
     let skew = parms[8].parse::<f64>().unwrap();
+    // Optional 9th argument: a seed. With a seed the workload is generated deterministically (same seed, same
+    // bytes) by `generate_query_seeded`; without one the original engine-driven generator is used.
+    if let Some(seed) = parms.get(9) {
+        let seed: u64 = seed.parse().expect("generate: seed must be an unsigned integer");
+        println!("Generating (seed {seed}) init_pop = {init_population}, total_blocks = {total_blocks}, \
+block_inserts = {block_inserts}, block_updates = {block_updates}, block_deletes = {block_deletes}, skew = {skew}");
+        generate_query_seeded(query_file_name, init_population, total_blocks, block_inserts, block_updates,
+                              block_deletes, skew, seed);
+        println!("Finished generate.");
+        return
+    }
 
     println!("Generating init_pop = {init_population}\n\
                 total_blocks = {total_blocks}\n\
@@ -971,6 +982,104 @@ pub(crate) fn main_append(parms: Vec<String>) {
     println!("Finished generate.")
 }
 
+
+/// splitmix64: a tiny seedable generator (this module is shared with the library crate, which has no `ycsb`).
+struct SeedRng(u64);
+
+impl SeedRng {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in [0, n).
+    fn below(&mut self, n: u64) -> u64 {
+        ((self.next_u64() as u128 * n as u128) >> 64) as u64
+    }
+}
+
+/// Deterministic variant of `generate_query` for repetitions with different but reproducible workloads.
+///
+/// Same file format and block structure: `init_population` insertions of distinct random keys, then
+/// `total_blocks` blocks, each a random permutation of `block_inserts` insertions, `block_updates` updates and
+/// `block_deletes` deletions. An insertion draws a uniformly random key that is not live; an update or deletion
+/// draws a key uniformly from the live keys. (The engine-driven `generate_query` picks keys by a random descent of
+/// an MVBT, which approximates the same uniform choice but cannot be seeded.) Only `skew = 0` is supported.
+fn generate_query_seeded(
+    query_file_name: &str,
+    init_population: usize,
+    total_blocks: usize,
+    block_inserts: usize,
+    block_updates: usize,
+    block_deletes: usize,
+    skew: f64,
+    seed: u64)
+{
+    assert!(skew == 0.0, "generate with a seed supports only skew 0");
+    let mut rng = SeedRng(seed);
+    let mut live: Vec<Key> = Vec::with_capacity(init_population);
+    let mut position: HashMap<Key, usize> = HashMap::with_capacity(init_population);
+    let mut out = BufWriter::new(OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(query_file_name)
+        .unwrap_or_else(|e| panic!("cannot create workload file '{query_file_name}': {e}")));
+    let mut write = |kind: u8, key: Key| {
+        let mut buff = [0u8; 9];
+        buff[0] = kind;
+        buff[1..].copy_from_slice(&key.to_le_bytes());
+        out.write_all(&buff).unwrap();
+    };
+    let insert = |rng: &mut SeedRng, live: &mut Vec<Key>, position: &mut HashMap<Key, usize>| loop {
+        let key = rng.below(Key::MAX);
+        if !position.contains_key(&key) {
+            position.insert(key, live.len());
+            live.push(key);
+            break key
+        }
+    };
+
+    for _ in 0..init_population {
+        let key = insert(&mut rng, &mut live, &mut position);
+        write(INSERT, key);
+    }
+    let mut block: Vec<u8> = std::iter::repeat_n(INSERT, block_inserts)
+        .chain(std::iter::repeat_n(UPDATE, block_updates))
+        .chain(std::iter::repeat_n(DELETE, block_deletes))
+        .collect();
+    let mut operations = init_population;
+    for _ in 0..total_blocks {
+        for i in (1..block.len()).rev() { // Fisher-Yates
+            block.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        for &kind in &block {
+            let key = if kind == INSERT {
+                insert(&mut rng, &mut live, &mut position)
+            } else {
+                assert!(!live.is_empty(), "generate: no live key left for an update/delete; use more initial keys");
+                let at = rng.below(live.len() as u64) as usize;
+                let key = live[at];
+                if kind == DELETE {
+                    position.remove(&key);
+                    live.swap_remove(at);
+                    if at < live.len() {
+                        position.insert(live[at], at);
+                    }
+                }
+                key
+            };
+            write(kind, key);
+            operations += 1;
+        }
+    }
+    drop(write);
+    out.flush().unwrap();
+    println!("Generated: {} CRUD Ops ({} live keys at the end)", format_insertions(operations), live.len());
+}
 
 fn generate_query(
     query_file_name: &str,
