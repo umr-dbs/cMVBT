@@ -427,6 +427,22 @@ mod dexa_system {
         }
     }
 
+    impl VersionLists {
+        /// Scans `[start, end]` at `version`; the caller holds a reader pin of `version`.
+        fn range(&self, start: Key, end: Key, version: u64) -> usize {
+            match self
+                .0
+                .dispatch(DexaOp::Range(DexaInterval::new(start, end), version))
+                .1
+            {
+                DexaResult::MatchedRecords(found) => {
+                    consume_scan(found.iter().map(|r| (r.key, r.payload)))
+                }
+                _ => 0,
+            }
+        }
+    }
+
     impl PaperIndex for VersionLists {
         fn finish_thread(&self) {
             crate::dexa::mvb_tree::clock::release_thread_commit();
@@ -450,42 +466,26 @@ mod dexa_system {
             }
         }
 
+        // Every scan holds an RAII reader pin (`MVBPlusTree::pin_snapshot[_at]`) for its whole duration, so the
+        // baseline GC knows the reader and leaf-split filtering never drops tombstones the scan still needs.
         fn scan_fresh(&self) -> usize {
-            self.scan_at(self.0.current_version_for_reader())
+            let pin = self.0.pin_snapshot();
+            self.range(Key::MIN, Key::MAX, pin.version())
         }
 
         fn scan_at(&self, version: u64) -> usize {
-            match self
-                .0
-                .dispatch(DexaOp::Range(
-                    DexaInterval::new(Key::MIN, Key::MAX),
-                    version,
-                ))
-                .1
-            {
-                DexaResult::MatchedRecords(found) => {
-                    consume_scan(found.iter().map(|r| (r.key, r.payload)))
-                }
-                _ => 0,
-            }
+            let pin = self.0.pin_snapshot_at(version);
+            self.range(Key::MIN, Key::MAX, pin.version())
         }
 
         fn scan_fresh_range(&self, start: Key, len: u64) -> usize {
-            self.scan_at_range(start, len, self.0.current_version_for_reader())
+            let pin = self.0.pin_snapshot();
+            self.range(start, start.saturating_add(len.saturating_sub(1)), pin.version())
         }
 
         fn scan_at_range(&self, start: Key, len: u64, version: u64) -> usize {
-            let end = start.saturating_add(len.saturating_sub(1));
-            match self
-                .0
-                .dispatch(DexaOp::Range(DexaInterval::new(start, end), version))
-                .1
-            {
-                DexaResult::MatchedRecords(found) => {
-                    consume_scan(found.iter().map(|r| (r.key, r.payload)))
-                }
-                _ => 0,
-            }
+            let pin = self.0.pin_snapshot_at(version);
+            self.range(start, start.saturating_add(len.saturating_sub(1)), pin.version())
         }
 
         fn newest_version(&self) -> u64 {
