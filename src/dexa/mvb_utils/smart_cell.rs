@@ -222,6 +222,26 @@ impl<E: Default> OptCell<E> {
         }
     }
 
+    /// Pins the cell only if it is still at `read_latch`, the version an optimistic reader
+    /// validated its way down with. `pin_lock` alone only checks that the cell is not locked
+    /// *now*: a split in between (which bumps the version of the old, still linked node after
+    /// moving half of its records out) would go unnoticed, and the caller would work on a node
+    /// that no longer covers its key. Pins do not change the version, so a reader that saw a
+    /// pinned node succeeds once that pin is released.
+    #[inline(always)]
+    pub fn pin_lock_validated(&self, read_latch: LatchVersion) -> Option<LatchVersion> {
+        let read_latch = read_latch & !PIN_FLAG_VERSION;
+
+        if read_latch & WRITE_OBSOLETE_FLAG_VERSION != 0 {
+            return None;
+        }
+
+        self.cell_version
+            .compare_exchange(read_latch, read_latch | PIN_FLAG_VERSION, AcqRel, Relaxed)
+            .ok()
+            .map(|_| read_latch | PIN_FLAG_VERSION)
+    }
+
     #[inline(always)]
     pub fn write_unpin(&self, pin_lock: LatchVersion) {
         debug_assert!(pin_lock & PIN_FLAG_VERSION == PIN_FLAG_VERSION &&
@@ -291,7 +311,9 @@ impl<E: Default> OptCell<E> {
     pub fn write_unlock(&self, write_version: LatchVersion) {
         debug_assert!(write_version & WRITE_PIN_FLAG_VERSION == WRITE_FLAG_VERSION);
 
-        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Relaxed)
+        // Release: the writes of the critical section (e.g. a new `root.block`) must be visible
+        // to anyone who observes the new version.
+        self.cell_version.store((write_version + 1) ^ WRITE_FLAG_VERSION, Release)
     }
 
     #[inline(always)]
@@ -540,12 +562,12 @@ impl<'a, E: Default + 'static> SmartGuard<'_, E> {
     #[inline(always)]
     pub fn upgrade_append_lock(&mut self) -> bool {
         match self {
-            OLCReader(Some((cell, ..))) => unsafe {
+            OLCReader(Some((cell, read_latch))) => unsafe {
                 match cell.0.as_ref() {
                     OLCCell(opt) |
                     LightWeightHybridCell(opt) => {
-                        match opt.pin_lock() {
-                            Ok(pin_latch) => {
+                        match opt.pin_lock_validated(*read_latch) {
+                            Some(pin_latch) => {
                                 let append_pin = OLCAppendPin(transmute_copy(cell), pin_latch);
                                 ptr::write(self, append_pin);
                                 true

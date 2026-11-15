@@ -112,7 +112,7 @@ impl<const FAN_OUT: usize,
                     attempts,
                     0);
 
-                if !root_read.is_read_not_obsolete() {
+                if !root_read.is_read_not_obsolete() || !self.guards_root(&root_read) {
                     attempts += 1;
                     continue
                 }
@@ -294,6 +294,10 @@ impl<const FAN_OUT: usize,
     fn traversal_read_olc_internal(&self, key: Key) -> (NodeVisits, Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
         let mut current_guard
             = self.lock_reader(&self.root.block);
+
+        if !self.guards_root(&current_guard) {
+            return (1, None);
+        }
 
         let key = (self.inc_key)(key);
         let mut node_visits = 0;

@@ -156,6 +156,29 @@ impl<const FAN_OUT: usize,
         self.root.height()
     }
 
+    /// Whether `guard`, taken on the block read from `root.block`, still latches the root.
+    ///
+    /// Splitting a leaf root installs a new index root in `root.block` and keeps the old root
+    /// block as the new *left* leaf, whose version is bumped when the split unlocks it. A
+    /// traversal that read the old `root.block` before the swap but latched the block after the
+    /// unlock holds a valid version on the left leaf and would take it for the whole tree: an
+    /// insert of a right-half key lands in the left leaf, where no traversal finds it again.
+    /// Call this after the latch was taken (the version is read before `root.block` here).
+    #[inline(always)]
+    pub(crate) fn guards_root(&self, guard: &BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+        // `root.block` is swapped with a plain write; read it again from memory and without
+        // touching its reference count.
+        let root = mem::ManuallyDrop::new(unsafe {
+            std::ptr::read_volatile(&self.root.block as *const BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
+        });
+
+        match unsafe { guard.deref_unsafe() } {
+            Some(node) => std::ptr::addr_eq(root.unsafe_borrow() as *const _, node as *const _),
+            None => false,
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn lock_reader(&self, node: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
                               -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>

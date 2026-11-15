@@ -390,10 +390,14 @@ mod concurrent_model_tests {
                 })
             }).collect();
 
-            let models = writers.into_iter().map(|w| w.join().unwrap()).collect();
+            // Stop the scanners before re-raising a writer's panic: otherwise the scope waits for
+            // them forever and a failed assertion shows up as a hang.
+            let joined: Vec<_> = writers.into_iter().map(|w| w.join()).collect();
             stop.store(true, Relaxed);
             scanners.into_iter().for_each(|h| h.join().unwrap());
-            models
+            joined.into_iter()
+                .map(|r| r.unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
+                .collect()
         });
 
         assert_eq!(scan_violations.load(Relaxed), 0, "{name} gc={gc}: a concurrent scan returned inconsistent data");

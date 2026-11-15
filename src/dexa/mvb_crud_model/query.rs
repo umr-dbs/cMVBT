@@ -196,7 +196,7 @@ impl<const FAN_OUT: usize,
                                height,
                                &root.block);
 
-        if !root_guard.is_valid_local() {
+        if !root_guard.is_valid_local() || !self.guards_root(&root_guard) {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
