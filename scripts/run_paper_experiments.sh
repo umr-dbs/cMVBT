@@ -9,7 +9,8 @@
 # Defaults (what runs without overrides):
 #   Figure 5: INIT=10000 random-key initial inserts, LATENCY_OPERATIONS=10M
 #     random-key writes by one writer, no GC; then SCANS=100000 whole-version
-#     scans of versions drawn uniformly from the measured workload (time travel).
+#     scans of versions drawn uniformly from all versions, those of the initial
+#     inserts included (time travel).
 #     Systems cMVBT, Version Chain, Frugal List, vWeaver (libmdbx has no
 #     time-travel queries; it refuses historical scans).
 #   Figure 6: INIT=10000 initial inserts, THROUGHPUT_OPERATIONS=1M writes,

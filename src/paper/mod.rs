@@ -14,7 +14,7 @@
 //!
 //! Concurrent mode partitions the measured operations by key over the writers (`partition_by_key`); readers scan
 //! the freshest snapshot. Sequential mode applies the workload with one writer, then scans versions drawn uniformly
-//! from those the workload created.
+//! from all versions of the tree.
 
 mod systems;
 mod online;
@@ -230,9 +230,21 @@ pub fn main_load(parms: Vec<String>) {
     // The initial insertions run in a thread of their own: a thread that committed and then stays idle (here: the
     // main thread, waiting for the workers) would hold back the snapshots of all readers and the GC at its last
     // commit version, since the visible snapshot is the minimum over the threads' latest commits.
-    let init_counts = {
+    // The commit version of the first initial insertion is the oldest version that historical scans may query.
+    let (init_counts, first_version) = {
         let index = index.clone();
-        thread::spawn(move || apply_all(index.as_ref(), &init)).join().unwrap()
+        thread::spawn(move || {
+            let (mut counts, mut first) = (OltpCounts::default(), u64::MAX);
+            for op in &init {
+                let version = index.apply_versioned(*op);
+                if let Some(v) = version {
+                    first = first.min(v);
+                }
+                counts.add(*op, version.is_some());
+            }
+            index.finish_thread();
+            (counts, first)
+        }).join().unwrap()
     };
     assert_eq!(init_counts.failed, 0, "initial insertions must all succeed");
     index.reset_alloc_counts();
@@ -249,7 +261,7 @@ olap_threads={olap_threads_effective} gc={gc} ({} cores)", num_cpus::get_physica
     let (oltp, oltp_ns, mut scans, olap_ns) = if concurrent {
         run_concurrent(&index, ops, oltp_threads, olap_threads)
     } else {
-        run_sequential(&index, ops, olap_threads, oltp_threads_or_scans)
+        run_sequential(&index, ops, first_version, olap_threads, oltp_threads_or_scans)
     };
 
     let (alloc, reuse) = index.alloc_counts();
@@ -320,18 +332,18 @@ pub(crate) fn run_concurrent(index: &Arc<dyn PaperIndex>, ops: Vec<FileOp>, oltp
 }
 
 /// The workload is applied by one thread; afterwards `scans_per_thread` scans per OLAP thread are run, each on
-/// a version drawn uniformly from all versions created by the measured workload (not by the initial load). The
-/// drawn versions differ per repetition (`REPEAT`).
-fn run_sequential(index: &Arc<dyn PaperIndex>, ops: Vec<FileOp>, olap_threads: usize, scans_per_thread: usize)
+/// a version drawn uniformly from all versions of the tree, those of the initial insertions included (Section 8:
+/// "uniformly distributed across all versions"); `first` is the version of the first initial insertion. The drawn
+/// versions differ per repetition (`REPEAT`).
+fn run_sequential(index: &Arc<dyn PaperIndex>, ops: Vec<FileOp>, first: u64, olap_threads: usize, scans_per_thread: usize)
                   -> (OltpCounts, u128, ScanStats, u128) {
     let repeat: u64 = label().1.parse().unwrap_or(0);
     let start = Instant::now();
-    // The commit versions of the first and the last successful operation bound the versions the workload created.
-    let (mut oltp, mut first, mut last) = (OltpCounts::default(), u64::MAX, 0);
+    // The commit version of the last successful operation is the newest version.
+    let (mut oltp, mut last) = (OltpCounts::default(), 0);
     for op in &ops {
         let version = index.apply_versioned(*op);
         if let Some(v) = version {
-            first = first.min(v);
             last = last.max(v);
         }
         oltp.add(*op, version.is_some());

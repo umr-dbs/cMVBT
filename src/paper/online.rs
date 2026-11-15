@@ -37,7 +37,7 @@ usage: paper-ycsb [--key value]...
 
 The write mix is generated online in exact blocks of 1000 operations. Concurrent readers query
 the freshest visible snapshot. Full scans and random keys reproduce the Figure 5 protocol;
-historical scans run after the writes and sample uniformly from versions created by the measured workload.";
+historical scans run after the writes and sample uniformly from all versions (initial insertions included).";
 
 #[derive(Clone)]
 struct Config {
@@ -496,20 +496,26 @@ fn paper_key(id: u64, seed: u64) -> u64 {
     key ^ (key >> 31)
 }
 
-fn load(index: &dyn PaperIndex, cfg: &Config) -> Result<(), String> {
-    if cfg.key_mode == "sliding" {
+/// Initial insertions; with a historical plan their commit versions are recorded as workload positions
+/// `1..=records`, since Figure 5 draws its scan versions uniformly from all versions.
+fn load(index: &dyn PaperIndex, cfg: &Config, historical: Option<&HistoricalPlan>) -> Result<(), String> {
+    if cfg.key_mode == "sliding" && historical.is_none() {
         if let Some(result) = index.bulk_load(cfg.records) {
             return result;
         }
     }
+    let mut historical_cursor = 0;
     for id in 0..cfg.records {
         let key = if cfg.key_mode == "random" {
             paper_key(id, cfg.seed)
         } else {
             id
         };
-        if !index.apply(FileOp::Insert(key)) {
-            return Err(format!("initial insert({key}) failed"));
+        let version = index
+            .apply_versioned(FileOp::Insert(key))
+            .ok_or_else(|| format!("initial insert({key}) failed"))?;
+        if let Some(plan) = historical {
+            plan.record(&mut historical_cursor, id + 1, version);
         }
     }
     index.finish_thread();
@@ -567,7 +573,7 @@ fn random_key_writer(
             },
         };
         if let Some(plan) = &historical {
-            plan.record(&mut historical_cursor, operation + 1, version);
+            plan.record(&mut historical_cursor, cfg.records + operation + 1, version);
         }
     }
     index.finish_thread();
@@ -628,7 +634,7 @@ fn writer(
             },
         };
         if let Some(plan) = &historical {
-            plan.record(&mut historical_cursor, operation + 1, version);
+            plan.record(&mut historical_cursor, cfg.records + operation + 1, version);
         }
     }
     index.finish_thread();
@@ -696,8 +702,13 @@ fn historical_scans(
                         index.scan_at(version) as u64
                     } else {
                         let (inserts, deletes) =
-                            structural_counts_before(completed, cfg.update_rate, cfg.seed);
-                        let (lo, hi) = (deletes, cfg.records + inserts);
+                            structural_counts_before(
+                                completed.saturating_sub(cfg.records),
+                                cfg.update_rate,
+                                cfg.seed,
+                            );
+                        // Positions up to `records` are initial insertions: keys 0..completed exist.
+                        let (lo, hi) = (deletes, completed.min(cfg.records) + inserts);
                         let start = lo
                             + rng.below(
                                 hi.saturating_sub(lo)
@@ -906,25 +917,28 @@ fn run(cfg: Config) -> Result<(), String> {
     );
     // Keep loading separate from the measurement workers; `load` explicitly releases its commit
     // slot before this join boundary.
-    let loader = index.clone();
-    let load_cfg = cfg.clone();
-    thread::spawn(move || load(loader.as_ref(), &load_cfg))
-        .join()
-        .map_err(|_| "initial-load thread panicked".to_string())??;
-    index.reset_alloc_counts();
-
-    let next = Arc::new(AtomicU64::new(0));
-    let keys = Arc::new(OnlineKeys::new(cfg.records, cfg.operations));
+    // Historical scans sample uniformly from all versions: those of the initial insertions and of the
+    // measured writes (workload positions 1..=records+operations).
     let historical = (cfg.historical_scans > 0).then(|| {
         Arc::new(HistoricalPlan::new(
             cfg.historical_scans,
-            cfg.operations,
+            cfg.records + cfg.operations,
             cfg.seed,
         ))
     });
     if historical.is_some() {
         index.prepare_historical_snapshot()?;
     }
+    let loader = index.clone();
+    let load_cfg = cfg.clone();
+    let load_plan = historical.clone();
+    thread::spawn(move || load(loader.as_ref(), &load_cfg, load_plan.as_deref()))
+        .join()
+        .map_err(|_| "initial-load thread panicked".to_string())??;
+    index.reset_alloc_counts();
+
+    let next = Arc::new(AtomicU64::new(0));
+    let keys = Arc::new(OnlineKeys::new(cfg.records, cfg.operations));
     let done = Arc::new(AtomicBool::new(false));
     let barrier = Arc::new(Barrier::new(cfg.writers + cfg.readers + 1));
     let readers: Vec<_> = (0..cfg.readers)
