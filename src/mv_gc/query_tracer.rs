@@ -5,7 +5,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use crossbeam_skiplist::SkipSet;
 use crate::mv_gc::tracker_handle::TrackerHandle;
-use crate::mv_sync::clock::committed_snapshot;
 use crate::mv_tree::mvbt::MVBTSt;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
@@ -161,10 +160,11 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub(crate) fn pinned_reader_snapshot(&self) -> (SnapShot, ReaderPin<FAN_OUT, NUM_RECORDS, Key, Payload>) {
         let pin = self.tracker().map(|tracker| {
-            let ticket = tracker.pin_reader(committed_snapshot(self.current_version()));
+            let ticket = tracker.pin_reader(self.current_version_for_reader());
             (tracker, ticket)
         });
 
+        // Snapshots of a clock never decrease, so this one is not older than the pinned one.
         (self.current_version_for_reader(), ReaderPin(pin))
     }
 }

@@ -5,7 +5,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{Acquire, Release};
 
 pub struct LeafPage<
     const NUM_RECORDS: usize,
@@ -73,7 +73,7 @@ impl<const NUM_RECORDS: usize,
         let (active, dead)
             = leaf_page.active_dead_count();
 
-        new_page.len.store(from_active_dead(active, dead), Relaxed);
+        new_page.len.store(from_active_dead(active, dead), Release);
 
         new_page
     }
@@ -119,7 +119,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn len(&self) -> usize {
-        let len = self.len.load(Relaxed) as _;
+        let len = self.len.load(Acquire) as _;
         // fence(Acquire);
 
         from_len_sum(len)
@@ -137,7 +137,7 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn active_dead_count(&self) -> (Active, Dead) {
-        from_len(self.len.load(Relaxed))
+        from_len(self.len.load(Acquire))
     }
 
     #[inline]
@@ -152,12 +152,12 @@ impl<const NUM_RECORDS: usize,
 
     #[inline(always)]
     pub fn commit_delta(&self, active_delta: i32, dead_delta: i32) {
-        let len= self.len.load(Relaxed);
+        let len= self.len.load(Acquire);
         let active = active_len(len) as i32 + active_delta;
         let dead = (dead_len(len) as i32 + dead_delta) as u32;
 
         // fence(Release);
-        self.len.store(from_active_dead(active as Active, dead as Dead), Relaxed)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
     #[inline]
@@ -172,7 +172,7 @@ impl<const NUM_RECORDS: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.len();
-        self.len.store(0, Relaxed);
+        self.len.store(0, Release);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -203,7 +203,7 @@ impl<const NUM_RECORDS: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as PageLenPrimitive + n_records_len as PageLenPrimitive, 0), Relaxed)
+            from_active_dead(len as PageLenPrimitive + n_records_len as PageLenPrimitive, 0), Release)
     }
 
     #[inline(always)]
@@ -223,7 +223,7 @@ impl<const NUM_RECORDS: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as PageLenPrimitive + records.len() as PageLenPrimitive, 0), Relaxed)
+            from_active_dead(len as PageLenPrimitive + records.len() as PageLenPrimitive, 0), Release)
     }
 
     // #[inline(always)]

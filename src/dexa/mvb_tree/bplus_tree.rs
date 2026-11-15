@@ -10,7 +10,7 @@ use crate::dexa::mvb_block::block::{Block, BlockGuard};
 use crate::dexa::types::{dec_key, inc_key, INDEX};
 use crate::dexa::mvb_record_model::{AtomicVersion, Version};
 use crate::dexa::mvb_record_model::v_record_point::{VersionIndexType, VersionedRecordPoint};
-use crate::dexa::mvb_tree::clock::GlobalClock;
+use crate::dexa::mvb_tree::clock::{GlobalClock, ReaderRegistry};
 use crate::dexa::mvb_utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
@@ -29,6 +29,8 @@ pub struct MVBPlusTree<
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) global_clock: GlobalClock,
+    /// Snapshots announced by readers; bounds what the GC may remove (see `clock.rs`).
+    pub(crate) readers: ReaderRegistry,
     pub(crate) v_index_type: VersionIndexType,
     pub(crate) gc: bool,
     /// Records removed by the GC. Their version lists are kept until the tree is dropped: scans may still hold
@@ -113,6 +115,7 @@ impl<const FAN_OUT: usize,
             inc_key,
             dec_key,
             global_clock: GlobalClock::new(),
+            readers: ReaderRegistry::new(),
             v_index_type,
             gc,
             limbo: parking_lot::Mutex::new(Vec::new()),

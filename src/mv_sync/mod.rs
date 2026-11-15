@@ -8,3 +8,6 @@ pub mod block_sync;
 /// environment hold this lock, so that `cargo test` can run them in parallel without disturbing each other.
 #[cfg(test)]
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod snapshot_race_test;

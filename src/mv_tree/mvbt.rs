@@ -25,7 +25,7 @@ pub struct MVBTSt<
 > {
     pub(crate) root: RootIndex<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub block_manager: BlockAllocManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    pub(crate) global_clock: GlobalClock,
+    pub(crate) global_clock: Arc<GlobalClock>,
     pub(crate) inc_key: fn(Key) -> Key,
     pub(crate) dec_key: fn(Key) -> Key,
     pub(crate) min_key: Key,
@@ -90,7 +90,7 @@ impl<const FAN_OUT: usize,
 > MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
     pub fn enable_gc(&self, update_in_place: bool) {
-        self.block_manager.pass_aux_tx_tracker(Some(Arc::new(TrackerHandleSt::new())));
+        self.block_manager.pass_aux_tx_tracker(Some(Arc::new(TrackerHandleSt::new(Arc::clone(&self.global_clock)))));
         self.block_manager.set_update_in_place(update_in_place);
     }
 
@@ -123,7 +123,7 @@ impl<const FAN_OUT: usize,
         Self {
             root: RootIndex::new(root_index_type, &bm),
             block_manager: bm,
-            global_clock: GlobalClock::new(),
+            global_clock: Arc::new(GlobalClock::new()),
             inc_key,
             dec_key,
             min_key,

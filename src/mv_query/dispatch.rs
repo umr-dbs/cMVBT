@@ -1,7 +1,7 @@
 use std::hash::Hash;
 use std::fmt::Display;
 use std::mem;
-use std::sync::atomic::Ordering::{Acquire, Relaxed};
+
 use itertools::Itertools;
 use crate::mv_crud_model::crud_api::CRUDDispatcher;
 use crate::mv_crud_model::crud_operation::CRUDOperation;
@@ -26,6 +26,14 @@ impl<'a,
 {
     #[inline]
     fn dispatch_crud(&'a self, crud: CRUDOperation<Key, Payload>) -> CRUDOperationResult<'a, FAN_OUT, NUM_RECORDS, Key, Payload> {
+        // A write operation reserves before its traversal, which protects the nodes it reaches
+        // from reuse and bounds reader snapshots below every version it allocates; it ends after
+        // the soft commit, when this guard is dropped (see `mv_sync::clock`).
+        let _write_operation = matches!(crud,
+            CRUDOperation::Insert(..) | CRUDOperation::Update(..) | CRUDOperation::Delete(..) |
+            CRUDOperation::InsertRand | CRUDOperation::UpdateRand | CRUDOperation::DeleteRand)
+            .then(|| self.begin_write());
+
         match crud {
             CRUDOperation::Insert(key, payload) => {
                 let leaf_guard =
@@ -49,8 +57,9 @@ impl<'a,
                 let current_len
                     = leaf_page.len();
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
@@ -58,7 +67,7 @@ impl<'a,
 
                 leaf_page.commit_delta(1, 0);
 
-                self.end_tx_commit(version);
+                commit.publish();
 
                 CRUDOperationResult::Inserted(version)
             }
@@ -126,8 +135,9 @@ impl<'a,
                     Some(_) => {}
                 }
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
@@ -142,7 +152,7 @@ impl<'a,
 
                 // Apply second soft atomic commit for lifetime end
                 leaf_page.commit_delta(-1, 1);
-                self.end_tx_commit(version);
+                commit.publish();
 
                 CRUDOperationResult::Updated(version)
             }
@@ -171,8 +181,9 @@ impl<'a,
                     println!("[key={key}] - Loop start");
                 }
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 if VERBOSE {
                     println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
@@ -185,7 +196,7 @@ impl<'a,
                             println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
                         }
 
-                        self.end_tx_commit(version);
+                        commit.publish();
                         CRUDOperationResult::Deleted(version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
@@ -289,8 +300,9 @@ impl<'a,
                     _ => { }
                 }
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
@@ -302,7 +314,7 @@ impl<'a,
                     Ok(Some(..)) => {
                         // second step soft commit: Correct counters
                         leaf_page.commit_delta(-1, 1);
-                        self.end_tx_commit(version);
+                        commit.publish();
 
                         CRUDOperationResult::UpdatedRand(key, version)
                     }
@@ -345,8 +357,9 @@ impl<'a,
                     }
                 };
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 if VERBOSE {
                     println!("[key={key}] - Commit succeeded: {version}, Attempts: 0");
@@ -358,7 +371,7 @@ impl<'a,
                             println!("After delete Leaf-records:\n{}", leaf_page.as_records().iter().join("\n"));
                         }
 
-                        self.end_tx_commit(version);
+                        commit.publish();
                         CRUDOperationResult::DeletedRand(key, version)
                     },
                     Ok(None) => CRUDOperationResult::ZeroAffected(KeyDoesNotExist),
@@ -421,15 +434,16 @@ impl<'a,
                 let current_len
                     = leaf_page.len();
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 leaf_page.push_uncommitted(
                     RecordPoint::new(key, VersionInfo::new(version), payload),
                     current_len);
 
                 leaf_page.commit_delta(1, 0);
-                self.end_tx_commit(version);
+                commit.publish();
                 
                 CRUDOperationResult::InsertedRand(key, version)
             }

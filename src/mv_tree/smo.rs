@@ -217,8 +217,9 @@ impl<const FAN_OUT: usize,
                               right_fence,
                               right
             ) => {
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 internal_page.push_uncommitted(
                     left_fence,
@@ -234,12 +235,13 @@ impl<const FAN_OUT: usize,
 
                 internal_page.commit_delta(1, 1);
                 internal_page.mark_version_obsolete(child_index);
-                self.end_tx_commit(version);
+                commit.publish();
                 version
             }
             BlockSplit::ByVersion(fresh) => {
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 internal_page.push_uncommitted(
                     fence,
@@ -249,16 +251,18 @@ impl<const FAN_OUT: usize,
 
                 internal_page.commit_delta(0, 1);
                 internal_page.mark_version_obsolete(child_index);
-                self.end_tx_commit(version);
+                commit.publish();
                 version
             }
         };
 
-        // The graveyard is ordered by the version at which the node died (the reorganization
-        // version), not by the version at which it was created: readers with a snapshot older
-        // than the death version still traverse the node.
+        // The graveyard is ordered by the node's retirement stamp, taken after the node was
+        // unlinked: it exceeds the reorganization version (readers with an older snapshot still
+        // traverse the node), and every write operation reserving a later stamp started after the
+        // unlink, hence cannot reach the node (see `GlobalClock::retire_stamp`).
+        let _ = death_version;
         self.block_manager.register_dead(
-            death_version,
+            self.retire_stamp(),
             internal_page.get_pointer(child_index).clone());
 
         mufasa
@@ -302,8 +306,9 @@ impl<const FAN_OUT: usize,
 
                 merged_fence.merged(&fence_sibling);
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 mufasa_internal_page.push_uncommitted(
                     merged_fence,
@@ -320,12 +325,13 @@ impl<const FAN_OUT: usize,
                 mufasa_internal_page
                     .mark_version_obsolete(index_simba);
 
+                let retired = self.retire_stamp();
                 self.block_manager.register_dead_col([
-                    (version, mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (version, mufasa_internal_page.get_pointer(index_sibling).clone())
+                    (retired, mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (retired, mufasa_internal_page.get_pointer(index_sibling).clone())
                 ]);
 
-                self.end_tx_commit(version);
+                commit.publish();
             }
             MergeResult::KeySplit(
                 index_sibling,
@@ -356,8 +362,9 @@ impl<const FAN_OUT: usize,
                 let mufasa_len
                     = mufasa_internal_page.sum_len();
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 mufasa_internal_page.push_uncommitted(
                     left_interval,
@@ -380,12 +387,13 @@ impl<const FAN_OUT: usize,
                 mufasa_internal_page
                     .mark_version_obsolete(index_simba);
 
+                let retired = self.retire_stamp();
                 self.block_manager.register_dead_col([
-                    (version, mufasa_internal_page.get_pointer(index_simba).clone()),
-                    (version, mufasa_internal_page.get_pointer(index_sibling).clone())
+                    (retired, mufasa_internal_page.get_pointer(index_simba).clone()),
+                    (retired, mufasa_internal_page.get_pointer(index_sibling).clone())
                 ]);
 
-                self.end_tx_commit(version);
+                commit.publish();
             }
             _ => return Err(()),
         }
@@ -915,8 +923,9 @@ impl<const FAN_OUT: usize,
                     .as_mut()
                     .as_internal_page();
 
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 root_internal_page
                     .push_uncommitted(left_fence, version, left, 0);
@@ -932,16 +941,17 @@ impl<const FAN_OUT: usize,
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height + 1));
 
-                self.end_tx_commit(version);
+                commit.publish();
 
                 self.block_manager.register_dead(
-                    version, root_guard.inner_cell());
+                    self.retire_stamp(), root_guard.inner_cell());
 
                 new_root_latch
             }
             BlockSplit::ByVersion(new_root_block) => {
-                let version
+                let commit
                     = self.start_tx_commit();
+                let version = commit.version();
 
                 let new_root_latch
                     = new_root_block.borrow_read();
@@ -949,10 +959,10 @@ impl<const FAN_OUT: usize,
                 self.root.append_root(
                     Root::new(new_root_block.clone(), version, height));
 
-                self.end_tx_commit(version);
+                commit.publish();
 
                 self.block_manager.register_dead(
-                    version, root_guard.inner_cell());
+                    self.retire_stamp(), root_guard.inner_cell());
 
                 new_root_latch
             }

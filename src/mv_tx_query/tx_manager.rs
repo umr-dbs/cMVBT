@@ -245,7 +245,7 @@ impl<const FAN_OUT: usize,
     }
 
     pub fn enable_gc(&self) {
-        *self.db_tracker.get_mut() = Some(Arc::new(TrackerHandleSt::new()));
+        *self.db_tracker.get_mut() = Some(Arc::new(TrackerHandleSt::new(Arc::clone(self.index().clock()))));
 
         let clone
             = self.db_tracker.clone();
@@ -297,7 +297,7 @@ impl<const FAN_OUT: usize,
     pub fn new(threads: usize, index: MVBTSt<FAN_OUT, NUM_RECORDS, Key, Payload>, gc: bool) -> Self {
         let manager = Self {
             db_tracker: if gc {
-                SafeCell::new(Some(Arc::new(TrackerHandleSt::new())))
+                SafeCell::new(Some(Arc::new(TrackerHandleSt::new(Arc::clone(index.clock())))))
             }
             else {
                 SafeCell::new(None)

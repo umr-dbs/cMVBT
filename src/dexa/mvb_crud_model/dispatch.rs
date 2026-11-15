@@ -35,8 +35,8 @@ impl<const FAN_OUT: usize,
                     self.traversal_write(key)
                 };
 
-                let del_version
-                    = self.start_tx_commit();
+                let del_commit = self.start_tx_commit();
+                let del_version = del_commit.version();
 
                  let ret = match guard.deref_mut()
                      .unwrap()
@@ -54,7 +54,7 @@ impl<const FAN_OUT: usize,
                      Err(..) => (node_visits, CRUDOperationResult::ZeroAffected(KeyAlreadyDeleted)),
                  };
 
-                self.end_tx_commit(del_version);
+                del_commit.publish();
                 ret
             }
             CRUDOperation::Insert(key, payload) => {
@@ -64,7 +64,8 @@ impl<const FAN_OUT: usize,
                     self.traversal_write(key)
                 };
 
-                let ingest_version = self.start_tx_commit();
+                let ingest_commit = self.start_tx_commit();
+                let ingest_version = ingest_commit.version();
 
                 if DEBUG_VERIFY {
                     let res =  (node_visits, guard.deref_mut()
@@ -93,11 +94,11 @@ impl<const FAN_OUT: usize,
                             node_visits + self.weaver_callback(guard, key, ingest_version)
                         } else { 0 }, CRUDOperationResult::Inserted(ingest_version));
 
-                        self.end_tx_commit(ingest_version);
+                        ingest_commit.publish();
                         ret
                     }
                     else {
-                        self.end_tx_commit(ingest_version);
+                        ingest_commit.publish();
                         (node_visits, CRUDOperationResult::Error)
                     }
                 }
@@ -109,7 +110,8 @@ impl<const FAN_OUT: usize,
                     self.traversal_write(key)
                 };
 
-                let update_version = self.start_tx_commit();
+                let update_commit = self.start_tx_commit();
+                let update_version = update_commit.version();
                 if DEBUG_VERIFY {
                     let res = (node_visits, match guard
                         .deref_mut()
@@ -152,7 +154,7 @@ impl<const FAN_OUT: usize,
                         Err(..) =>
                             (node_visits, CRUDOperationResult::Error)
                     };
-                    self.end_tx_commit(update_version);
+                    update_commit.publish();
                     ret
                 }
             }
@@ -378,13 +380,13 @@ impl<const FAN_OUT: usize,
                         let ret_data
                             = RecordPoint::new(v_record.key(), v_record.newest_payload());
 
-                        let del_version
-                            = self.start_tx_commit();
+                        let del_commit = self.start_tx_commit();
+                        let del_version = del_commit.version();
 
                         v_record.delete(del_version);
 
                         let ret = CRUDOperationResult::MatchedRecord(Some(ret_data));
-                        self.end_tx_commit(del_version);
+                        del_commit.publish();
 
                         (node_visits, ret)
                     } else {
@@ -413,13 +415,13 @@ impl<const FAN_OUT: usize,
                         let ret_data
                             = RecordPoint::new(v_record.key(), v_record.newest_payload());
 
-                        let del_version
-                            = self.start_tx_commit();
+                        let del_commit = self.start_tx_commit();
+                        let del_version = del_commit.version();
 
                         v_record.delete(del_version);
 
                         let ret = CRUDOperationResult::MatchedRecord(Some(ret_data));
-                        self.end_tx_commit(del_version);
+                        del_commit.publish();
 
                         (node_visits, ret)
                     } else {
@@ -449,11 +451,12 @@ impl<const FAN_OUT: usize,
                         let ret_data
                             = RecordPoint::new(v_record.key(), v_record.newest_payload());
 
-                        let del_version = self.start_tx_commit();
+                        let del_commit = self.start_tx_commit();
+                        let del_version = del_commit.version();
                         v_record.delete(del_version);
 
                         let ret = CRUDOperationResult::MatchedRecord(Some(ret_data));
-                        self.end_tx_commit(del_version);
+                        del_commit.publish();
 
                         (node_visits, ret)
                     } else {
@@ -483,12 +486,12 @@ impl<const FAN_OUT: usize,
                         let ret_data
                             = RecordPoint::new(v_record.key(), v_record.newest_payload());
 
-                        let del_version
-                            = self.start_tx_commit();
+                        let del_commit = self.start_tx_commit();
+                        let del_version = del_commit.version();
 
                         v_record.delete(del_version);
                         let ret = CRUDOperationResult::MatchedRecord(Some(ret_data));
-                        self.end_tx_commit(del_version);
+                        del_commit.publish();
 
                         (node_visits, ret)
                     } else {

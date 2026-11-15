@@ -160,6 +160,13 @@ impl<Payload: Clone + Default + Display + Sync + Send + 'static> AtomicVersionLi
         unsafe { &*self.head.load(Acquire) }.del_version.get() == Version::MAX
     }
 
+    /// The version that deleted the key, if its newest version is deleted.
+    #[inline(always)]
+    pub fn deleted_at(&self) -> Option<Version> {
+        let del = unsafe { &*self.head.load(Acquire) }.del_version.get();
+        (del != Version::MAX).then_some(del)
+    }
+
     #[inline(always)]
     pub fn newest_payload(&self) -> Payload {
         unsafe { &*self.head.load(Acquire) }.payload.clone()

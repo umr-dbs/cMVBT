@@ -8,7 +8,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ptr;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{Acquire, Release};
 
 pub type Fence<Key> = Interval<Key>;
 
@@ -91,7 +91,7 @@ impl<const FAN_OUT: usize,
             = from.active_dead_count();
 
         new_page.len.store(
-            from_active_dead(active, dead), Relaxed);
+            from_active_dead(active, dead), Release);
 
         new_page
     }
@@ -144,12 +144,12 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn commit_delta(&self, active_delta: i32, dead_delta: u32) {
-        let len= self.len.load(Relaxed);
+        let len= self.len.load(Acquire);
         let active = active_len(len) as i32 + active_delta;
         let dead = dead_len(len) + dead_delta;
 
         // fence(Release);
-        self.len.store(from_active_dead(active as Active, dead as Dead), Relaxed)
+        self.len.store(from_active_dead(active as Active, dead as Dead), Release)
     }
 
     // #[inline]
@@ -166,7 +166,7 @@ impl<const FAN_OUT: usize,
     #[inline]
     pub fn on_reuse(&mut self) {
         let len = self.sum_len();
-        self.len.store(0, Relaxed);
+        self.len.store(0, Release);
 
         unsafe {
             (0..len).for_each(|index| {
@@ -207,7 +207,7 @@ impl<const FAN_OUT: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as PageLenPrimitive + add as PageLenPrimitive, 0), Relaxed);
+            from_active_dead(len as PageLenPrimitive + add as PageLenPrimitive, 0), Release);
     }
 
     #[inline]
@@ -243,17 +243,17 @@ impl<const FAN_OUT: usize,
 
         // fence(Release);
         self.len.store(
-            from_active_dead(len as PageLenPrimitive + add as PageLenPrimitive, 0), Relaxed)
+            from_active_dead(len as PageLenPrimitive + add as PageLenPrimitive, 0), Release)
     }
 
     #[inline(always)]
     pub fn active_dead_count(&self) -> (Active, Dead) {
-        from_len(self.len.load(Relaxed))
+        from_len(self.len.load(Acquire))
     }
 
     #[inline(always)]
     pub fn active_len(&self) -> usize {
-        let len = self.len.load(Relaxed);
+        let len = self.len.load(Acquire);
         // fence(Acquire);
 
         active_len(len) as _
@@ -261,7 +261,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn dead_len(&self) -> usize {
-        let len = self.len.load(Relaxed);
+        let len = self.len.load(Acquire);
         // fence(Acquire);
 
         dead_len(len) as _
@@ -269,7 +269,7 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn sum_len(&self) -> usize {
-        let len = self.len.load(Relaxed) as _;
+        let len = self.len.load(Acquire) as _;
         // fence(Acquire);
 
         from_len_sum(len)

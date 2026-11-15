@@ -1,3 +1,4 @@
+use crate::dexa::mvb_record_model::Version;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::ops::{Deref, DerefMut};
@@ -63,18 +64,21 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn split_type(&self) -> SplitType {
+    /// Whether a leaf split also removes the reclaimable records (deleted at a version
+    /// `<= horizon`, see `VersionIndex::is_reclaimable`). Filtering is only applied while it keeps
+    /// at least 60% of the records, so the split still has records on both sides.
+    pub(crate) fn split_type(&self, horizon: Version) -> SplitType {
         if self.is_directory() {
             return SplitType::SplitNormal
         }
 
-        let count_deleted = self
+        let count_reclaimable = self
             .as_records()
             .iter()
-            .filter(|r| !r.is_live())
+            .filter(|r| r.is_reclaimable(horizon))
             .count();
 
-        if count_deleted < (NUM_RECORDS as f64 * 0.4f64).ceil() as _ {
+        if count_reclaimable < (NUM_RECORDS as f64 * 0.4f64).ceil() as _ {
             SplitType::SplitAndFilter
         }
         else {

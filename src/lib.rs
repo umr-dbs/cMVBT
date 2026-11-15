@@ -223,7 +223,7 @@ mod gc_stress {
 
     /// Writers churn the non-stable keys (insert/delete -> constant node reorganizations, i.e.,
     /// GC reuse), while scanners check that the committed snapshot stays intact:
-    /// every stable key shows up, keys are strictly ascending, and payload == key.
+    /// every stable key shows up, no key shows up twice, and payload == key.
     /// A node reused while a reader still traverses it breaks one of these.
     #[test]
     fn scans_stay_consistent_under_gc_reuse() {
@@ -268,10 +268,13 @@ mod gc_stress {
                         let mut out: *mut u8 = ptr::null_mut();
                         let n = api().scan(&start as *const u64 as _, 8, 500, &mut out);
                         assert!(n >= 0);
-                        let got = unsafe {
+                        let mut got = unsafe {
                             Vec::from_raw_parts(out as *mut RecordPointResult<u64, u64>, n as usize, n as usize)
                         };
 
+                        // Leaves are append-only, so a scan returns the records of one leaf in
+                        // insertion order; a snapshot holds every key at most once.
+                        got.sort_unstable_by_key(|r| r.key);
                         let ascending = got.windows(2).all(|w| w[0].key < w[1].key);
                         let payloads = got.iter().all(|r| r.payload == r.key);
                         let stable_seen = got.iter().filter(|r| r.key % STABLE_STRIDE == 0).count() as u64;

@@ -300,8 +300,9 @@ impl<const FAN_OUT: usize,
                 index_block.set_key_len(1);
             }
             Node::Leaf(records) => unsafe {
+                let horizon = if self.gc { self.gc_horizon() } else { 0 };
                 let split_type = if self.gc {
-                    root_guard.deref_unsafe().unwrap().split_type()
+                    root_guard.deref_unsafe().unwrap().split_type(horizon)
                 }
                 else {
                     SplitType::SplitNormal
@@ -313,14 +314,15 @@ impl<const FAN_OUT: usize,
                     let mut write_idx = 0;
                     for read_idx in 0..n {
                         let read_ptr = recs_ptr.add(read_idx);
-                        if (*read_ptr).is_live() {
+                        if !(*read_ptr).is_reclaimable(horizon) {
                             if write_idx != read_idx {
                                 ptr::copy_nonoverlapping(read_ptr, recs_ptr.add(write_idx), 1);
                             }
                             write_idx += 1;
                         } else {
-                            // Concurrent readers may still traverse this record's version list (optimistic
-                            // reads are only validated afterwards), so it must not be freed here.
+                            // No reader can see this deleted key anymore. Concurrent readers may still
+                            // traverse its version list (optimistic reads are only validated
+                            // afterwards), so it must not be freed here.
                             self.limbo.lock().push(ptr::read(read_ptr));
                         }
                     }
@@ -797,8 +799,9 @@ impl<const FAN_OUT: usize,
                     .insert(child_pos, k3);
             }
             Node::Leaf(records) => unsafe {
+                let horizon = if self.gc { self.gc_horizon() } else { 0 };
                 let split_type = if self.gc {
-                    from_guard.deref_unsafe().unwrap().split_type()
+                    from_guard.deref_unsafe().unwrap().split_type(horizon)
                 }
                 else {
                     SplitType::SplitNormal
@@ -810,14 +813,15 @@ impl<const FAN_OUT: usize,
                     let mut write_idx = 0;
                     for read_idx in 0..n {
                         let read_ptr = recs_ptr.add(read_idx);
-                        if (*read_ptr).is_live() {
+                        if !(*read_ptr).is_reclaimable(horizon) {
                             if write_idx != read_idx {
                                 ptr::copy_nonoverlapping(read_ptr, recs_ptr.add(write_idx), 1);
                             }
                             write_idx += 1;
                         } else {
-                            // Concurrent readers may still traverse this record's version list (optimistic
-                            // reads are only validated afterwards), so it must not be freed here.
+                            // No reader can see this deleted key anymore. Concurrent readers may still
+                            // traverse its version list (optimistic reads are only validated
+                            // afterwards), so it must not be freed here.
                             self.limbo.lock().push(ptr::read(read_ptr));
                         }
                     }

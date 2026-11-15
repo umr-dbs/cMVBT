@@ -76,6 +76,13 @@ impl<Key: Hash + Ord + Copy + Default,
         self.head.load().is_live()
     }
 
+    /// The version of the tombstone heading the list, if the key is deleted.
+    #[inline(always)]
+    pub fn deleted_at(&self) -> Option<Version> {
+        let head = self.head.load();
+        head.is_deleted().then_some(head.insert_version)
+    }
+
     #[inline(always)]
     pub fn iter(&self) -> VWeaverVersionIterator<Key, Payload> {
         VWeaverVersionIterator {

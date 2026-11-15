@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering::SeqCst;
 use crate::mv_gc::block_tracer::{DeadPageValue, BlockTrace};
 use crate::mv_gc::query_tracer::TransactionTrace;
 use crate::mv_page_model::BlockRef;
-use crate::mv_sync::clock::committed_snapshot;
+use crate::mv_sync::clock::GlobalClock;
 use crate::mv_record_model::version_info::Version;
 use crate::mv_tx_model::transaction_result::SnapShot;
 
@@ -25,6 +25,8 @@ pub struct TrackerHandleSt<
 {
     live_tx: TransactionTrace,
     dead_blocks: BlockTrace<P_F, P_N, Key, Payload>,
+    /// Clock of the tree whose dead blocks are traced; bounds readers that did not announce yet.
+    clock: Arc<GlobalClock>,
 }
 
 impl<const P_F: usize,
@@ -32,10 +34,11 @@ impl<const P_F: usize,
     Key: Copy + Default + Hash + Ord + Display,
     Payload: Clone + Default> TrackerHandleSt<P_F, P_N, Key, Payload>
 {
-    pub fn new() -> Self {
+    pub(crate) fn new(clock: Arc<GlobalClock>) -> Self {
         Self {
             live_tx: TransactionTrace::new(),
             dead_blocks: BlockTrace::new(),
+            clock,
         }
     }
 
@@ -91,14 +94,14 @@ impl<const P_F: usize,
     /// Hands out the oldest dead block no reader can reach anymore, if any.
     ///
     /// A block that died at version `d` is still reachable by every reader with snapshot `< d`.
-    /// The bound is composed of the global committed snapshot, which lower-bounds every reader
+    /// The bound is composed of the tree's committed snapshot, which lower-bounds every reader
     /// that has not announced itself yet, and the oldest announced reader. The committed
     /// snapshot MUST be read first: a reader announcing itself after our scan of the live
     /// readers draws its snapshot after our read of the committed snapshot, hence cannot
     /// observe a smaller one.
     #[inline]
     pub fn free_block(&self) -> Option<BlockRef<P_F, P_N, Key, Payload>> {
-        let committed = committed_snapshot(Version::MAX);
+        let committed = self.clock.snapshot();
         fence(SeqCst);
         let bound = self.live_tx
             .peek_min()

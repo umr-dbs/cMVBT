@@ -109,6 +109,13 @@ impl<Payload: Clone + Default + Display + Sync + Send + 'static> AtomicFrugalLis
         self.load_read().is_live()
     }
 
+    /// The version of the tombstone heading the list, if the key is deleted.
+    #[inline(always)]
+    pub fn deleted_at(&self) -> Option<Version> {
+        let head = self.load_read();
+        head.is_deleted().then_some(head.insert_version)
+    }
+
     #[inline(always)]
     pub fn iter(&self) -> FrugalVersionIterator<Payload> {
         let head = self.head.load(Acquire);

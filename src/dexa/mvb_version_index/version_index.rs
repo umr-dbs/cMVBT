@@ -357,6 +357,20 @@ impl<Key: Hash + Ord + Copy + Default,
         }
     }
 
+    /// Whether no reader with a snapshot `>= horizon` can see any version of this key: its
+    /// newest version is a deletion at a version `<= horizon`. Such records can be removed.
+    #[inline(always)]
+    pub fn is_reclaimable(&self, horizon: Version) -> bool {
+        let deleted_at = match self {
+            VersionIndex::VANILLA(version_list) => version_list.deleted_at(),
+            VersionIndex::FrugalSkipList(fg) => fg.deleted_at(),
+            VersionIndex::VWEAVER(weaver) => weaver.deleted_at(),
+            // Deletion versions are not tracked here; keep such records.
+            VersionIndex::SkipList(..) | VersionIndex::DexaBTree(..) => None,
+        };
+        deleted_at.is_some_and(|deleted| deleted <= horizon)
+    }
+
     #[inline(always)]
     pub fn newest_payload(&self) -> Payload {
         match self {
