@@ -60,12 +60,20 @@ impl<const FAN_OUT: usize,
         }
     }
 
+    /// Whether an internal node with `keys` keys can replace a pair of nodes (or the root's
+    /// children): it must stay below the overflow threshold, as a traversal that just merged into
+    /// the root continues from it and may still insert a separator from a child split.
+    #[inline(always)]
+    fn internal_union_fits(&self, keys: usize) -> bool {
+        keys < self.block_manager.allocation_directory() - 1
+    }
+
     fn merge(&self,
              block_guard: &mut BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
              from_guard: BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>,
              merge_guard: Option<(usize, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>)>,
              child_pos: usize,
-             child_key: Key,
+             _child_key: Key,
              curr_level: Level,
              lock_level: LockLevel,
              attempt: Attempts,
@@ -101,16 +109,15 @@ impl<const FAN_OUT: usize,
             .map(|(.., c)| self.apply_for_ref(curr_level, lock_level, attempt, height, c))
             .collect_vec();
         
-        if children_latched.is_empty() {
-            children_latched.push(from_guard);
-        } else {
-            children_latched.insert(child_pos, from_guard);
+        // Put the two given guards back at their positions, lower position first, so that
+        // `children_latched` is in child order.
+        let mut given = vec![(child_pos, from_guard)];
+        if let Some(merge) = merge_guard {
+            given.push(merge);
         }
-        // *children_latched.get_unchecked_mut(child_pos) = from_guard;
-
-        if let Some((merge_pos, merge_guard)) = merge_guard {
-            children_latched.insert(merge_pos, merge_guard);
-            // *children_latched.get_unchecked_mut(merge_pos) = merge_guard;
+        given.sort_by_key(|(pos, ..)| *pos);
+        for (pos, guard) in given {
+            children_latched.insert(pos, guard);
         }
         
         if children_latched.iter_mut().any(|guard|
@@ -119,13 +126,26 @@ impl<const FAN_OUT: usize,
             mem::drop(children_latched);
             return Err(());
         }
+
+        // The callers decided on a collapse from optimistic reads; under the latches the union
+        // may no longer fit into one node.
+        let is_leaf_children = unsafe { children_latched.get_unchecked(0).deref_unsafe().unwrap() }
+            .is_leaf();
+        let fits = if is_leaf_children {
+            children_latched.iter().map(|g| g.deref().unwrap().len()).sum::<usize>()
+                < self.block_manager.allocation_leaf()
+        } else {
+            self.internal_union_fits(children_latched.iter().map(|g| g.deref().unwrap().len()).sum::<usize>()
+                + children_latched.len() - 1)
+        };
+        if !fits {
+            mem::drop(children_latched);
+            return Err(());
+        }
         // println!("FROM ROOT");
         // Self::log_console(self.root.mvb_block.unsafe_borrow(), 0);
         // println!("FROM BLOCKGUARD");
         // Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
-
-        let is_leaf_children = unsafe { children_latched.get_unchecked(0).deref_unsafe().unwrap() }
-            .is_leaf();
 
         let block = match is_leaf_children {
             true => {
@@ -146,20 +166,23 @@ impl<const FAN_OUT: usize,
                 let n_internal
                     = self.block_manager.new_empty_index_block();
 
+                // Child `i > 0` is preceded by the parent's separator `keys[i - 1]`. (Pushing only
+                // `child_key` after child `child_pos` lost the separator when the underflowing
+                // child was the right one: its `child_key` is the fence, not a separator.)
+                let parent_keys = block_deref.keys();
                 children_latched
                     .into_iter()
                     .enumerate()
                     .for_each(|(index, internal_guard)| {
                         let page = internal_guard.deref().unwrap();
-                        let keys = page.keys();
-                        let children = page.children();
 
-                        n_internal.children_mut().extend_from_slice(children);
-
-                        if index == child_pos + 1 {
-                            n_internal.keys_mut().push(child_key)
+                        // Children first: the child count is derived from the key count, so the
+                        // children are appended while the keys still end before them.
+                        n_internal.children_mut().extend_from_slice(page.children());
+                        if index > 0 {
+                            n_internal.keys_mut().push(parent_keys[index - 1]);
                         }
-                        n_internal.keys_mut().extend_from_slice(keys);
+                        n_internal.keys_mut().extend_from_slice(page.keys());
                     });
 
                 n_internal
@@ -372,6 +395,10 @@ impl<const FAN_OUT: usize,
             }
         }
 
+        // Both split paths add a level. (`merge` lowers it on a root collapse; without this the
+        // count wrapped below zero, and `Vec::with_capacity(height)` in range scans aborted.)
+        root.height = n_height;
+
         if root_was_leaf {
             // The guard still protects the old root block, which became the left leaf. Handing it
             // out would insert the operation's key into the left leaf even when it belongs to the
@@ -455,7 +482,11 @@ impl<const FAN_OUT: usize,
         ) = match all_candidates
             .binary_search_by_key(&child_key, |(.., key)| *key)
         {
-            _ if all_candidates.len() == 1 && !is_leaf => { // copy all to mufasa
+            // Collapse the root into one node only if the union fits (re-checked under latches in
+            // `merge`); otherwise fall through and redistribute between the two children.
+            _ if all_candidates.len() == 1 && !is_leaf && self.internal_union_fits(
+                from_deref.len() + all_candidates[0].1.unsafe_borrow().len() + 1) =>
+            {
                 mem::drop(all_candidates);
                 return self.merge(parent_guard, from_guard, None, child_pos, child_key, curr_level, lock_level, attempts);
             }
@@ -598,7 +629,9 @@ impl<const FAN_OUT: usize,
                 // Self::log_console(mufasa, 0);
             }
         } else { // is Internal page: Combine
-            if from_deref.len() + merge_deref.len() < FAN_OUT - 1 {
+            // A parent with a single key is the root; combining would leave it without keys
+            // (a fitting pair collapses the root in `merge` instead), so redistribute.
+            if mufasa.len() > 1 && from_deref.len() + merge_deref.len() < FAN_OUT - 1 {
                 // Self::log_console(mufasa, 0);
 
                 let new_index = self.block_manager
@@ -662,54 +695,48 @@ impl<const FAN_OUT: usize,
                     .new_empty_index_block()
                     .into_cell(self.locking_strategy.latch_type());
 
-                let (child_pos, merge_index, joined_keys, joined_children) = if child_pos < merge_index
-                {
-                    (child_pos, merge_index,
-                     from_deref
-                         .keys()
-                         .iter()
-                         .merge(merge_deref.keys())
-                         .cloned()
-                         .collect_vec(),
-                     from_deref
-                         .children()
-                         .iter()
-                         .merge_by(merge_deref.children(), |_, _| true)
-                         .cloned()
-                         .collect_vec())
+                // Redistribute the children of both nodes, left node first. The separator between
+                // the two nodes is the parent's key at the left position; it has to go into the
+                // joined key list, or the keys no longer line up with the children (one child too
+                // many on the right, every separator after it shifted by one).
+                let (left_deref, right_deref) = if child_pos < merge_index {
+                    (&*from_deref, merge_deref)
                 } else {
-                    (merge_index, child_pos,
-                     merge_deref
-                         .keys()
-                         .iter()
-                         .merge(from_deref.keys())
-                         .cloned()
-                         .collect_vec(),
-                     merge_deref
-                         .children()
-                         .iter()
-                         .merge_by(from_deref.children(), |_, _| true)
-                         .cloned()
-                         .collect_vec())
+                    (merge_deref, &*from_deref)
                 };
+                let (child_pos, merge_index) = (child_pos.min(merge_index), child_pos.max(merge_index));
 
-                let keys_joined
-                    = joined_keys.len();
+                let separator
+                    = mufasa.keys()[child_pos];
 
-                let (keys_left, keys_right)
-                    = joined_keys.split_at(keys_joined / 2);
+                let joined_keys = left_deref.keys().iter().copied()
+                    .chain([separator])
+                    .chain(right_deref.keys().iter().copied())
+                    .collect_vec();
+
+                let joined_children = left_deref.children().iter()
+                    .chain(right_deref.children())
+                    .cloned()
+                    .collect_vec();
+
+                // `mid` keys go left, the key at `mid` moves up into the parent, the rest go right.
+                let mid
+                    = joined_keys.len() / 2;
 
                 let split_key
-                    = unsafe { *keys_right.get_unchecked(0) };
+                    = joined_keys[mid];
+
+                let keys_left
+                    = &joined_keys[..mid];
 
                 let keys_right
-                    = unsafe { keys_right.get_unchecked(1..) };
+                    = &joined_keys[mid + 1..];
 
-                let children_left =
-                    unsafe { joined_children.get_unchecked(..=keys_left.len()) };
+                let children_left
+                    = &joined_children[..=mid];
 
-                let children_right =
-                    unsafe { joined_children.get_unchecked(keys_left.len() + 1..) };
+                let children_right
+                    = &joined_children[mid + 1..];
 
                 new_internal_left
                     .unsafe_borrow_mut()
@@ -729,7 +756,9 @@ impl<const FAN_OUT: usize,
                     .keys_mut()
                     .extend_from_slice(keys_right);
 
-                *mufasa.keys_mut().get_unchecked_mut(merge_index) = split_key;
+                // The new separator sits between the two nodes (the left position); the key after
+                // the right node keeps bounding the pair.
+                *mufasa.keys_mut().get_unchecked_mut(child_pos) = split_key;
                 *mufasa.children_mut().get_unchecked_mut(child_pos) = new_internal_left;
                 *mufasa.children_mut().get_unchecked_mut(merge_index) = new_internal_right;
             }
