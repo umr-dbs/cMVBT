@@ -7,9 +7,19 @@ The canonical file-based runner writes ``latency.csv``, ``concurrent_nogc.csv``,
 ``concurrent_gc.csv``, and ``scalability.csv``. These take precedence over
 matching online-driver rows in ``paper.csv`` when both are present. Figure 9
 uses the retry curves from ``retries.csv``.
-Repetitions are averaged. No error bars, box plots, or extra plots are made.
+Every point is the mean over the repetitions; error bars span the minimum to
+the maximum of the repetitions (stated in each legend title). OLTP throughput
+counts successful operations only: (oltp_ops - oltp_failed) / OLTP time.
+
+Besides the figures, ``summary.csv`` and ``summary.md`` list for every plotted
+point the number of repetitions, mean, standard deviation, coefficient of
+variation (CV = stddev / mean), minimum and maximum, including the mean number
+of records per scan. Warnings are printed if a replay had failed writes or if
+the mean records per scan of Figures 6-8 deviate by more than 10% from the
+initial data set size.
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -80,6 +90,8 @@ def normalize_load_rows(path: Path, experiment: str) -> pd.DataFrame | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
     legacy = pd.read_csv(path)
+    if "oltp_failed" not in legacy.columns:
+        legacy["oltp_failed"] = 0
     required = {
         "repeat", "system", "workload", "oltp_threads", "olap_threads",
         "gc", "init_keys", "oltp_ops", "oltp_time_ns", "scans",
@@ -110,11 +122,14 @@ def normalize_load_rows(path: Path, experiment: str) -> pd.DataFrame | None:
         "scan_mode": "fresh",
         "scan_range": legacy["init_keys"],
         "oltp_time_ns": legacy["oltp_time_ns"],
-        "oltp_ops_per_s": legacy["oltp_ops"] / seconds,
+        "oltp_failed": legacy["oltp_failed"],
+        # Successful operations only; failed writes did not change the data.
+        "oltp_ops_per_s": (legacy["oltp_ops"] - legacy["oltp_failed"]) / seconds,
         # Readers stop immediately after the writers, so the legacy plot and
         # protocol normalize scan count by the measured writer interval.
         "scan_time_ns": legacy["oltp_time_ns"],
         "scan_ops_per_s": legacy["scans"] / seconds,
+        "scan_count": legacy["scans"],
         "scan_records": legacy["scanned_records"],
         "scan_avg_ns": legacy["avg_scan_ns"],
         "scan_p50_ns": legacy["p50_scan_ns"],
@@ -188,24 +203,98 @@ def categorical_axis(values):
     return categories, {value: position for position, value in enumerate(categories)}
 
 
+ERROR_BARS = "mean; bars: min-max over runs"
+SUMMARY = []  # rows of summary.csv / summary.md, filled while plotting
+
+
+def summarize(figure, metric, x, rows, y):
+    """Record mean, stddev, CV, min and max over the repetitions of each point."""
+    for (system, x_value), values in rows.groupby(["system", x], sort=True)[y]:
+        mean = values.mean()
+        std = values.std(ddof=1) if len(values) > 1 else 0.0
+        SUMMARY.append({
+            "figure": figure, "metric": metric, "system": system, x: x_value,
+            "x": f"{x}={x_value:g}", "n": len(values), "mean": mean,
+            "stddev": std, "cv": std / mean if mean else math.nan,
+            "min": values.min(), "max": values.max(),
+        })
+
+
 def draw_line(ax, data, system, x, y, label=None, positions=None):
     rows = data[data["system"] == system]
     if rows.empty:
         return
-    values = rows.groupby(x, sort=True)[y].mean()
+    grouped = rows.groupby(x, sort=True)[y]
+    values = grouped.mean()
+    low, high = grouped.min(), grouped.max()
     color, marker, linestyle = STYLE[system]
     plot_x = ([positions[value] for value in values.index]
               if positions is not None else values.index)
-    ax.plot(
+    ax.errorbar(
         plot_x,
         values.values,
+        yerr=[values.values - low.values, high.values - values.values],
         color=color,
         marker=marker,
         linestyle=linestyle,
         markersize=5,
         markeredgewidth=1.1,
+        elinewidth=0.9,
+        capsize=2.5,
         label=label or LABELS[system],
     )
+
+
+def add_records_per_scan(data):
+    data = data.copy()
+    if "scan_count" in data.columns and "scan_records" in data.columns:
+        count = data["scan_count"].where(data["scan_count"] > 0)
+        data["records_per_scan"] = data["scan_records"] / count
+    return data
+
+
+def sanity_checks(data):
+    """Warn about failed writes and about scans that did not return ~the initial data set."""
+    if "oltp_failed" in data.columns:
+        failed = data[data["oltp_failed"].fillna(0) > 0]
+        for row in failed.itertuples(index=False):
+            print(f"WARNING: {row.experiment}/{row.system}/u{row.update_rate} repeat {row.repeat}: "
+                  f"{row.oltp_failed} failed writes", file=sys.stderr)
+    if "records_per_scan" not in data.columns:
+        return
+    fresh = data[data["experiment"].isin([
+        "fig6_throughput_nogc", "fig7_throughput_gc",
+        "fig8_olap_scalability", "fig8_oltp_scalability"])]
+    fresh = fresh[fresh["records_per_scan"].notna()]
+    if "scan_mode" in fresh.columns and "scan_range" in fresh.columns:
+        # bounded range scans (online driver, SCAN_MODE=range) return scan_range records
+        expected = fresh["records"].where(fresh["scan_range"] >= fresh["records"], fresh["scan_range"])
+    else:
+        expected = fresh["records"]
+    keys = ["experiment", "system", "update_rate", "writers", "readers"]
+    means = fresh.assign(expected=expected).groupby(keys)[["records_per_scan", "expected"]].mean()
+    for key, row in means.iterrows():
+        deviation = abs(row["records_per_scan"] - row["expected"]) / row["expected"]
+        if deviation > 0.10:
+            print(f"WARNING: {'/'.join(map(str, key))}: {row['records_per_scan']:.0f} records per "
+                  f"scan, {deviation:.0%} off the expected {row['expected']:.0f}", file=sys.stderr)
+
+
+def write_summary(out: Path):
+    if not SUMMARY:
+        return
+    table = pd.DataFrame(SUMMARY)[
+        ["figure", "metric", "system", "x", "n", "mean", "stddev", "cv", "min", "max"]]
+    table.to_csv(out / "summary.csv", index=False, float_format="%.6g")
+    lines = [
+        "| figure | metric | system | x | n | mean | stddev | CV | min | max |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in table.itertuples(index=False):
+        lines.append(f"| {row.figure} | {row.metric} | {row.system} | {row.x} | {row.n} | "
+                     f"{row.mean:.4g} | {row.stddev:.3g} | {row.cv:.1%} | {row.min:.4g} | {row.max:.4g} |")
+    (out / "summary.md").write_text("\n".join(lines) + "\n")
+    print("wrote summary.csv, summary.md")
 
 
 def single_panel(figsize=(4.6, 2.55)):
@@ -248,14 +337,20 @@ def figure5(data, out, formats):
     part["scan_avg_ms"] = part["scan_avg_ns"] / 1e6
     updates, positions = categorical_axis(part["update_rate"])
     fig, ax = single_panel()
-    for system in ("mdbx", "frugal", "chain", "vweaver", "cmvbt"):
+    if (part["system"] == "mdbx").any():
+        print("WARNING: ignoring libmdbx rows in Figure 5 (no time-travel queries)", file=sys.stderr)
+    part = part[part["system"] != "mdbx"]
+    for system in ("frugal", "chain", "vweaver", "cmvbt"):
         draw_line(ax, part, system, "update_rate", "scan_avg_ms",
                   positions=positions)
+    summarize("fig5", "scan_avg_ms", "update_rate", part, "scan_avg_ms")
+    if "records_per_scan" in part.columns:
+        summarize("fig5", "records_per_scan", "update_rate", part, "records_per_scan")
     percent_ticks(ax, updates)
     ax.set_xlabel("Update Percentage")
     ax.set_ylabel("Average Latency (ms)")
     ax.set_ylim(bottom=0)
-    ax.legend(loc="upper right", fontsize=8)
+    ax.legend(loc="upper right", fontsize=8, title=ERROR_BARS, title_fontsize=6.5)
     save(fig, out, "fig5_scan_latency", formats)
 
 
@@ -273,6 +368,11 @@ def throughput(data, experiment, number, gc, out, formats):
                   positions)
         draw_line(oltp_ax, part, system, "update_rate", "oltp_ops_per_s", label,
                   positions)
+    figure = f"fig{number}"
+    summarize(figure, "scan_ops_per_s", "update_rate", part, "scan_ops_per_s")
+    summarize(figure, "oltp_ops_per_s", "update_rate", part, "oltp_ops_per_s")
+    if "records_per_scan" in part.columns:
+        summarize(figure, "records_per_scan", "update_rate", part, "records_per_scan")
 
     for ax in (scan_ax, oltp_ax):
         ax.set_yscale("log")
@@ -285,7 +385,8 @@ def throughput(data, experiment, number, gc, out, formats):
         lower, upper = scan_ax.get_ylim()
         scan_ax.set_ylim(lower, max(upper, 1.2e5))
     # The paper puts the shared legend in the lower panel.
-    oltp_ax.legend(loc="center right" if not gc else "lower left", fontsize=8)
+    oltp_ax.legend(loc="center right" if not gc else "lower left", fontsize=8,
+                   title=ERROR_BARS, title_fontsize=6.5)
     save(fig, out, f"fig{number}_throughput_{'gc' if gc else 'nogc'}", formats)
 
 
@@ -302,6 +403,8 @@ def figure8(data, out, formats):
                   positions=reader_positions)
         draw_line(oltp_ax, oltp, system, "writers", "oltp_ops_per_s",
                   positions=writer_positions)
+    summarize("fig8_olap", "scan_ops_per_s", "readers", olap, "scan_ops_per_s")
+    summarize("fig8_oltp", "oltp_ops_per_s", "writers", oltp, "oltp_ops_per_s")
 
     scan_ax.set_yscale("log")
     categorical_ticks(scan_ax, readers, lambda value: f"{value:g}")
@@ -312,7 +415,7 @@ def figure8(data, out, formats):
     categorical_ticks(oltp_ax, writers, lambda value: f"{value:g}")
     oltp_ax.set_xlabel("Concurrency Level (OLTP Threads)")
     oltp_ax.set_ylabel("OLTP Throughput (tx/s)")
-    oltp_ax.legend(loc="center right", fontsize=8)
+    oltp_ax.legend(loc="center right", fontsize=8, title=ERROR_BARS, title_fontsize=6.5)
     save(fig, out, "fig8_scalability", formats)
 
 
@@ -357,14 +460,17 @@ def figure10(data, out, formats):
         ("blocks_reused", "Nodes Reused", "-", "P", -0.025),
         ("blocks_allocated", "Nodes Allocated", "--", "*", 0.025),
     ):
-        values = part.groupby("update_rate", sort=True)[column].mean()
+        grouped = part.groupby("update_rate", sort=True)[column]
+        values, low, high = grouped.mean(), grouped.min(), grouped.max()
         plot_x = [positions[value] + (zero_offset if count == 0 else 0)
                   for value, count in values.items()]
         # The two series are both zero at 100%. Give coincident zero markers a
         # tiny horizontal dodge so neither valid measurement hides the other.
-        ax.plot(plot_x, values.values,
-                color="#8b0000", marker=marker,
-                linestyle=linestyle, markersize=5, markeredgewidth=1.0, label=label)
+        ax.errorbar(plot_x, values.values,
+                    yerr=[values.values - low.values, high.values - values.values],
+                    color="#8b0000", marker=marker, elinewidth=0.9, capsize=2.5,
+                    linestyle=linestyle, markersize=5, markeredgewidth=1.0, label=label)
+        summarize("fig10", column, "update_rate", part.assign(system="cmvbt"), column)
     percent_ticks(ax, updates)
     ax.set_xlabel("Update Percentage")
     ax.set_ylabel("Total Nodes")
@@ -372,7 +478,7 @@ def figure10(data, out, formats):
     # positive counts while giving the valid zero measurements a visible home.
     ax.set_yscale("symlog", linthresh=1)
     ax.set_ylim(bottom=0)
-    ax.legend(loc="center right", fontsize=8)
+    ax.legend(loc="center right", fontsize=8, title=ERROR_BARS, title_fontsize=6.5)
     save(fig, out, "fig10_node_reuse", formats)
 
 
@@ -409,13 +515,14 @@ def main():
                        & (data["writers"] == row.writers))
             data = data[~replace]
         data = pd.concat([data, point_overlay], ignore_index=True)
-    data = paper_rows(data)
+    data = add_records_per_scan(paper_rows(data))
+    sanity_checks(data)
     fig5_data = data
     if args.fig5_run:
         fig5_data = read_csv(args.fig5_run / "paper.csv")
         if fig5_data is None:
             sys.exit(1)
-        fig5_data = paper_rows(fig5_data)
+        fig5_data = add_records_per_scan(paper_rows(fig5_data))
     out = args.out or args.run / "paper-figures"
     out.mkdir(parents=True, exist_ok=True)
     formats = [extension.strip() for extension in args.formats.split(",") if extension.strip()]
@@ -426,6 +533,7 @@ def main():
     figure8(data, out, formats)
     figure9(args.run, out, formats)
     figure10(data, out, formats)
+    write_summary(out)
 
 
 if __name__ == "__main__":

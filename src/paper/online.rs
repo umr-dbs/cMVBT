@@ -695,16 +695,9 @@ fn historical_scans(
                     records += if cfg.scan_mode == "full" {
                         index.scan_at(version) as u64
                     } else {
-                        let (lo, hi) = if index.historical_scan_mode() == "pinned_initial" {
-                            // libmdbx can preserve the beginning snapshot only by
-                            // retaining its read transaction. Keep every range in
-                            // that snapshot's original key domain.
-                            (0, cfg.records)
-                        } else {
-                            let (inserts, deletes) =
-                                structural_counts_before(completed, cfg.update_rate, cfg.seed);
-                            (deletes, cfg.records + inserts)
-                        };
+                        let (inserts, deletes) =
+                            structural_counts_before(completed, cfg.update_rate, cfg.seed);
+                        let (lo, hi) = (deletes, cfg.records + inserts);
                         let start = lo
                             + rng.below(
                                 hi.saturating_sub(lo)

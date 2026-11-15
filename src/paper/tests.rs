@@ -200,39 +200,79 @@ fn historical_snapshots_are_stable_under_concurrent_writes() {
 
 #[cfg(feature = "mdbx")]
 #[test]
-fn mdbx_reuses_one_pinned_initial_snapshot_for_figure5() {
+fn mdbx_refuses_time_travel_scans_instead_of_scanning_another_snapshot() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let index = make_system("mdbx", "fg", false).unwrap();
     index
         .bulk_load(100)
         .expect("mdbx supports bulk loading")
         .unwrap();
-    index.prepare_historical_snapshot().unwrap();
-
+    let err = index.prepare_historical_snapshot().unwrap_err();
+    assert!(err.contains("time-travel"), "{err}");
     assert!(index.apply(FileOp::Delete(0)));
-    assert!(index.apply(FileOp::Insert(100)));
+    assert_eq!(index.scan_fresh(), 99, "fresh scans observe the newest snapshot");
+    assert_eq!(index.scan_fresh_range(100, 1), 0);
+    let version = index.newest_version();
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| index.scan_at(version)));
+    assert!(refused.is_err(), "a historical scan must not silently scan another snapshot");
+}
 
-    assert_eq!(
-        index.scan_at_range(0, 1, 1),
-        1,
-        "pinned snapshot still contains key 0"
-    );
-    assert_eq!(
-        index.scan_fresh_range(0, 1),
-        0,
-        "fresh snapshot observes deletion of key 0"
-    );
-    assert_eq!(
-        index.scan_at_range(100, 1, 1),
-        0,
-        "pinned snapshot predates key 100"
-    );
-    assert_eq!(
-        index.scan_fresh_range(100, 1),
-        1,
-        "fresh snapshot observes key 100"
-    );
-    assert_eq!(index.historical_scan_mode(), "pinned_initial");
+/// Readers consume the same `(key, payload)` records on every system.
+#[cfg(feature = "mdbx")]
+#[test]
+fn mdbx_fresh_scans_count_like_the_other_systems() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let mdbx = make_system("mdbx", "fg", false).unwrap();
+    let cmvbt = make_system("cmvbt", "fg", false).unwrap();
+    for index in [&mdbx, &cmvbt] {
+        for k in 0..500u64 {
+            assert!(index.apply(FileOp::Insert(k * 3)));
+        }
+        for k in 0..100u64 {
+            assert!(index.apply(FileOp::Update(k * 3)));
+            assert!(index.apply(FileOp::Delete(k * 3 + 300)));
+        }
+    }
+    assert_eq!(mdbx.scan_fresh(), 400);
+    assert_eq!(cmvbt.scan_fresh(), 400);
+    assert_eq!(mdbx.scan_fresh_range(0, 10), cmvbt.scan_fresh_range(0, 10));
+}
+
+#[test]
+fn key_partitions_keep_per_key_order_and_are_balanced() {
+    let mut ops = vec![];
+    for k in 0..4000u64 {
+        ops.extend([FileOp::Insert(k), FileOp::Update(k), FileOp::Delete(k)]);
+    }
+    let parts = super::partition_by_key(ops.clone(), 8);
+    assert_eq!(parts.iter().map(Vec::len).sum::<usize>(), ops.len());
+    for part in &parts {
+        assert!(part.len() > ops.len() / 8 * 8 / 10, "unbalanced partition: {}", part.len());
+        // per key the order stays insert, update, delete; a serial replay of each partition is valid
+        live_after(part);
+    }
+}
+
+#[test]
+fn seeded_generation_is_deterministic_and_seed_dependent() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let generate = |name: &str, seed: &str| {
+        let path = temp(name);
+        let parms: Vec<String> = ["cMVBT", "generate", path.to_str().unwrap(), "300", "20", "30", "50", "20", "0", seed]
+            .iter().map(|s| s.to_string()).collect();
+        crate::mv_test::main_generate(parms);
+        let bytes = std::fs::read(&path).unwrap();
+        let ops = load_workload(path.to_str().unwrap());
+        let _ = std::fs::remove_file(path);
+        (bytes, ops)
+    };
+    let (a, ops) = generate("seed-a.dat", "7");
+    let (b, _) = generate("seed-b.dat", "7");
+    let (c, _) = generate("seed-c.dat", "8");
+    assert_eq!(a, b, "same seed, same workload");
+    assert_ne!(a, c, "different seeds, different workloads");
+    assert_eq!(ops.len(), 300 + 20 * 100);
+    assert_eq!(live_after(&ops).len(), 300 + 20 * 30 - 20 * 20);
 }
 
 #[test]
@@ -240,6 +280,7 @@ fn concurrent_replay_executes_everything_and_keeps_the_data_consistent() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (path, ops) = generated_workload("conc.dat", 1000, 80, 20, 60, 20, "0");
     let total = ops.len() - 1000;
+    let expected = live_after(&ops).len();
     for name in ALL {
         for gc in [false, true] {
             let index = make_system(name, "fg", gc).unwrap();
@@ -248,14 +289,16 @@ fn concurrent_replay_executes_everything_and_keeps_the_data_consistent() {
             let (counts, oltp_ns, scans, olap_ns) =
                 run_concurrent(&index, ops[1000..].to_vec(), 8, 2);
             assert_eq!(counts.executed as usize, total, "{name} gc={gc}: executed");
-            assert!(counts.failed as usize <= total, "{name} gc={gc}: failed");
-            assert!(oltp_ns > 0 && olap_ns >= oltp_ns, "{name} gc={gc}: timings");
-            // every insertion has a fresh key and thus succeeds: at least that many records can exist, at most all of them
-            let live = index.scan_fresh();
-            assert!(
-                live <= 1000 + total,
-                "{name} gc={gc}: more records than ever inserted"
+            // the replay partitions by key, so every operation finds its key as the trace expects
+            assert_eq!(counts.failed, 0, "{name} gc={gc}: failed");
+            assert_eq!(
+                (counts.inserts, counts.updates, counts.deletes),
+                (80 * 20, 80 * 60, 80 * 20),
+                "{name} gc={gc}: per-kind counts"
             );
+            assert!(oltp_ns > 0 && olap_ns >= oltp_ns, "{name} gc={gc}: timings");
+            let live = index.scan_fresh();
+            assert_eq!(live, expected, "{name} gc={gc}: the live set the trace implies");
             assert_eq!(
                 live,
                 index.scan_at(index.newest_version()),
@@ -352,7 +395,12 @@ fn load_command_appends_a_csv_row_per_run() {
         } else {
             assert_eq!(row[col("concurrent")], "true");
             assert_eq!(row[col("gc")], "true");
+            assert_eq!(row[col("oltp_failed")], "0", "a key-partitioned replay never fails");
         }
+        assert_eq!(
+            row[col("final_records")].parse::<usize>().unwrap(),
+            live_after(&ops).len()
+        );
     }
     let _ = std::fs::remove_file(&csv);
     let _ = std::fs::remove_file(path);
