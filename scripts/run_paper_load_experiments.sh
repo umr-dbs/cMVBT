@@ -24,10 +24,10 @@
 #   with seed SEED_BASE+repetition (deterministic: rerunning reproduces the same
 #   bytes), and shared by all systems of that repetition.
 #
-# Concurrent replay: `load` partitions the measured operations by key over the
-# writers (all operations on one key run in one writer, in trace order), so no
-# operation fails and the live set stays at INIT. Failed writes, if any, are
-# reported as WARNING lines in log.txt and collected in warnings.txt.
+# Concurrent replay: `load` splits the measured operations into contiguous
+# slices, one per writer, over a shared key space (as in YCSB). An operation may
+# fail (e.g. a delete of a key not present yet); it still counts towards the
+# throughput, and the failures per kind are logged in log.txt and the CSV.
 #
 # Environment overrides:
 #   OUT=results/paper-load-<timestamp> REPEATS=5 QUICK=1 SEED_BASE=1000
@@ -97,7 +97,6 @@ mkdir -p "$OUT/workloads"
 OUT=$(realpath "$OUT")
 LOG="$OUT/log.txt"
 FAILS="$OUT/failures.txt"
-WARNINGS="$OUT/warnings.txt"
 
 for system in $FIG5_SYSTEMS; do
   if [ "$system" = mdbx ]; then
@@ -124,19 +123,15 @@ failures=0
 run() { # label csv experiment repeat command...
   local label=$1 csv=$2 experiment=$3 repeat=$4
   shift 4
-  local before=0 after rc log_before warning
+  local before=0 after rc log_before
   [ -f "$csv" ] && before=$(wc -l < "$csv")
   echo ">> [$label] $NUMACTL --cpunodebind=0 --membind=0 $*" | tee -a "$LOG"
   log_before=$(stat -c %s "$LOG")
   RESULTS_CSV="$csv" EXPERIMENT="$experiment" REPEAT="$repeat" \
     timeout "$RUN_TIMEOUT" "$NUMACTL" --cpunodebind=0 --membind=0 "$@" >> "$LOG" 2>&1
   rc=$?
-  # Surface failed writes and the scan size of this run on the terminal.
+  # Surface the throughput, failed operations and scan size of this run on the terminal.
   tail -c +"$((log_before + 1))" "$LOG" | grep -E '^- (OLTP|OLAP):' | sed "s|^|   [$label] |"
-  warning=$(tail -c +"$((log_before + 1))" "$LOG" | grep -m1 '^WARNING:')
-  if [ -n "$warning" ]; then
-    echo "[$label] $warning" | tee -a "$WARNINGS" >&2
-  fi
   after=$before
   [ -f "$csv" ] && after=$(wc -l < "$csv")
   if [ "$rc" -ne 0 ] || [ "$after" -le "$before" ]; then
@@ -273,9 +268,6 @@ for experiment in "$@"; do
   esac
 done
 
-if [ -s "$WARNINGS" ]; then
-  echo ">> $(wc -l < "$WARNINGS") run(s) had failed writes; see $WARNINGS" >&2
-fi
 if [ "$failures" -ne 0 ]; then
   echo ">> $failures run(s) failed; see $FAILS" >&2
   exit 1

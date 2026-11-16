@@ -113,7 +113,7 @@ Update rates are 10, 20, 50, 75, 90 and 100%; every configuration is repeated `R
 
 libmdbx does not support time-travel queries and is not part of Figure 5; the `load` command refuses historical scans on it instead of scanning a different snapshot.
 
-Concurrent replays partition the measured operations by key: all operations on one key run in the same writer, in trace order, so no operation fails and the live data set stays at the initial size. Each run logs the attempted, successful and failed operations per kind and the mean number of records per scan; failed writes appear as `WARNING` lines in `log.txt` and in `warnings.txt`. Readers of every system consume a scan the same way: the visible `(key, payload)` records are materialized and folded into a checksum.
+Concurrent replays split the measured operations into contiguous slices, one per writer, over a shared key space, as in YCSB: an operation can fail (e.g. the delete of a key that is not present) and still counts as an executed operation, so throughput is `oltp_ops / oltp_time`. Each run logs the executed and failed operations per kind and the mean number of records per scan. Readers of every system consume a scan the same way: the visible `(key, payload)` records are materialized and folded into a checksum.
 
 `scripts/run_paper_experiments.sh` is an alternative that generates operations online (`paper-ycsb`). Its defaults follow the same parameters (10K initial records, 10M operations and 100K scans for Figure 5, 1M operations with 32 writers, 1 libmdbx writer, 16 full-snapshot readers for Figures 6 and 7, `REPEATS=5`). It deviates from the paper's protocol in one respect: with more than one writer it uses "sliding" keys (inserts above the live range, deletes of the oldest key) instead of random insert/delete keys, which it supports only for one writer (Figure 5). Its header lists the details.
 
@@ -195,7 +195,6 @@ Important files include:
 | `machine.txt` | machine, Git, and experiment configuration |
 | `log.txt` | complete execution log |
 | `failures.txt` | failed commands, when present |
-| `warnings.txt` | runs with failed writes, when present |
 | `paper-figures/summary.csv`, `summary.md` | mean, stddev, CV, min, max per plotted point (written by the plot script) |
 
 The plotting script writes PDF and PNG versions of the paper figures into the selected results directory.

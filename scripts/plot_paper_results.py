@@ -9,12 +9,13 @@ matching online-driver rows in ``paper.csv`` when both are present. Figure 9
 uses the retry curves from ``retries.csv``.
 Every point is the mean over the repetitions; error bars span the minimum to
 the maximum of the repetitions (stated in each legend title). OLTP throughput
-counts successful operations only: (oltp_ops - oltp_failed) / OLTP time.
+counts every executed operation, as YCSB does: oltp_ops / OLTP time (failed
+operations, e.g. deletes of absent keys, are included).
 
 Besides the figures, ``summary.csv`` and ``summary.md`` list for every plotted
 point the number of repetitions, mean, standard deviation, coefficient of
 variation (CV = stddev / mean), minimum and maximum, including the mean number
-of records per scan. Warnings are printed if a replay had failed writes or if
+of records per scan. Warnings are printed if
 the mean records per scan of Figures 6-8 deviate by more than 10% from the
 initial data set size.
 """
@@ -123,8 +124,8 @@ def normalize_load_rows(path: Path, experiment: str) -> pd.DataFrame | None:
         "scan_range": legacy["init_keys"],
         "oltp_time_ns": legacy["oltp_time_ns"],
         "oltp_failed": legacy["oltp_failed"],
-        # Successful operations only; failed writes did not change the data.
-        "oltp_ops_per_s": (legacy["oltp_ops"] - legacy["oltp_failed"]) / seconds,
+        # Every executed operation counts, including those that failed (as in YCSB).
+        "oltp_ops_per_s": legacy["oltp_ops"] / seconds,
         # Readers stop immediately after the writers, so the legacy plot and
         # protocol normalize scan count by the measured writer interval.
         "scan_time_ns": legacy["oltp_time_ns"],
@@ -254,12 +255,7 @@ def add_records_per_scan(data):
 
 
 def sanity_checks(data):
-    """Warn about failed writes and about scans that did not return ~the initial data set."""
-    if "oltp_failed" in data.columns:
-        failed = data[data["oltp_failed"].fillna(0) > 0]
-        for row in failed.itertuples(index=False):
-            print(f"WARNING: {row.experiment}/{row.system}/u{row.update_rate} repeat {row.repeat}: "
-                  f"{row.oltp_failed} failed writes", file=sys.stderr)
+    """Warn about scans that did not return ~the initial data set."""
     if "records_per_scan" not in data.columns:
         return
     fresh = data[data["experiment"].isin([

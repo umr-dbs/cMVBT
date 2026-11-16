@@ -239,21 +239,6 @@ fn mdbx_fresh_scans_count_like_the_other_systems() {
 }
 
 #[test]
-fn key_partitions_keep_per_key_order_and_are_balanced() {
-    let mut ops = vec![];
-    for k in 0..4000u64 {
-        ops.extend([FileOp::Insert(k), FileOp::Update(k), FileOp::Delete(k)]);
-    }
-    let parts = super::partition_by_key(ops.clone(), 8);
-    assert_eq!(parts.iter().map(Vec::len).sum::<usize>(), ops.len());
-    for part in &parts {
-        assert!(part.len() > ops.len() / 8 * 8 / 10, "unbalanced partition: {}", part.len());
-        // per key the order stays insert, update, delete; a serial replay of each partition is valid
-        live_after(part);
-    }
-}
-
-#[test]
 fn seeded_generation_is_deterministic_and_seed_dependent() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let generate = |name: &str, seed: &str| {
@@ -289,8 +274,8 @@ fn concurrent_replay_executes_everything_and_keeps_the_data_consistent() {
             let (counts, oltp_ns, scans, olap_ns) =
                 run_concurrent(&index, ops[1000..].to_vec(), 8, 2);
             assert_eq!(counts.executed as usize, total, "{name} gc={gc}: executed");
-            // the replay partitions by key, so every operation finds its key as the trace expects
-            assert_eq!(counts.failed, 0, "{name} gc={gc}: failed");
+            // writers share the key space (as in YCSB), so some operations may fail; they still count
+            assert!(counts.failed <= counts.executed, "{name} gc={gc}: failed");
             assert_eq!(
                 (counts.inserts, counts.updates, counts.deletes),
                 (80 * 20, 80 * 60, 80 * 20),
@@ -298,7 +283,13 @@ fn concurrent_replay_executes_everything_and_keeps_the_data_consistent() {
             );
             assert!(oltp_ns > 0 && olap_ns >= oltp_ns, "{name} gc={gc}: timings");
             let live = index.scan_fresh();
-            assert_eq!(live, expected, "{name} gc={gc}: the live set the trace implies");
+            // every successful insert adds a key and every successful delete removes one
+            let net = 1000 + (counts.inserts - counts.failed_inserts) as usize
+                - (counts.deletes - counts.failed_deletes) as usize;
+            assert_eq!(live, net, "{name} gc={gc}: live set vs. successful inserts/deletes");
+            if counts.failed == 0 {
+                assert_eq!(live, expected, "{name} gc={gc}: the live set the trace implies");
+            }
             assert_eq!(
                 live,
                 index.scan_at(index.newest_version()),
@@ -392,15 +383,20 @@ fn load_command_appends_a_csv_row_per_run() {
             assert_eq!(row[col("concurrent")], "false");
             assert_eq!(row[col("oltp_failed")], "0", "a serial replay never fails");
             assert_eq!(row[col("scans")], "50");
+            assert_eq!(
+                row[col("final_records")].parse::<usize>().unwrap(),
+                live_after(&ops).len()
+            );
         } else {
             assert_eq!(row[col("concurrent")], "true");
             assert_eq!(row[col("gc")], "true");
-            assert_eq!(row[col("oltp_failed")], "0", "a key-partitioned replay never fails");
+            // writers share the key space (as in YCSB): failed operations are possible and counted
+            let n = |c: &str| row[col(c)].parse::<usize>().unwrap();
+            assert_eq!(
+                n("final_records"),
+                500 + n("oltp_inserts") - n("oltp_failed_inserts") - (n("oltp_deletes") - n("oltp_failed_deletes"))
+            );
         }
-        assert_eq!(
-            row[col("final_records")].parse::<usize>().unwrap(),
-            live_after(&ops).len()
-        );
     }
     let _ = std::fs::remove_file(&csv);
     let _ = std::fs::remove_file(path);

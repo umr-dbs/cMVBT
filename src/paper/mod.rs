@@ -12,8 +12,9 @@
 //! libmdbx has no time-travel queries). The environment variables `RESULTS_CSV` (default `oltp.csv`),
 //! `EXPERIMENT` and `REPEAT` label the row.
 //!
-//! Concurrent mode partitions the measured operations by key over the writers (`partition_by_key`); readers scan
-//! the freshest snapshot. Sequential mode applies the workload with one writer, then scans versions drawn uniformly
+//! Concurrent mode splits the measured operations into contiguous slices, one per writer, over a shared key space
+//! (as in YCSB): an operation may fail, e.g. a delete of a key that is not (yet) present, and still counts as an
+//! executed operation. Readers scan the freshest snapshot. Sequential mode applies the workload with one writer, then scans versions drawn uniformly
 //! from all versions of the tree.
 
 mod systems;
@@ -66,8 +67,8 @@ pub(crate) fn load_workload(path: &str) -> Vec<FileOp> {
     ops
 }
 
-/// Operations attempted by the OLTP threads, in total and per kind, and how many of them did not take effect
-/// (e.g. an update or delete of an absent key). `executed - failed` are the successful operations.
+/// Operations executed by the OLTP threads, in total and per kind, and how many of them did not take effect
+/// (e.g. an update or delete of an absent key). Failed operations count as executed operations.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OltpCounts {
     pub(crate) executed: u64,
@@ -104,10 +105,6 @@ impl OltpCounts {
             failed_deletes: self.failed_deletes + o.failed_deletes,
         }
     }
-
-    pub(crate) fn succeeded(&self) -> u64 {
-        self.executed - self.failed
-    }
 }
 
 pub(crate) fn apply_all(index: &dyn PaperIndex, ops: &[FileOp]) -> OltpCounts {
@@ -117,30 +114,6 @@ pub(crate) fn apply_all(index: &dyn PaperIndex, ops: &[FileOp]) -> OltpCounts {
     }
     index.finish_thread();
     counts
-}
-
-/// Splits the measured workload among `writers` OLTP threads by key: all operations on one key go to the same
-/// writer, in their original trace order. Operations on different keys are independent (an insert, update or delete
-/// of key k only depends on earlier operations on k), so every operation of a serially valid trace still finds its
-/// key in the state the trace expects -- no update/delete overtakes the insert of its key in another thread -- and
-/// the live data set stays at the size the trace implies. Contiguous slices of the trace, as replayed before,
-/// let a delete/update in one slice run before the insert of its key in an earlier slice, which failed ~20% of the
-/// operations and let the live set drift far above the initial size.
-///
-/// Keys are spread by a 64-bit mixer (the splitmix64 finalizer), so the partitions are balanced in expectation.
-pub(crate) fn partition_by_key(ops: Vec<FileOp>, writers: usize) -> Vec<Vec<FileOp>> {
-    assert!(writers > 0, "at least one OLTP thread");
-    fn mix(mut z: u64) -> u64 {
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-        z ^ (z >> 31)
-    }
-    let mut work: Vec<Vec<FileOp>> = (0..writers).map(|_| Vec::with_capacity(ops.len() / writers + 1)).collect();
-    for op in ops {
-        let (FileOp::Insert(key) | FileOp::Update(key) | FileOp::Delete(key)) = op;
-        work[(mix(key) % writers as u64) as usize].push(op);
-    }
-    work
 }
 
 #[derive(Default)]
@@ -194,8 +167,8 @@ fn label() -> (String, String) {
     (std::env::var("EXPERIMENT").unwrap_or_default(), std::env::var("REPEAT").unwrap_or_else(|_| "0".into()))
 }
 
-/// `oltp_ops` counts every attempted operation and `oltp_failed` those that did not take effect; plots use
-/// `oltp_ops - oltp_failed` (successful operations). The per-kind columns and `final_records` (records of the
+/// `oltp_ops` counts every executed operation, including those that did not take effect (`oltp_failed`, e.g. a
+/// delete of an absent key); plots use `oltp_ops` for throughput, as YCSB does. The per-kind columns and `final_records` (records of the
 /// freshest snapshot after the run) were appended after the original columns.
 const LOAD_HEADER: &str = "experiment,repeat,system,workload,concurrent,oltp_threads,olap_threads,gc,init_keys,\
 oltp_ops,oltp_failed,oltp_time_ns,scans,scanned_records,olap_time_ns,avg_scan_ns,p50_scan_ns,p99_scan_ns,\
@@ -265,7 +238,7 @@ olap_threads={olap_threads_effective} gc={gc} ({} cores)", num_cpus::get_physica
     };
 
     let (alloc, reuse) = index.alloc_counts();
-    // The live data set after the run; with a key-partitioned replay it is exactly what the trace implies.
+    // The live data set after the run.
     let final_records = index.scan_fresh();
     let records_per_scan = if scans.scans == 0 { 0.0 } else { scans.records as f64 / scans.scans as f64 };
     let (experiment, repeat) = label();
@@ -278,29 +251,26 @@ olap_threads={olap_threads_effective} gc={gc} ({} cores)", num_cpus::get_physica
         oltp.inserts, oltp.updates, oltp.deletes, oltp.failed_inserts, oltp.failed_updates, oltp.failed_deletes));
 
     let seconds = oltp_ns as f64 / 1e9;
-    println!("- OLTP: {} ops attempted ({} inserts, {} updates, {} deletes) in {:.3}s; {} successful = {:.0} ops/s",
-             oltp.executed, oltp.inserts, oltp.updates, oltp.deletes, seconds, oltp.succeeded(),
-             oltp.succeeded() as f64 / seconds);
-    if oltp.failed > 0 {
-        let warning = format!("WARNING: {} of {} OLTP operations failed (inserts {}, updates {}, deletes {}); \
-the replay did not follow the workload's per-key order", oltp.failed, oltp.executed,
-                              oltp.failed_inserts, oltp.failed_updates, oltp.failed_deletes);
-        println!("- {warning}");
-        eprintln!("{warning}");
-    }
+    println!("- OLTP: {} ops ({} inserts, {} updates, {} deletes) in {:.3}s = {:.0} ops/s; {} of them failed \
+(inserts {}, updates {}, deletes {}), e.g. deletes of absent keys", oltp.executed, oltp.inserts, oltp.updates,
+             oltp.deletes, seconds, oltp.executed as f64 / seconds, oltp.failed,
+             oltp.failed_inserts, oltp.failed_updates, oltp.failed_deletes);
     println!("- OLAP: {} scans, avg {:.3} ms, p99 {:.3} ms, {records_per_scan:.1} records/scan; \
 {final_records} records after the run (init {init_keys})", scans.scans, scans.avg_ns() / 1e6, p99 as f64 / 1e6);
     println!("- Nodes: {alloc} allocated, {reuse} reused");
     println!("###### End Command ######");
 }
 
-/// OLTP threads replay key partitions of the workload (see `partition_by_key`) while OLAP threads run full scans
-/// of the freshest visible snapshot; the readers stop as soon as all writers are done.
-pub(crate) fn run_concurrent(index: &Arc<dyn PaperIndex>, ops: Vec<FileOp>, oltp_threads: usize, olap_threads: usize)
+/// OLTP threads replay contiguous slices of the workload over the shared key space while OLAP threads run full
+/// scans of the freshest visible snapshot; the readers stop as soon as all writers are done. As in YCSB, writers
+/// do not coordinate on keys: an update/delete may run before the insert of its key in another slice and fail,
+/// and it is still counted as an executed operation.
+pub(crate) fn run_concurrent(index: &Arc<dyn PaperIndex>, mut ops: Vec<FileOp>, oltp_threads: usize, olap_threads: usize)
                   -> (OltpCounts, u128, ScanStats, u128) {
-    let work = partition_by_key(ops, oltp_threads);
-    let (min, max) = work.iter().map(Vec::len).fold((usize::MAX, 0), |(lo, hi), n| (lo.min(n), hi.max(n)));
-    println!("- {oltp_threads} OLTP threads replay key partitions of {min}..{max} operations");
+    assert!(oltp_threads > 0, "at least one OLTP thread");
+    let slice = ops.len() / oltp_threads;
+    let mut work: Vec<Vec<FileOp>> = (0..oltp_threads).map(|_| ops.drain(..slice).collect()).collect();
+    work.first_mut().unwrap().extend(ops);
 
     let done = Arc::new(AtomicBool::new(false));
     let start = Instant::now();
