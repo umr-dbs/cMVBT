@@ -240,7 +240,7 @@ impl<const FAN_OUT: usize,
             CRUDOperation::Range(key_interval, version)
             if LAZY_RANGE_SCAN_ENABLED => {
                 let mut path
-                    = Vec::with_capacity(self.root.height() as _);
+                    = Vec::with_capacity(self.height() as _);
 
                 let node_visits = self.next_leaf_page(path.as_mut(),
                                                       0,

@@ -12,6 +12,7 @@ use crate::dexa::mvb_crud_model::crud_api::NodeVisits;
 use crate::dexa::mvb_page_model::node::{Node, NodeUnsafeDegree};
 use crate::dexa::mvb_record_model::v_record_point::VersionedRecordPoint;
 use crate::dexa::mvb_tree::bplus_tree::{MVBPlusTree, INIT_TREE_HEIGHT, LockLevel, MAX_TREE_HEIGHT};
+use crate::dexa::mvb_tree::root::Root;
 use crate::dexa::mvb_utils::interval::Interval;
 
 impl<const FAN_OUT: usize,
@@ -88,7 +89,7 @@ impl<const FAN_OUT: usize,
         //     }
         // }
         let height
-            = self.root.height();
+            = self.height();
 
         if !block_guard.upgrade_write_lock() {
             return Err(());
@@ -189,15 +190,11 @@ impl<const FAN_OUT: usize,
             }
         };
 
-        if ptr::addr_eq(self.root.block.unsafe_borrow() as *const _,
-                        BlockGuard::deref(block_guard).unwrap() as *const _)
-        {
-            self.root.get_mut().height -= 1;
-        } else {
-            unreachable!("Merge non-root into lower height")
-        }
-
+        let root = self.root.load();
+        assert!(ptr::addr_eq(root.block.unsafe_borrow(), block_guard.deref().unwrap()),
+                "Merge non-root into lower height");
         *block_guard.deref_mut().unwrap() = block;
+        self.root.store(Arc::new(Root::new(root.block.clone(), root.height() - 1)));
 
         // println!("AFTER MERGE BLOCKGUARD");
         // Self::log_console(BlockGuard::deref(block_guard).unwrap(), 0);
@@ -209,7 +206,7 @@ impl<const FAN_OUT: usize,
                                          -> Result<(BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>, Height), (LockLevel, Attempts)>
     {
         let root
-            = self.root.get_mut();
+            = self.root.load();
 
         let height = root.height();
         let mut root_guard =
@@ -219,7 +216,7 @@ impl<const FAN_OUT: usize,
                                height,
                                &root.block);
 
-        if !root_guard.is_valid_local() || !self.guards_root(&root_guard) {
+        if !root_guard.is_valid_local() || !self.is_current_root(&root) {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -233,7 +230,9 @@ impl<const FAN_OUT: usize,
             _ => !root_guard.is_write_lock()
         };
 
-        if force_restart && has_overflow_root && !root_guard.upgrade_write_lock() { // !root_guard.is_valid() ||
+        if force_restart && has_overflow_root
+            && (!root_guard.upgrade_write_lock() || !self.is_current_root(&root))
+        {
             mem::drop(root_guard);
 
             return Err((lock_level, attempt + 1));
@@ -263,7 +262,7 @@ impl<const FAN_OUT: usize,
 
         let root_was_leaf = root_ref.is_leaf();
 
-        match root_ref.as_mut() {
+        let next_root_block = match root_ref.as_mut() {
             Node::Index(index_page) => unsafe {
                 let keys = index_page.keys();
                 let children = index_page.children();
@@ -321,6 +320,7 @@ impl<const FAN_OUT: usize,
 
                 index_block.keys_mut().ptr.write(k3);
                 index_block.set_key_len(1);
+                root.block.clone()
             }
             Node::Leaf(records) => unsafe {
                 let horizon = if self.gc { self.gc_horizon() } else { 0 };
@@ -379,11 +379,7 @@ impl<const FAN_OUT: usize,
                 new_node_right.set_key_len(right_records.len());
                 new_node_left.set_key_len(records_mid);
 
-                new_root.children_mut().ptr.write(root.block.clone()); //must be clone; Why tho
-                // new_root.children_mut()
-                //     .ptr.write(
-                //     (&root.block as *const BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
-                //         .read_unaligned());
+                new_root.children_mut().ptr.write(root.block.clone());
                 new_root.children_mut().ptr
                     .add(1)
                     .write(new_node_right.into_cell(latch_type));
@@ -391,13 +387,11 @@ impl<const FAN_OUT: usize,
                 new_root.keys_mut().ptr.write(k3);
                 new_root.set_key_len(1);
 
-                ptr::write(&mut root.block, new_root.into_cell(latch_type));
+                new_root.into_cell(latch_type)
             }
-        }
+        };
 
-        // Both split paths add a level. (`merge` lowers it on a root collapse; without this the
-        // count wrapped below zero, and `Vec::with_capacity(height)` in range scans aborted.)
-        root.height = n_height;
+        self.root.store(Arc::new(Root::new(next_root_block, n_height)));
 
         if root_was_leaf {
             // The guard still protects the old root block, which became the left leaf. Handing it
@@ -1039,11 +1033,7 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     pub(crate) fn traversal_read(&self, key: Key) -> (NodeVisits, BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) {
-        let mut current_block
-            = self.root.block();
-
-        let mut current_guard
-            = self.lock_reader(&current_block);
+        let (mut current_block, mut current_guard) = self.lock_current_root();
 
         let mut node_visits = 1;
 
@@ -1088,11 +1078,7 @@ impl<const FAN_OUT: usize,
         -> (NodeVisits,
             Vec<(BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'_, FAN_OUT, NUM_RECORDS, Key, Payload>)>)
     {
-        let mut current_block
-            = self.root.block();
-
-        let mut current_guard
-            = self.lock_reader(&current_block);
+        let (mut current_block, mut current_guard) = self.lock_current_root();
 
         let mut node_visits
             = 1;

@@ -211,7 +211,7 @@ impl<const FAN_OUT: usize,
         let current_len
             = internal_page.sum_len();
 
-        let death_version = match self.split(simba.deref(), &fence) {
+        let death_version = match self.split(simba.deref(), &fence, false) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,
@@ -671,10 +671,11 @@ impl<const FAN_OUT: usize,
         }
     }
 
-    pub(crate) fn split(
+    fn split(
         &self,
         block: &Block<FAN_OUT, NUM_RECORDS, Key, Payload>,
         fence: &Interval<Key>,
+        is_root: bool,
     ) -> BlockSplit<FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         let is_leaf
@@ -776,7 +777,7 @@ impl<const FAN_OUT: usize,
                     BlockSplit::ByKey(fence_left, left, fence_right, right)
                 }
             }
-        } else { // < max_units_safe. meaning: active >= 40% and active < 80%
+        } else {
             // VERSION SPLIT
             match is_leaf {
                 true => { // LeafPage
@@ -792,19 +793,15 @@ impl<const FAN_OUT: usize,
                         .filter(|record| !record.version().is_deleted())
                         .collect_vec();
 
-                    debug_assert!(active_records.len() >= block.filling_40_percent(),
-                                  "Active records = {}, required >= {}", active_records.len(), block.filling_40_percent());
-
-                    // if active_records.len() <=
-                    //     BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records()
-                    // {
-                    //     let s = "asds".to_string();
-                    //     let hase = "asdfasdasdaoshufiusdjbf".to_string();
-                    //     exit(1);
-                    // }
-
-                    // debug_assert!(active_records.len() <=
-                    //     BlockManager::<FAN_OUT, NUM_RECORDS, Key, Payload>::min_active_records());
+                    // A leaf root has no sibling and is exempt from minimum occupancy.
+                    // Its physical slots can fill with historical versions even when few keys
+                    // are live, so compact it into a new root at the same height.
+                    debug_assert!(
+                        is_root || active_records.len() >= block.filling_40_percent(),
+                        "Active records = {}, required >= {}",
+                        active_records.len(),
+                        block.filling_40_percent(),
+                    );
 
                     if let PageType::LeafMut(leaf_page) = new_leaf.unsafe_borrow_mut().as_page_mut() {
                         leaf_page.bulk_push(active_records);
@@ -908,7 +905,7 @@ impl<const FAN_OUT: usize,
         let root_guard_deref_mut
             = root_guard.deref_mut();
 
-        match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key)) {
+        match self.split(root_guard_deref_mut, &Interval::new(self.min_key, self.max_key), true) {
             BlockSplit::ByKey(left_fence,
                               left,
                               right_fence,

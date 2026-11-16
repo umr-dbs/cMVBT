@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::hash::Hash;
-use std::mem;
+use std::sync::Arc;
+use arc_swap::ArcSwap;
 use std::sync::atomic::Ordering::SeqCst;
 use crate::dexa::mvb_block::block_manager::BlockManager;
 use crate::dexa::mvb_tree::root::Root;
@@ -11,7 +12,6 @@ use crate::dexa::types::{dec_key, inc_key, INDEX};
 use crate::dexa::mvb_record_model::{AtomicVersion, Version};
 use crate::dexa::mvb_record_model::v_record_point::{VersionIndexType, VersionedRecordPoint};
 use crate::dexa::mvb_tree::clock::{GlobalClock, ReaderRegistry};
-use crate::dexa::mvb_utils::un_cell::UnCell;
 
 pub type LockLevel = ObjectCount;
 
@@ -25,7 +25,7 @@ pub struct MVBPlusTree<
     Key: Default + Ord + Copy + Hash + Sync + 'static,
     Payload: Default + Clone + Send + Sync + Display + 'static
 > {
-    pub(crate) root: UnCell<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>,
+    pub(crate) root: ArcSwap<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>,
     pub(crate) locking_strategy: LockingStrategy,
     pub(crate) block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
     pub(crate) global_clock: GlobalClock,
@@ -81,14 +81,12 @@ impl<const FAN_OUT: usize,
     Payload: Default + Clone + Send + Sync + Display + 'static
 > MVBPlusTree<FAN_OUT, NUM_RECORDS, Key, Payload>
 {
-    #[inline(always)]
+    #[cfg(test)]
     pub(crate) fn set_new_root(&self, new_root: Block<FAN_OUT, NUM_RECORDS, Key, Payload>, new_height: Height) {
-        self.root.get_mut().height = new_height;
-
-        mem::drop(mem::replace(
-            self.root.block.unsafe_borrow_mut(),
-            new_root,
-        ));
+        self.root.store(Arc::new(Root::new(
+            new_root.into_cell(self.locking_strategy.latch_type()),
+            new_height,
+        )));
     }
 
     fn make(block_manager: BlockManager<FAN_OUT, NUM_RECORDS, Key, Payload>,
@@ -104,7 +102,7 @@ impl<const FAN_OUT: usize,
             = block_manager.new_empty_leaf();
 
         Self {
-            root: UnCell::new(Root::new(
+            root: ArcSwap::from_pointee(Root::new(
                 empty_node.into_cell(locking_strategy.latch_type()),
                 INIT_TREE_HEIGHT,
             )),
@@ -153,29 +151,22 @@ impl<const FAN_OUT: usize,
 
     #[inline(always)]
     pub fn height(&self) -> Height {
-        self.root.height()
+        self.root.load().height()
     }
 
-    /// Whether `guard`, taken on the block read from `root.block`, still latches the root.
-    ///
-    /// Splitting a leaf root installs a new index root in `root.block` and keeps the old root
-    /// block as the new *left* leaf, whose version is bumped when the split unlocks it. A
-    /// traversal that read the old `root.block` before the swap but latched the block after the
-    /// unlock holds a valid version on the left leaf and would take it for the whole tree: an
-    /// insert of a right-half key lands in the left leaf, where no traversal finds it again.
-    /// Call this after the latch was taken (the version is read before `root.block` here).
+    /// Validate the root state after acquiring the node latch.
     #[inline(always)]
-    pub(crate) fn guards_root(&self, guard: &BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>) -> bool {
-        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
-        // `root.block` is swapped with a plain write; read it again from memory and without
-        // touching its reference count.
-        let root = mem::ManuallyDrop::new(unsafe {
-            std::ptr::read_volatile(&self.root.block as *const BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>)
-        });
+    pub(crate) fn is_current_root(&self, root: &Arc<Root<FAN_OUT, NUM_RECORDS, Key, Payload>>) -> bool {
+        Arc::ptr_eq(root, &self.root.load())
+    }
 
-        match unsafe { guard.deref_unsafe() } {
-            Some(node) => std::ptr::addr_eq(root.unsafe_borrow() as *const _, node as *const _),
-            None => false,
+    pub(crate) fn lock_current_root(&self) -> (BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>, BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>) {
+        loop {
+            let root = self.root.load();
+            let guard = self.lock_reader(&root.block);
+            if self.is_current_root(&root) && guard.is_valid_local() {
+                return (root.block.clone(), guard);
+            }
         }
     }
 
@@ -221,7 +212,7 @@ impl<const FAN_OUT: usize,
                                 attempt: Attempts,
                                 height: Level,
                                 block_cc: &BlockRef<FAN_OUT, NUM_RECORDS, Key, Payload>,
-    ) -> BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>
+    ) -> BlockGuard<'static, FAN_OUT, NUM_RECORDS, Key, Payload>
     {
         match self.locking_strategy() {
             LockingStrategy::MonoWriter =>

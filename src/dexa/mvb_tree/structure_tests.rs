@@ -44,7 +44,8 @@ fn visible_keys(tree: &Small) -> Vec<u64> {
 /// Depth of the tree along its leftmost path (single-threaded, so no latches needed).
 fn depth(tree: &Small) -> usize {
     let mut depth = 1;
-    let mut node = tree.root.block.unsafe_borrow();
+    let root = tree.root.load();
+    let mut node = root.block.unsafe_borrow();
     while let Node::Index(page) = node.as_ref() {
         node = page.children()[0].unsafe_borrow();
         depth += 1;
@@ -70,6 +71,27 @@ fn check(tree: &Small, model: &BTreeSet<u64>, removed: &[u64], round: usize) {
         assert!(!matches!(tree.dispatch(CRUDOperation::Update(k, k)).1, CRUDOperationResult::Updated(..)),
                 "round {round}: deleted key {k} still updatable");
     }
+}
+
+#[test]
+fn leaf_root_split_invalidates_a_previously_loaded_root() {
+    let tree = Small::new_with(LockingStrategy::OLC, u64::MIN, u64::MAX, inc_key, dec_key,
+                               VersionIndexType::VANILLA, false);
+    let old_root = tree.root.load();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            for key in 1..=48 {
+                assert!(matches!(tree.dispatch(CRUDOperation::Insert(key, key)).1,
+                                 CRUDOperationResult::Inserted(..)));
+            }
+        }).join().unwrap();
+    });
+
+    let guard = tree.lock_reader(&old_root.block);
+    assert!(guard.is_valid_local());
+    assert!(!tree.is_current_root(&old_root));
+    assert_eq!(tree.height(), 2);
+    assert_eq!(visible_keys(&tree), (1..=48).collect::<Vec<_>>());
 }
 
 /// Grows and shrinks the tree in waves, checking every key after each wave.

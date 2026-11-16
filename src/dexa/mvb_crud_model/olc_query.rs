@@ -106,13 +106,14 @@ impl<const FAN_OUT: usize,
             if parent_index >= path.len() { // when all path is invalid, we run stacking path function again!
                 path.clear();
 
+                let root = self.root.load();
                 let root_read = self.lock_reader_olc(
-                    &self.root.block,
+                    &root.block,
                     0,
                     attempts,
                     0);
 
-                if !root_read.is_read_not_obsolete() || !self.guards_root(&root_read) {
+                if !root_read.is_read_not_obsolete() || !self.is_current_root(&root) {
                     attempts += 1;
                     continue
                 }
@@ -292,10 +293,10 @@ impl<const FAN_OUT: usize,
 
     #[inline]
     fn traversal_read_olc_internal(&self, key: Key) -> (NodeVisits, Option<BlockGuard<FAN_OUT, NUM_RECORDS, Key, Payload>>) {
-        let mut current_guard
-            = self.lock_reader(&self.root.block);
+        let root = self.root.load();
+        let mut current_guard = self.lock_reader(&root.block);
 
-        if !self.guards_root(&current_guard) {
+        if !self.is_current_root(&root) {
             return (1, None);
         }
 

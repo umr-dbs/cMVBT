@@ -12,46 +12,27 @@
 
 use std::fmt::Display;
 use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering::{Relaxed, SeqCst}};
+use std::sync::atomic::{AtomicU64, fence, Ordering::SeqCst};
 use crate::dexa::mvb_record_model::Version;
 use crate::dexa::mvb_tree::bplus_tree::MVBPlusTree;
-use crate::mv_sync::clock::{__tid, Tid};
+use crate::mv_gc::query_tracer::PinTracer;
 pub(crate) use crate::mv_sync::clock::{release_thread_commit, CommitTicket, GlobalClock};
 
-const MAX_THREADS: usize = 4096;
-const UNPINNED: Version = Version::MAX;
-
-#[repr(align(64))]
-struct PaddedAtomicVersion(AtomicU64);
-
 pub(crate) struct ReaderRegistry {
-    /// Snapshot announced by each thread, or `UNPINNED`.
-    slots: Box<[PaddedAtomicVersion]>,
-    /// Largest horizon the GC has used so far; snapshots below it may have lost deleted keys.
+    pins: PinTracer,
+    /// Upper bound on the horizon any collector has used.
     collected: AtomicU64,
 }
 
 impl ReaderRegistry {
     pub(crate) fn new() -> Self {
-        Self {
-            slots: (0..MAX_THREADS).map(|_| PaddedAtomicVersion(AtomicU64::new(UNPINNED))).collect(),
-            collected: AtomicU64::new(0),
-        }
+        Self { pins: PinTracer::new(), collected: AtomicU64::new(0) }
     }
 
-    /// Announces `snapshot` for the calling thread; returns the value to restore on unpin.
-    #[inline]
-    fn announce(&self, tid: Tid, snapshot: Version) -> Version {
-        let slot = &self.slots[tid].0;
-        let previous = slot.load(Relaxed); // only the owning thread writes its slot
-        slot.store(previous.min(snapshot), SeqCst);
-        previous
-    }
-
-    #[inline]
-    fn restore(&self, tid: Tid, previous: Version) {
-        self.slots[tid].0.store(previous, SeqCst);
+    fn announce(&self, snapshot: Version) -> (Version, u64) {
+        let ticket = self.pins.pin(snapshot);
+        fence(SeqCst);
+        ticket
     }
 }
 
@@ -59,11 +40,8 @@ impl ReaderRegistry {
 /// stay in the tree while it is held.
 pub struct SnapshotPin<'a> {
     registry: &'a ReaderRegistry,
-    tid: Tid,
-    previous: Version,
+    ticket: (Version, u64),
     version: Version,
-    /// The pin refers to the slot of the creating thread.
-    _not_send: PhantomData<*const ()>,
 }
 
 impl SnapshotPin<'_> {
@@ -76,7 +54,7 @@ impl SnapshotPin<'_> {
 impl Drop for SnapshotPin<'_> {
     #[inline(always)]
     fn drop(&mut self) {
-        self.registry.restore(self.tid, self.previous)
+        self.registry.pins.unpin(&self.ticket);
     }
 }
 
@@ -95,25 +73,23 @@ impl<const FAN_OUT: usize,
     /// Draws the newest snapshot and protects it against garbage collection while the pin lives.
     #[inline]
     pub fn pin_snapshot(&self) -> SnapshotPin<'_> {
-        let tid = __tid();
         // Announce a lower bound first, then draw the snapshot: a collector that misses the
         // announcement read its horizon before it, hence a horizon <= the drawn snapshot.
         let lower_bound = self.global_clock.snapshot();
-        let previous = self.readers.announce(tid, lower_bound);
+        let ticket = self.readers.announce(lower_bound);
         let version = self.global_clock.snapshot();
-        SnapshotPin { registry: &self.readers, tid, previous, version, _not_send: PhantomData }
+        SnapshotPin { registry: &self.readers, ticket, version }
     }
 
     /// Protects an explicit, possibly historical snapshot. Panics if garbage collection may
     /// already have removed keys deleted after `version`.
     #[inline]
     pub fn pin_snapshot_at(&self, version: Version) -> SnapshotPin<'_> {
-        let tid = __tid();
-        let previous = self.readers.announce(tid, version);
+        let ticket = self.readers.announce(version);
         // A collector publishes its horizon before scanning the announcements: either it sees
         // ours, or we see its horizon here.
         let collected = self.readers.collected.load(SeqCst);
-        let pin = SnapshotPin { registry: &self.readers, tid, previous, version, _not_send: PhantomData };
+        let pin = SnapshotPin { registry: &self.readers, ticket, version };
         assert!(version >= collected,
                 "snapshot {version} is older than the garbage-collection horizon {collected}");
         pin
@@ -125,10 +101,8 @@ impl<const FAN_OUT: usize,
     pub(crate) fn gc_horizon(&self) -> Version {
         let newest = self.global_clock.snapshot();
         self.readers.collected.fetch_max(newest, SeqCst);
-        self.readers.slots
-            .iter()
-            .take(MAX_THREADS)
-            .fold(newest, |horizon, slot| horizon.min(slot.0.load(SeqCst)))
+        fence(SeqCst);
+        self.readers.pins.oldest().map_or(newest, |oldest| newest.min(oldest))
     }
 
     #[inline(always)]
@@ -188,6 +162,30 @@ mod tests {
                 let newest = tree.current_version_for_reader();
                 assert_eq!(visible(&tree, newest), (keys + 6 * NUM_RECORDS as u64 - 1) as usize);
             }
+        }
+    }
+
+    #[test]
+    fn overlapping_pins_can_be_dropped_in_either_order() {
+        for drop_oldest_first in [true, false] {
+            let tree = new_tree(VersionIndexType::VANILLA, true);
+            tree.dispatch(CRUDOperation::Insert(1, Default::default()));
+            let older = tree.pin_snapshot();
+            tree.dispatch(CRUDOperation::Insert(2, Default::default()));
+            let newer = tree.pin_snapshot();
+            tree.dispatch(CRUDOperation::Delete(1));
+
+            assert_eq!(tree.gc_horizon(), older.version());
+            let (first, remaining) = if drop_oldest_first { (older, newer) } else { (newer, older) };
+            drop(first);
+
+            assert_eq!(tree.gc_horizon(), remaining.version());
+            for key in 3..=3 * NUM_RECORDS as u64 {
+                tree.dispatch(CRUDOperation::Insert(key, Default::default()));
+            }
+            assert_eq!(visible(&tree, remaining.version()), if drop_oldest_first { 2 } else { 1 });
+            drop(remaining);
+            assert_eq!(tree.gc_horizon(), tree.current_version_for_reader());
         }
     }
 

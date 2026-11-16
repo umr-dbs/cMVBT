@@ -148,7 +148,7 @@ impl GlobalClock {
         let outermost = slot.load(Relaxed) == IDLE;
         if outermost {
             slot.store(self.next.load(SeqCst).saturating_sub(1), SeqCst);
-            self.state.store(DIRTY, SeqCst);
+            self.state.fetch_or(DIRTY, SeqCst);
         }
         WriteGuard { clock: self, tid, outermost, _not_send: PhantomData }
     }
@@ -174,25 +174,32 @@ impl GlobalClock {
     fn end_write(&self, tid: Tid) {
         // SeqCst (a release) orders the operation's soft commit before the slot becomes `IDLE`.
         self.slots[tid].store(IDLE, SeqCst);
-        self.state.store(DIRTY, SeqCst);
+        self.state.fetch_or(DIRTY, SeqCst);
     }
 
     /// The newest snapshot all of whose writes have taken effect.
     #[inline]
     pub(crate) fn snapshot(&self) -> Version {
-        // The clock must be read before the slots (see the module documentation).
-        let next = self.next.load(SeqCst);
-        if self.state.load(SeqCst) == CLEAN {
+        self.snapshot_with_hooks(|| {}, || {})
+    }
+
+    #[inline]
+    fn snapshot_with_hooks(&self, before_claim: impl FnOnce(), before_publish: impl FnOnce()) -> Version {
+        let state = self.state.load(SeqCst);
+        if state == CLEAN {
             return self.snapshot.load(Acquire)
         }
 
         // One reader owns the clean transition. Other readers stay latch-free and aggregate
-        // independently. A write starting or ending meanwhile sets DIRTY again, so the owner's
-        // final compare-exchange fails and the cache is not declared clean.
-        let owns_scan = self.state
+        // independently. Writers set DIRTY without clearing the owner's SCANNING bit.
+        before_claim();
+        let owns_scan = state == DIRTY && self.state
             .compare_exchange(DIRTY, SCANNING, SeqCst, SeqCst)
             .is_ok();
 
+        // A refresh owner must sample the clock after claiming the refresh.
+        // Sampling before the claim could miss a writer whose DIRTY mark we consumed.
+        let next = self.next.load(SeqCst);
         let snapshot = self.slots
             .iter()
             .take(THREAD_ID.load(SeqCst).min(MAX_THREADS))
@@ -202,7 +209,10 @@ impl GlobalClock {
         let previous = self.snapshot.fetch_max(snapshot, AcqRel);
 
         if owns_scan {
-            let _ = self.state.compare_exchange(SCANNING, CLEAN, SeqCst, Relaxed);
+            before_publish();
+            if self.state.compare_exchange(SCANNING, CLEAN, SeqCst, Relaxed).is_err() {
+                self.state.fetch_and(!SCANNING, SeqCst);
+            }
         }
         snapshot.max(previous)
     }
@@ -254,6 +264,38 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::{Arc, Barrier};
     use std::thread;
+
+    #[test]
+    fn refresh_samples_writes_completed_before_claim() {
+        let clock = GlobalClock::new();
+        clock.start_commit().publish();
+        let mut committed = 0;
+        let refreshed = clock.snapshot_with_hooks(|| {
+            let ticket = clock.start_commit();
+            committed = ticket.version();
+            ticket.publish();
+        }, || {});
+        assert_eq!(refreshed, committed);
+        assert_eq!(clock.snapshot(), committed);
+    }
+
+    #[test]
+    fn dirty_refresh_keeps_ownership_until_it_finishes() {
+        use super::{DIRTY, SCANNING, SeqCst};
+
+        let clock = GlobalClock::new();
+        clock.start_commit().publish();
+        clock.snapshot_with_hooks(|| {}, || {
+            clock.start_commit().publish();
+            assert_eq!(clock.state.load(SeqCst), SCANNING | DIRTY);
+
+            // Another reader can compute a bound but cannot claim this refresh.
+            clock.snapshot_with_hooks(|| {}, || panic!("second refresh owner"));
+            assert_eq!(clock.state.load(SeqCst), SCANNING | DIRTY);
+        });
+        assert_eq!(clock.state.load(SeqCst), DIRTY);
+        assert_eq!(clock.snapshot(), clock.current_version() - 1);
+    }
 
     #[test]
     fn clock_allocates_unique_contiguous_versions_concurrently() {

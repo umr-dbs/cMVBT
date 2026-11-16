@@ -34,7 +34,30 @@ type QueryTracer = SkipSet<ReaderQuery>;
 /// Readers announced *before* they draw their snapshot. The announced value lower-bounds the
 /// snapshot, so GC cannot reclaim anything the reader will need in the window between drawing
 /// the snapshot and registering it in the `QueryTracer`.
-type PinTracer = SkipSet<(SnapShot, u64)>;
+pub(crate) struct PinTracer {
+    pins: SkipSet<(SnapShot, u64)>,
+    sequence: AtomicU64,
+}
+
+impl PinTracer {
+    pub(crate) fn new() -> Self {
+        Self { pins: SkipSet::new(), sequence: AtomicU64::new(0) }
+    }
+
+    pub(crate) fn oldest(&self) -> Option<SnapShot> {
+        self.pins.front().map(|entry| entry.0)
+    }
+
+    pub(crate) fn pin(&self, lower_bound: SnapShot) -> (SnapShot, u64) {
+        let ticket = (lower_bound, self.sequence.fetch_add(1, Relaxed));
+        self.pins.insert(ticket);
+        ticket
+    }
+
+    pub(crate) fn unpin(&self, ticket: &(SnapShot, u64)) {
+        self.pins.remove(ticket);
+    }
+}
 
 pub(crate) struct TransactionTrace(QueryTracer, PinTracer, AtomicU64);
 
@@ -56,8 +79,7 @@ impl TransactionTrace {
         let registered = self.front()
             .map(|entry| entry.snapshot());
 
-        let pinned = self.1.front()
-            .map(|entry| entry.0);
+        let pinned = self.1.oldest();
 
         match (registered, pinned) {
             (Some(r), Some(p)) => Some(r.min(p)),
@@ -68,19 +90,17 @@ impl TransactionTrace {
     /// Announces a reader whose snapshot will be >= `lower_bound`. Returns the ticket for `unpin`.
     #[inline(always)]
     pub(crate) fn pin(&self, lower_bound: SnapShot) -> (SnapShot, u64) {
-        let ticket = (lower_bound, self.2.fetch_add(1, Relaxed));
-        self.1.insert(ticket);
-        ticket
+        self.1.pin(lower_bound)
     }
 
     #[inline(always)]
     pub(crate) fn unpin(&self, ticket: &(SnapShot, u64)) {
-        self.1.remove(ticket);
+        self.1.unpin(ticket);
     }
 
     #[inline(always)]
     pub(crate) fn peek_max(&self) -> Option<SnapShot> {
-        if !self.1.is_empty() {
+        if self.1.oldest().is_some() {
             // A pinned reader is about to draw a snapshot of unknown height.
             return Some(SnapShot::MAX)
         }
